@@ -64,13 +64,13 @@
   #time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 150px; }
   #caption { color: var(--dim); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   select { background: #2b2670; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font: inherit; font-size: 13px; }
-  #timeline { position: relative; height: 86px; background: #0e0c2a; border-radius: 10px; cursor: pointer; user-select: none; overflow: hidden; }
+  #timeline { position: relative; height: 86px; --mt: 64px; background: #0e0c2a; border-radius: 10px; cursor: pointer; user-select: none; overflow: hidden; }
   .seg { position: absolute; top: 0; height: 30px; border-right: 2px solid var(--bg); display: flex; align-items: center; padding-left: 8px; font-size: 12px; font-weight: 700; color: rgba(255,255,255,.85); overflow: hidden; white-space: nowrap; }
   .words { position: absolute; top: 32px; height: 10px; left: 0; right: 0; }
   .w { position: absolute; height: 8px; top: 1px; background: rgba(154,147,214,.45); border-radius: 2px; }
-  .mk { position: absolute; top: 64px; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; background: var(--pin); color: #fff; font-size: 10px; font-weight: 800; display: grid; place-items: center; border: 2px solid #fff; }
+  .mk { position: absolute; top: var(--mt); width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; background: var(--pin); color: #fff; font-size: 10px; font-weight: 800; display: grid; place-items: center; border: 2px solid #fff; }
   .mk.done { background: var(--ok); }
-  .rangeBar { position: absolute; top: 70px; height: 6px; background: rgba(255,63,208,.5); border-radius: 3px; }
+  .rangeBar { position: absolute; top: calc(var(--mt) + 6px); height: 6px; background: rgba(255,63,208,.5); border-radius: 3px; }
   #head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--acc); pointer-events: none; }
   @media (max-width: 1100px) { body { grid-template-columns: 1fr 320px; } }
   .range { display: grid; grid-template-columns: 24px 92px auto auto; gap: 6px; align-items: center; margin: 4px 0 8px; }
@@ -80,9 +80,10 @@
   input.time:focus { outline: 2px solid var(--acc); }
   .selRange { position: absolute; top: 0; bottom: 0; background: rgba(255,210,63,.2); border-left: 2px solid var(--acc); border-right: 2px solid var(--acc); pointer-events: none; }
   .selRange.point { border-right: none; }
-  #sfxlane { position: absolute; top: 44px; height: 16px; left: 0; right: 0; }
-  .sx { position: absolute; top: 1px; height: 14px; border-radius: 3px; cursor: pointer; opacity: .8; min-width: 5px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.35); }
-  .sx:hover { opacity: 1; transform: scaleY(1.2); }
+  #sfxlane { position: absolute; top: 46px; height: 16px; left: 0; right: 0; background: repeating-linear-gradient(#0e0c2a 0 15px, #15123f 15px 16px); }
+  .sx { position: absolute; height: 14px; border-radius: 3px; cursor: pointer; opacity: .85; min-width: 8px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
+        font: 700 9px/14px system-ui, sans-serif; color: rgba(10,6,40,.85); padding-left: 3px; overflow: hidden; white-space: nowrap; box-sizing: border-box; }
+  .sx:hover { opacity: 1; outline: 2px solid #fff; z-index: 2; }
   .sx.noted { box-shadow: 0 0 0 2px var(--pin); opacity: 1; }
   .sx.del { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(0,0,0,.6) 4px 7px) !important; }
   .sx.sel { box-shadow: 0 0 0 2px #fff; opacity: 1; }
@@ -97,6 +98,16 @@
   .prow { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-bottom: 1px solid #221e58; }
   .prow.on { background: #2b2670; } .prow button { padding: 1px 7px; }
   .pid { cursor: pointer; flex: 1; font-size: 12px; } .pid:hover { color: var(--acc); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  .fchip { padding: 2px 7px; font-size: 11px; border-radius: 10px; }
+  .fchip.sel { background: var(--acc); color: #000; border-color: var(--acc); }
+  .warn { background: #4a1630; border: 1px solid var(--red); border-radius: 8px; padding: 8px; font-size: 13px; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #4a1630; border: 1px solid var(--red); color: #fff;
+           padding: 8px 14px; border-radius: 10px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50; max-width: 70vw; }
+  #srvwarn { display: none; margin: 8px 12px 0; }
+  #tlwrap { overflow-x: auto; overflow-y: hidden; border-radius: 10px; }
+  #tlwrap::-webkit-scrollbar { height: 8px; } #tlwrap::-webkit-scrollbar-thumb { background: #3a3490; border-radius: 4px; }
+  .zoom { display: inline-flex; align-items: center; gap: 4px; } .zoom button { padding: 3px 9px; } #zoomLbl { min-width: 34px; text-align: center; color: var(--dim); font-size: 12px; }
   #hover { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.35); pointer-events: none; display: none; }
 </style>
 </head>
@@ -107,6 +118,7 @@
     <div id="pins"></div>
     <div id="hud">загрузка…</div>
     <div id="reloaded">код обновлён ✓</div>
+    <div id="toast"></div>
   </div>
 </div>
 
@@ -122,20 +134,22 @@
       <option value="../build/mix_no_vo.wav">🎵 без голоса</option>
       <option value="">🔇 без звука</option>
     </select>
+    <span class="zoom"><button id="zoomOut" title="Уменьшить (Ctrl + колесо над таймлайном)">−</button><span id="zoomLbl">1.0×</span><button id="zoomIn" title="Увеличить (Ctrl + колесо над таймлайном)">+</button></span>
     <button id="sfxAdd" title="Добавить звук из библиотеки в текущий момент">+ 🔊</button>
     <select id="rate"><option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select>
   </div>
-  <div id="timeline"><div id="segs"></div><div class="words" id="words"></div><div id="sfxlane"></div><div id="marks"></div><div id="hover"></div><div id="head"></div></div>
+  <div id="tlwrap"><div id="timeline"><div id="segs"></div><div class="words" id="words"></div><div id="sfxlane"></div><div id="marks"></div><div id="hover"></div><div id="head"></div></div></div>
 </div>
 
 <aside>
   <header>
     <h1>Правки</h1>
-    <div class="hint">Кликни по кадру — поставишь пин и откроешь заметку. <kbd>N</kbd> — заметка без пина, <kbd>Пробел</kbd> — плей/пауза, <kbd>←</kbd><kbd>→</kbd> — кадр, <kbd>Shift</kbd>+стрелки — 1 с, <kbd>[</kbd><kbd>]</kbd> — к соседней правке.<br><b>Отрезок:</b> <kbd>Shift</kbd>+протянуть по таймлайну, или <kbd>I</kbd> / <kbd>O</kbd> — начало / конец. <kbd>L</kbd> или 🔁 — повтор отрезка.<br><b>Звуки:</b> кликни по цветному блоку на дорожке под словами — заменить, громче/тише, удалить, коммент. «+ 🔊» — добавить звук в текущий момент. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> — сохранить.</div>
+    <div class="hint">Кликни по кадру — поставишь пин и откроешь заметку. <kbd>N</kbd> — заметка без пина, <kbd>Пробел</kbd> — плей/пауза, <kbd>←</kbd><kbd>→</kbd> — кадр, <kbd>Shift</kbd>+стрелки — 1 с, <kbd>[</kbd><kbd>]</kbd> — к соседней правке.<br><b>Отрезок:</b> <kbd>Shift</kbd>+протянуть по таймлайну, или <kbd>I</kbd> / <kbd>O</kbd> — начало / конец. <kbd>L</kbd> или 🔁 — повтор отрезка.<br><b>Звуки:</b> кликни по цветному блоку на дорожках под словами — заменить, громче/тише, удалить, коммент. «+ 🔊» — добавить звук в текущий момент. <kbd>Ctrl</kbd>+колесо над таймлайном или −/+ — зум. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> — сохранить.</div>
     <div id="filters">
       <button data-f="open" class="sel">Открытые</button><button data-f="all">Все</button><button data-f="done">Сделанные</button>
     </div>
   </header>
+  <div id="srvwarn" class="warn">⚠ Сервер ревью старой версии: звуки не будут проигрываться. Закрой окно сервера и запусти <b>review.bat</b> заново — это нужно сделать один раз.</div>
   <div id="notes"></div>
   <footer>
     <button id="copy" title="Скопировать все открытые правки текстом">Копировать текст</button>

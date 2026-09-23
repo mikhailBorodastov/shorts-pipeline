@@ -356,50 +356,87 @@
   const dbStr = db => (db > 0 ? '+' : db < 0 ? '−' : '±') + Math.abs(db) + ' dB';
   const libMeta = id => LIBIDX.find(s => s.id === id);
 
+  let SRV = { api: 0, sfxlib: false };
   async function loadSfx() {
     try { SFXLIST = await (await fetch('/build/sfx_resolved.json', { cache: 'no-store' })).json(); }
     catch { SFXLIST = []; }
+    try { SRV = await (await fetch('/api/version')).json(); } catch {}
     try { LIBIDX = (await (await fetch('/sfxlib/index.json')).json()).sounds || []; } catch { LIBIDX = []; }
     drawSfxLane();
+  }
+  function libProblem() {
+    if (LIBIDX.length) return '';
+    if (!SRV.api || SRV.api < 2) return 'Сервер ревью старой версии. Закрой окно сервера и запусти review.bat заново.';
+    if (!SRV.sfxlib) return 'Библиотека звуков не импортирована: python _pipeline/sfx_library.py import "<папка с паком>"';
+    return 'Библиотека звуков не загрузилась.';
   }
 
   function sfxNotesFor(cue) {
     return live().filter(n => n.kind === 'sfx' && n.sfx && !n.sfx.new && n.sfx.i === cue.i && Math.abs(n.sfx.t - cue.t) < 0.01 && n.status !== 'done');
   }
 
+  // sounds are packed onto separate rows (like tracks in a video editor) so overlapping ones don't cover each other
+  const LANE_H = 16, LANE_TOP = 46, MAX_LANES = 10;
   function drawSfxLane() {
     const lane = $('sfxlane'); if (!lane) return;
     lane.innerHTML = '';
-    for (const s of SFXLIST) {
-      const d = document.createElement('div');
-      const pending = sfxNotesFor(s);
-      d.className = 'sx' + (pending.length ? ' noted' : '') + (pending.some(n => n.sfx.delete) ? ' del' : '')
-        + (sfxDraft && sfxDraft.cue && sfxDraft.cue.i === s.i ? ' sel' : '');
-      d.style.left = (s.start / TOTAL * 100) + '%';
-      d.style.width = Math.max(0.25, Math.min(s.dur, 4) / TOTAL * 100) + '%';
-      d.style.background = LANE_COLORS[sfxCat(s.src)] || '#ffd23f';
-      d.title = `${s.type}${s.src !== s.type ? ' → ' + s.src : ''} · ${fmt(s.t)}`;
-      d.addEventListener('mousedown', e => { e.stopPropagation(); openSfx(s); });
-      lane.appendChild(d);
+    const px = tl.getBoundingClientRect().width || 1000;   // sizes in pixels, so zooming in spreads sounds out
+    const minW = TOTAL * 16 / px, gap = TOTAL * 3 / px;
+    const items = SFXLIST.map(s => ({ s, a: s.start, b: s.start + Math.max(Math.min(s.dur, 4), minW) }));
+    for (const n of live().filter(n => n.kind === 'sfx' && n.sfx && n.sfx.new && n.status !== 'done'))
+      items.push({ n, a: n.t, b: n.t + minW });
+    items.sort((x, y) => x.a - y.a);
+    const ends = [];
+    for (const it of items) {
+      let j = ends.findIndex(e => e <= it.a - gap);
+      if (j < 0) { if (ends.length < MAX_LANES) { j = ends.length; ends.push(0); } else j = ends.indexOf(Math.min(...ends)); }
+      ends[j] = it.b; it.lane = j;
     }
-    // new-sound notes as small markers
-    for (const n of live().filter(n => n.kind === 'sfx' && n.sfx && n.sfx.new && n.status !== 'done')) {
-      const d = document.createElement('div'); d.className = 'sx new'; d.style.left = (n.t / TOTAL * 100) + '%'; d.title = 'добавить ' + n.sfx.replace;
+    const lanes = Math.max(1, ends.length);
+    lane.style.height = lanes * LANE_H + 'px';
+    tl.style.setProperty('--mt', (LANE_TOP + lanes * LANE_H + 2) + 'px');
+    tl.style.height = (LANE_TOP + lanes * LANE_H + 24) + 'px';
+    for (const it of items) {
+      const d = document.createElement('div');
+      d.style.top = (it.lane * LANE_H + 1) + 'px';
+      d.style.left = (it.a / TOTAL * 100) + '%';
+      if (it.n) {   // new-sound note
+        d.className = 'sx new'; d.style.width = ((it.b - it.a) / TOTAL * 100) + '%'; d.title = 'добавить ' + it.n.sfx.replace;
+        d.addEventListener('mousedown', e => { e.stopPropagation(); focusNote(it.n.id); });
+      } else {
+        const s = it.s, pending = sfxNotesFor(s);
+        d.className = 'sx' + (pending.length ? ' noted' : '') + (pending.some(n => n.sfx.delete) ? ' del' : '')
+          + (sfxDraft && sfxDraft.cue && sfxDraft.cue.i === s.i ? ' sel' : '');
+        d.style.width = ((it.b - it.a) / TOTAL * 100) + '%';
+        d.style.background = LANE_COLORS[sfxCat(s.src)] || '#ffd23f';
+        d.textContent = (s.src.startsWith('lib:') ? s.src.slice(4).split('/').pop() : s.type).replace(/\|.*/, '');
+        d.title = `${s.type}${s.src !== s.type ? ' → ' + s.src : ''} · ${fmt(s.t)}${s.origin === 'transition' ? ' · вжух перехода' : ''}`;
+        d.addEventListener('mousedown', e => { e.stopPropagation(); openSfx(s); });
+      }
       lane.appendChild(d);
     }
   }
 
+  function toast(msg) {
+    const t = $('toast'); if (!t) return;
+    t.textContent = msg; t.style.opacity = 1; clearTimeout(toast._t); toast._t = setTimeout(() => (t.style.opacity = 0), 3500);
+  }
+
   async function playBuf(url, db = 0, when = 0) {
-    actx = actx || new AudioContext();
-    if (!bufCache[url]) {
-      const ab = await (await fetch(url)).arrayBuffer();
-      bufCache[url] = await actx.decodeAudioData(ab);
-    }
-    const src = actx.createBufferSource(), g = actx.createGain();
-    src.buffer = bufCache[url]; g.gain.value = Math.pow(10, db / 20);
-    src.connect(g).connect(actx.destination);
-    src.start(actx.currentTime + Math.max(0, when));
-    return src;
+    try {
+      actx = actx || new AudioContext();
+      if (actx.state === 'suspended') await actx.resume();
+      if (!bufCache[url]) {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(r.status === 404 && url.startsWith('/sfxlib/') ? (libProblem() || 'звук не найден') : `HTTP ${r.status}`);
+        bufCache[url] = await actx.decodeAudioData(await r.arrayBuffer());
+      }
+      const src = actx.createBufferSource(), g = actx.createGain();
+      src.buffer = bufCache[url]; g.gain.value = Math.pow(10, db / 20);
+      src.connect(g).connect(actx.destination);
+      src.start(actx.currentTime + Math.max(0, when));
+      return src;
+    } catch (e) { toast('🔇 Не проигралось: ' + (e.message || e)); }
   }
 
   function openSfx(cue) {
@@ -433,28 +470,43 @@
     }
   }
 
+  // library browser: search box + folder chips (categories), always visible in the sound card
   function libPicker(d, onPick) {
     const box = el('div', 'picker');
-    const q = el('input', 'search'); q.placeholder = 'поиск звука: whoosh, hit, pop, glitch, riser…';
+    const problem = libProblem();
+    if (problem) { box.append(el('div', 'warn', esc(problem))); return box; }
+    const q = el('input', 'search'); q.placeholder = `поиск по ${LIBIDX.length} звукам: whoosh, hit, pop, glitch…`; q.value = d.q || '';
+    const cats = {};
+    LIBIDX.forEach(s => (cats[s.category] = (cats[s.category] || 0) + 1));
+    const chips = el('div', 'chips');
     const list = el('div', 'plist');
     const render = () => {
+      d.q = q.value;
       const ws = q.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-      const found = LIBIDX.filter(s => ws.every(w => (s.id + ' ' + s.name).toLowerCase().includes(w))).slice(0, 60);
+      const found = LIBIDX.filter(s => (!d.cat || s.category === d.cat) && ws.every(w => (s.id + ' ' + s.name).toLowerCase().includes(w)));
       list.innerHTML = '';
-      if (!LIBIDX.length) { list.append(el('div', 'cap', 'Библиотека звуков не найдена (python _pipeline/sfx_library.py import …)')); return; }
-      for (const s of found) {
+      for (const s of found.slice(0, 120)) {
         const row = el('div', 'prow' + (d.replace === 'lib:' + s.id ? ' on' : ''));
-        const pb = el('button', '', '▶'); pb.onclick = () => playBuf(`/sfxlib/${s.id}.wav`, d.gainDb);
+        const pb = el('button', '', '▶'); pb.title = 'Послушать'; pb.onclick = () => playBuf(`/sfxlib/${s.id}.wav`, d.gainDb);
         const nm = el('span', 'pid', `${esc(s.id)} <i>${s.dur.toFixed(1)}s</i>${s.caution ? ' ⚠' : ''}`);
-        nm.title = s.name + (s.caution ? ' — ' + s.caution : '');
+        nm.title = s.name + (s.caution ? ' — ' + s.caution : '') + ' — клик: выбрать';
         nm.onclick = () => onPick('lib:' + s.id);
-        row.append(pb, nm); list.append(row);
+        const pick = el('button', 'ghost', 'выбрать'); pick.onclick = () => onPick('lib:' + s.id);
+        row.append(pb, nm, pick); list.append(row);
       }
       if (!found.length) list.append(el('div', 'cap', 'ничего не найдено'));
+      else if (found.length > 120) list.append(el('div', 'cap', `ещё ${found.length - 120} — уточни поиск`));
     };
+    const mk = (key, label) => {
+      const b = el('button', 'fchip' + ((d.cat || null) === key ? ' sel' : ''), label);
+      b.onclick = () => { d.cat = key; render(); chips.querySelectorAll('.fchip').forEach(x => x.classList.toggle('sel', x === b)); };
+      chips.append(b);
+    };
+    mk(null, `все ${LIBIDX.length}`);
+    Object.keys(cats).sort().forEach(c => mk(c, `${c} ${cats[c]}`));
     q.oninput = render; q.onkeydown = e => e.stopPropagation();
-    box.append(q, list); render();
-    setTimeout(() => q.focus(), 0);
+    box.append(q, chips, list); render();
+    if (!d.cue) setTimeout(() => q.focus(), 0);
     return box;
   }
 
@@ -508,10 +560,7 @@
       rep.append(chip, x);
     } else rep.append(el('span', 'cap', d.cue ? 'оставить как есть' : 'выбери ниже'));
     c.append(rep);
-    const pickBtn = el('button', '', d.showPicker ? 'скрыть библиотеку' : 'выбрать из библиотеки…');
-    pickBtn.onclick = () => { d.showPicker = !d.showPicker; renderNotes(); };
-    c.append(pickBtn);
-    if (d.showPicker || !d.cue && !d.replace) c.append(libPicker(d, id => { d.replace = id; d.showPicker = false; playBuf(`/sfxlib/${id.slice(4)}.wav`, d.gainDb); renderNotes(); }));
+    c.append(libPicker(d, id => { d.replace = id; playBuf(`/sfxlib/${id.slice(4)}.wav`, d.gainDb); renderNotes(); }));
     if (!d.cue || d.replace) {
       const al = el('label', 'sxrow');
       const cb = el('input'); cb.type = 'checkbox'; cb.checked = d.align === 'peak';
@@ -553,6 +602,34 @@
     sfxDraft = null; activeId = id;
     await save(); renderNotes(); drawSfxLane();
   }
+
+  // ---------- timeline zoom (Ctrl + wheel over the timeline, or the −/+ buttons) ----------
+  let zoom = 1;
+  function setZoom(z, anchorT) {
+    const wrap = $('tlwrap');
+    const at = anchorT != null ? anchorT : T;
+    const before = tl.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+    const screenX = before.left + at / TOTAL * before.width - wr.left;     // keep this moment under the same x
+    zoom = clamp(z, 1, 24);
+    tl.style.width = (zoom * 100) + '%';
+    $('zoomLbl').textContent = zoom.toFixed(zoom < 10 ? 1 : 0) + '×';
+    wrap.scrollLeft = at / TOTAL * tl.getBoundingClientRect().width - screenX;
+    drawSfxLane(); persist2();
+  }
+  function persist2() { try { sessionStorage.setItem('reviewZoom', String(zoom)); } catch {} }
+  $('tlwrap').addEventListener('wheel', e => {
+    if (!(e.ctrlKey || e.altKey)) return;           // plain wheel scrolls horizontally as usual
+    e.preventDefault();
+    setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8), tAtX(e));
+  }, { passive: false });
+  $('zoomIn').onclick = () => setZoom(zoom * 1.5);
+  $('zoomOut').onclick = () => setZoom(zoom / 1.5);
+  // keep the playhead visible while playing when zoomed in
+  setInterval(() => {
+    if (!playing || zoom <= 1) return;
+    const wrap = $('tlwrap'), x = T / TOTAL * tl.getBoundingClientRect().width;
+    if (x < wrap.scrollLeft + 40 || x > wrap.scrollLeft + wrap.clientWidth - 40) wrap.scrollLeft = x - wrap.clientWidth * 0.2;
+  }, 250);
 
   // ---------- inputs ----------
   $('sfxAdd').onclick = newSfxHere;
@@ -609,6 +686,7 @@
       if (codeV === null) {
         codeV = v.v;
         if (v.root) { document.title = `${v.root} — ревью`; document.querySelector('aside h1').textContent = `Правки · ${v.root}`; }
+        if (!v.api || v.api < 2) $('srvwarn').style.display = 'block';
       }
       else if (v.v !== codeV) { persist(); sessionStorage.setItem('reloaded', '1'); location.reload(); return; }
       if (lastN && v.n !== lastN && !draft && !sfxDraft) { lastN = v.n; loadNotes(); }
@@ -628,6 +706,7 @@
     buildTimeline();
     await loadNotes();
     await loadSfx();
+    try { const z = +sessionStorage.getItem('reviewZoom'); if (z > 1) setZoom(z); } catch {}
     draw();
     if (sessionStorage.getItem('reloaded')) {
       sessionStorage.removeItem('reloaded');
