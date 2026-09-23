@@ -1,5 +1,8 @@
 """Музыка + SFX + сведение с озвучкой.
 
+Звуки: стандартные имена (pop, whoosh, impact, …) берутся из библиотеки _pipeline/sfx_library
+(см. LIB_DEFAULTS), любые другие — через 'lib:<id>'; без библиотеки всё синтезируется.
+
     python audio.py
 
 Вход:  build/vo_timing.json (из tts.py), build/sfx.json (из `node render.js sfx`), build/vo/*.mp3
@@ -7,8 +10,14 @@
 
 Музыкальные настройки — в блоке MUSIC ниже (доли от общей длины ролика).
 """
-import json, subprocess, wave
+import json, os, subprocess, sys, wave
 import numpy as np
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 SR = 44100
 VO = json.load(open("build/vo_timing.json", encoding="utf-8"))
@@ -140,6 +149,48 @@ def sfx_shimmer():
 
 SFX = {k[4:]: v for k, v in list(globals().items()) if k.startswith("sfx_")}
 
+# ---------------- sound library (_pipeline/sfx_library, see _pipeline/sfx_library.py) ----------------
+LIB_DIR = os.environ.get("SFX_LIBRARY") or os.path.join(os.path.dirname(os.path.abspath(".")), "_pipeline", "sfx_library")
+USE_LIBRARY = True   # False = standard names ('pop', 'whoosh', ...) are always synthesised
+# standard names -> library sounds. peak_at: where the sound's loudest point lands, relative to the cue time
+# (None = the sound simply starts at the cue). Synth is the fallback when the library isn't installed.
+LIB_DEFAULTS = {
+    "pop":     {"id": "other/pop", "gain": 0.8},
+    "whoosh":  {"id": "whoosh/15-quick-a", "peak_at": 0.45, "gain": 0.7},   # transition cue sits 0.45 s before the cut
+    "thud":    {"id": "anime/kick-impact", "gain": 0.7},
+    "blip":    {"id": "other/bing", "gain": 0.6},
+    "tick":    {"id": "other/mouse-click-sound", "gain": 0.7},
+    "click":   {"id": "other/click", "gain": 0.8},
+    "rumble":  {"id": "hit/07-subsonic-a", "gain": 0.8},
+    "impact":  {"id": "hit/05-impact", "gain": 0.8},
+    "chime":   {"id": "other/shing-drop", "gain": 0.6},
+    "crash":   {"id": "anime/rock-break", "gain": 0.8},
+    "zap":     {"id": "electric/electricity-1", "gain": 0.6},
+    "thunder": {"id": "other/weather-storm-lightning-bolt-crash-crack-03", "gain": 0.8},
+}
+_lib_index, _lib_cache = None, {}
+
+
+def lib_index():
+    global _lib_index
+    if _lib_index is None:
+        p = os.path.join(LIB_DIR, "index.json")
+        _lib_index = {s["id"]: s for s in json.load(open(p, encoding="utf-8"))["sounds"]} if os.path.exists(p) else {}
+    return _lib_index
+
+
+def lib_sound(sid):
+    """(samples normalised to peak 0.9, peak time in s) or (None, None)."""
+    if sid not in _lib_cache:
+        meta, path = lib_index().get(sid), os.path.join(LIB_DIR, sid + ".wav")
+        if not meta or not os.path.exists(path):
+            _lib_cache[sid] = (None, None)
+        else:
+            with wave.open(path) as w:
+                y = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(float) / 32768
+            _lib_cache[sid] = (y / max(1e-9, np.abs(y).max()) * 0.9, meta["peak_t"])
+    return _lib_cache[sid]
+
 
 def build_sfx():
     out = np.zeros(N)
@@ -147,13 +198,32 @@ def build_sfx():
         events = json.load(open("build/sfx.json"))
     except FileNotFoundError:
         events = []
+    used_lib = 0
     for e in events:
-        fn = SFX.get(e["type"])
+        typ, t, gain = e["type"], e["t"], e.get("gain", 1)
+        sid, peak_at = None, None
+        if typ.startswith("lib:"):
+            sid = typ[4:]
+            peak_at = 0.0 if e.get("align") == "peak" else None
+        elif USE_LIBRARY and typ in LIB_DEFAULTS and lib_index():
+            d = LIB_DEFAULTS[typ]
+            sid, peak_at, gain = d["id"], d.get("peak_at"), gain * d.get("gain", 1)
+        if sid:
+            y, pk = lib_sound(sid)
+            if y is not None:
+                start = t + peak_at - pk if peak_at is not None else t
+                if start < 0:                         # peak-aligned sound that would start before 0: trim its head
+                    y = y[int(-start * SR):]; start = 0
+                put(out, start, y * gain); used_lib += 1
+                continue
+            if typ.startswith("lib:"):
+                print("  ! нет в библиотеке:", sid); continue
+        fn = SFX.get(typ)
         if not fn:
-            print("  ! неизвестный звук:", e["type"]); continue
-        y = fn() * e.get("gain", 1)
-        s = int(e["t"] * SR); y = y[:max(0, N - s)]
-        out[s:s + len(y)] += y
+            print("  ! неизвестный звук:", typ); continue
+        put(out, t, fn() * gain)
+    if used_lib:
+        print(f"  звуков из библиотеки: {used_lib}")
     return out
 
 

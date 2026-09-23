@@ -7,7 +7,11 @@
 //   trans = how this scene ENTERS: 'iris' | 'push' | 'slide' | 'zoom' | 'zoomOut' | 'wipe' | 'cut'
 //   zoomAt = [x, y] point to dive into when the NEXT scene uses trans:'zoom'
 //   Sync events to the voice with WT(section, 'слово') -> absolute time of that word.
-//   sfx(add): add(time, 'pop'|'whoosh'|'boing'|'thud'|'blip'|'tick'|'click'|'chime'|'crash'|'zap'|'thunder'|'shimmer'|'impact'|'rumble', gain)
+//   sfx(add): add(time, name, gain, align)
+//     name = 'pop'|'whoosh'|'boing'|'thud'|'blip'|'tick'|'click'|'chime'|'crash'|'zap'|'thunder'|'shimmer'|'impact'|'rumble'
+//            (taken from the sound library when installed, synthesised otherwise)
+//          or 'lib:<id>' — any sound from the library, catalogue: _pipeline/sfx_library/index.md
+//     align = 'peak' to put the sound's loudest moment exactly at `time` (hits, whooshes); default: it starts at `time`
 // ======================================================================
 
 // Images / frame sequences used by the scenes. Available as IMG.key and seqFrame('key', i) / screenSeq(...)
@@ -60,7 +64,7 @@ const S1 = {
     drawHog(ctx, 540, 1180 - ball * 20, 180, { t: T, sq: ball * 0.15, eye: 1 - ball * 0.7, blink: ball, armF: -0.2, look: [0.8, 0] });
     pill(ctx, 540, 380, '5 000 ИГОЛОК', { size: 60, glow: C.purple, scale: P(T, WT(1, 'живая') - 0.2, 0.4, E.outBack) });
   },
-  sfx(add) { add(WT(1, 'броня') - 0.3, 'boing'); add(WT(1, 'живая') - 0.2, 'pop'); },
+  sfx(add) { add(WT(1, 'броня') - 0.3, 'boing'); add(WT(1, 'живая') - 0.2, 'pop'); add(WT(1, 'броня') - 0.1, 'lib:hit/05-impact', 0.5, 'peak'); },
 };
 
 const SCENES = [S0, S1];

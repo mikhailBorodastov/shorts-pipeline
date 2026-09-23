@@ -164,10 +164,11 @@ function renderFrame(T) {
   ctx.restore();
 }
 
-// ---------- SFX cues: whoosh on every transition + scene.sfx(add) ----------
+// ---------- SFX cues: whoosh on every transition + scene.sfx(add). Library sounds: _pipeline/sfx_library/index.md ----------
 function buildSFX() {
   const ev = [];
-  const add = (t, type, gain = 1) => ev.push({ t: +Math.max(0, t).toFixed(3), type, gain });
+  // add(t, 'pop' | 'lib:whoosh/15-quick-a', gain, 'peak'?) — 'peak' puts the library sound's loudest point at t
+  const add = (t, type, gain = 1, align) => ev.push(Object.assign({ t: +Math.max(0, t).toFixed(3), type, gain }, align ? { align } : {}));
   for (let k = 1; k < SCENES.length; k++) if (SCENES[k].trans !== 'cut' && !SCENES[k].noWhoosh) add(B[k] - 0.45, 'whoosh', 0.9);
   SCENES.forEach((s, k) => s.sfx && s.sfx(add, B[k], B[k + 1]));
   return ev.sort((a, b) => a.t - b.t);
