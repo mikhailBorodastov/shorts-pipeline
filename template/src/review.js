@@ -90,6 +90,7 @@
   function setPlay(on) {
     if (on && T >= TOTAL - 0.01) T = 0;
     playing = on; $('play').textContent = on ? '❚❚' : '▶';
+    if (!on && typeof stopPreview === 'function') stopPreview();
     clock0 = performance.now(); t0 = T;
     if (audio.src) {
       audio.currentTime = T; audio.playbackRate = +$('rate').value;
@@ -251,7 +252,7 @@
     const acts = el('div', 'acts');
     if (n.kind === 'sfx' && n.sfx) {
       const url = n.sfx.replace ? `/sfxlib/${n.sfx.replace.slice(4)}.wav` : (SFXLIST.find(x => x.i === n.sfx.i) || {}).preview;
-      if (url) { const pb = el('button', '', '▶'); pb.title = 'Послушать (с громкостью из правки)'; pb.onclick = () => playBuf(url, n.sfx.gainDb || 0); acts.append(pb); }
+      if (url) { const pb = el('button', '', '▶'); pb.title = 'Послушать (ещё раз — стоп)'; pb.onclick = () => playBuf(url, n.sfx.gainDb || 0, 0, pb); acts.append(pb); }
     }
     const done = el('button', '', n.status === 'done' ? '↺ Открыть снова' : '✓ Сделано');
     done.onclick = () => { n.status = n.status === 'done' ? 'open' : 'done'; touch(n); save(); renderNotes(); };
@@ -422,7 +423,14 @@
     t.textContent = msg; t.style.opacity = 1; clearTimeout(toast._t); toast._t = setTimeout(() => (t.style.opacity = 0), 3500);
   }
 
-  async function playBuf(url, db = 0, when = 0) {
+  let curSrc = null, curBtn = null;
+  function stopPreview() {
+    if (curSrc) { try { curSrc.onended = null; curSrc.stop(); } catch {} curSrc = null; }
+    if (curBtn) { curBtn.textContent = curBtn.dataset.label; curBtn.classList.remove('playing'); curBtn = null; }
+  }
+  async function playBuf(url, db = 0, when = 0, btn = null) {
+    if (btn && btn === curBtn) { stopPreview(); return; }      // second click on the same button = stop
+    stopPreview();
     try {
       actx = actx || new AudioContext();
       if (actx.state === 'suspended') await actx.resume();
@@ -435,6 +443,12 @@
       src.buffer = bufCache[url]; g.gain.value = Math.pow(10, db / 20);
       src.connect(g).connect(actx.destination);
       src.start(actx.currentTime + Math.max(0, when));
+      curSrc = src;
+      if (btn) {
+        btn.dataset.label = btn.dataset.label || btn.textContent;
+        btn.textContent = '■'; btn.classList.add('playing'); curBtn = btn;
+      }
+      src.onended = () => { if (curSrc === src) stopPreview(); };
       return src;
     } catch (e) { toast('🔇 Не проигралось: ' + (e.message || e)); }
   }
@@ -487,7 +501,7 @@
       list.innerHTML = '';
       for (const s of found.slice(0, 120)) {
         const row = el('div', 'prow' + (d.replace === 'lib:' + s.id ? ' on' : ''));
-        const pb = el('button', '', '▶'); pb.title = 'Послушать'; pb.onclick = () => playBuf(`/sfxlib/${s.id}.wav`, d.gainDb);
+        const pb = el('button', '', '▶'); pb.title = 'Послушать (ещё раз — стоп)'; pb.onclick = () => playBuf(`/sfxlib/${s.id}.wav`, d.gainDb, 0, pb);
         const nm = el('span', 'pid', `${esc(s.id)} <i>${s.dur.toFixed(1)}s</i>${s.caution ? ' ⚠' : ''}`);
         nm.title = s.name + (s.caution ? ' — ' + s.caution : '') + ' — клик: выбрать';
         nm.onclick = () => onPick('lib:' + s.id);
@@ -523,6 +537,7 @@
   }
 
   function sfxCard() {
+    if (curBtn && !document.body.contains(curBtn)) curBtn = null;
     const d = sfxDraft;
     const c = el('div', 'card active sfxcard');
     const top = el('div', 'top');
@@ -537,8 +552,8 @@
     } else c.append(el('div', 'sxname', 'Новый звук в этот момент'));
 
     const row1 = el('div', 'acts');
-    const pOrig = el('button', '', d.cue ? '▶ звук' : '▶'); pOrig.title = 'Послушать отдельно (с учётом громкости и замены)';
-    pOrig.onclick = () => { const u = previewUrl(d); if (u) playBuf(u, d.gainDb); };
+    const pOrig = el('button', '', d.cue ? '▶ звук' : '▶'); pOrig.title = 'Послушать отдельно (с учётом громкости и замены). Ещё раз — стоп';
+    pOrig.onclick = () => { const u = previewUrl(d); if (u) playBuf(u, d.gainDb, 0, pOrig); };
     const pCtx = el('button', '', '▶ в контексте'); pCtx.title = 'Проиграть микс вокруг этого места' + (d.cue ? ' (замена накладывается поверх оригинала)' : '');
     pCtx.onclick = () => inContext(d);
     row1.append(pOrig, pCtx); c.append(row1);
@@ -653,6 +668,7 @@
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'TEXTAREA') return;
     const step = e.shiftKey ? 1 : 1 / FPS;
+    if (e.key === 'Escape') { stopPreview(); return; }
     if (e.code === 'Space') { e.preventDefault(); setPlay(!playing); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); setPlay(false); seek(e.shiftKey ? T - 1 : Math.round(T * FPS - 1) / FPS); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); setPlay(false); seek(e.shiftKey ? T + 1 : Math.round(T * FPS + 1) / FPS); }

@@ -108,6 +108,7 @@
   #tlwrap { overflow-x: auto; overflow-y: hidden; border-radius: 10px; }
   #tlwrap::-webkit-scrollbar { height: 8px; } #tlwrap::-webkit-scrollbar-thumb { background: #3a3490; border-radius: 4px; }
   .zoom { display: inline-flex; align-items: center; gap: 4px; } .zoom button { padding: 3px 9px; } #zoomLbl { min-width: 34px; text-align: center; color: var(--dim); font-size: 12px; }
+  button.playing { background: var(--acc); color: #000; border-color: var(--acc); }
   #hover { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.35); pointer-events: none; display: none; }
 </style>
 </head>
@@ -144,7 +145,7 @@
 <aside>
   <header>
     <h1>Правки</h1>
-    <div class="hint">Кликни по кадру — поставишь пин и откроешь заметку. <kbd>N</kbd> — заметка без пина, <kbd>Пробел</kbd> — плей/пауза, <kbd>←</kbd><kbd>→</kbd> — кадр, <kbd>Shift</kbd>+стрелки — 1 с, <kbd>[</kbd><kbd>]</kbd> — к соседней правке.<br><b>Отрезок:</b> <kbd>Shift</kbd>+протянуть по таймлайну, или <kbd>I</kbd> / <kbd>O</kbd> — начало / конец. <kbd>L</kbd> или 🔁 — повтор отрезка.<br><b>Звуки:</b> кликни по цветному блоку на дорожках под словами — заменить, громче/тише, удалить, коммент. «+ 🔊» — добавить звук в текущий момент. <kbd>Ctrl</kbd>+колесо над таймлайном или −/+ — зум. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> — сохранить.</div>
+    <div class="hint">Кликни по кадру — поставишь пин и откроешь заметку. <kbd>N</kbd> — заметка без пина, <kbd>Пробел</kbd> — плей/пауза, <kbd>←</kbd><kbd>→</kbd> — кадр, <kbd>Shift</kbd>+стрелки — 1 с, <kbd>[</kbd><kbd>]</kbd> — к соседней правке.<br><b>Отрезок:</b> <kbd>Shift</kbd>+протянуть по таймлайну, или <kbd>I</kbd> / <kbd>O</kbd> — начало / конец. <kbd>L</kbd> или 🔁 — повтор отрезка.<br><b>Звуки:</b> кликни по цветному блоку на дорожках под словами — заменить, громче/тише, удалить, коммент. «+ 🔊» — добавить звук в текущий момент. <kbd>Ctrl</kbd>+колесо над таймлайном или −/+ — зум. Прослушку останавливает повторный клик по ■ или <kbd>Esc</kbd>. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> — сохранить.</div>
     <div id="filters">
       <button data-f="open" class="sel">Открытые</button><button data-f="all">Все</button><button data-f="done">Сделанные</button>
     </div>
