@@ -1,0 +1,6 @@
+{
+  "name": "short",
+  "private": true,
+  "description": "Kurzgesagt-style vertical short (canvas renderer + review tool)",
+  "dependencies": { "puppeteer-core": "^25.11.0" }
+}

@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "review", "runtimeExecutable": "python", "runtimeArgs": ["review_server.py"], "port": 8765, "url": "http://localhost:8765" }
+  ]
+}

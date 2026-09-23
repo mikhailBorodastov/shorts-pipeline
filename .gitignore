@@ -1,0 +1,8 @@
+node_modules/
+build/
+out/
+__pycache__/
+*.pyc
+template/review/notes.*
+template/review/shots/*
+!template/review/shots/.gitkeep

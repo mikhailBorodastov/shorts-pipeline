@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Short</title>
+<style>
+  @font-face { font-family: "Rubik"; src: url("../assets/fonts/Rubik.ttf"); font-weight: 300 900; }
+  @font-face { font-family: "Nunito"; src: url("../assets/fonts/Nunito.ttf"); font-weight: 200 1000; }
+  @font-face { font-family: "PressStart"; src: url("../assets/fonts/PressStart2P.ttf"); }
+  html, body { margin: 0; background: #05041a; color: #ccc; font: 14px sans-serif; }
+  canvas { display: block; }
+  body.preview canvas { height: 86vh; width: auto; margin: 8px auto; }
+  #ui { display: none; width: 90vw; margin: 0 auto; gap: 8px; align-items: center; }
+  body.preview #ui { display: flex; }
+  #scrub { flex: 1; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<div id="ui"><button id="play">▶</button><input id="scrub" type="range" min="0" max="66" step="0.01" value="0"><span id="tl">0.00</span></div>
+<script src="vo_timing.js"></script>
+<script src="lib.js"></script>
+<script src="chars.js"></script>
+<script src="scenes.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
