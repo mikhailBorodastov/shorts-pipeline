@@ -196,15 +196,16 @@
   // ---------- notes panel ----------
   function renderNotes() {
     const box = $('notes'); box.innerHTML = '';
+    if (sfxDraft) box.appendChild(sfxCard());
     if (draft) box.appendChild(draftCard());
     const list = live().filter(n => filter === 'all' || (filter === 'done' ? n.status === 'done' : n.status !== 'done')).sort((a, b) => a.t - b.t);
-    if (!list.length && !draft) {
+    if (!list.length && !draft && !sfxDraft) {
       const e = document.createElement('div'); e.className = 'empty';
       e.innerHTML = live().length ? 'Тут пусто — смени фильтр.' : 'Правок пока нет.<br>Поставь на паузу и кликни по кадру там, где нужно что-то поменять.';
       box.appendChild(e);
     }
     for (const n of list) box.appendChild(noteCard(n));
-    drawMarks(); drawPins();
+    drawMarks(); drawPins(); drawSfxLane();
   }
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
@@ -239,8 +240,8 @@
     const c = el('div', 'card' + (n.status === 'done' ? ' done' : '') + (n.id === activeId ? ' active' : ''));
     c.dataset.id = n.id;
     const top = el('div', 'top');
-    top.append(el('span', 'num', n.id));
-    const tc = el('span', 'tc', fmt(n.t) + (n.t2 ? ' – ' + fmt(n.t2) : '')); tc.onclick = () => { setPlay(false); seek(n.t); activeId = n.id; renderNotes(); };
+    top.append(el('span', 'num', n.kind === 'sfx' ? '🔊' : n.id));
+    const tc = el('span', 'tc', (n.kind === 'sfx' ? `#${n.id} · ` : '') + fmt(n.t) + (n.t2 ? ' – ' + fmt(n.t2) : '')); tc.onclick = () => { setPlay(false); seek(n.t); activeId = n.id; renderNotes(); };
     top.append(tc, el('span', 'scene', `${n.scene}. ${esc(n.sceneName || '')}`));
     c.append(top);
     if (n.caption) c.append(el('div', 'cap', `«${esc(n.caption)}»`));
@@ -248,6 +249,10 @@
     c.append(txt);
     for (const r of n.replies || []) c.append(el('div', 'cap', `<b>${esc(r.who)}:</b> ${esc(r.text)}`));
     const acts = el('div', 'acts');
+    if (n.kind === 'sfx' && n.sfx) {
+      const url = n.sfx.replace ? `/sfxlib/${n.sfx.replace.slice(4)}.wav` : (SFXLIST.find(x => x.i === n.sfx.i) || {}).preview;
+      if (url) { const pb = el('button', '', '▶'); pb.title = 'Послушать (с громкостью из правки)'; pb.onclick = () => playBuf(url, n.sfx.gainDb || 0); acts.append(pb); }
+    }
     const done = el('button', '', n.status === 'done' ? '↺ Открыть снова' : '✓ Сделано');
     done.onclick = () => { n.status = n.status === 'done' ? 'open' : 'done'; touch(n); save(); renderNotes(); };
     const edit = el('button', 'ghost', 'Изменить');
@@ -276,7 +281,7 @@
   }
 
   function newDraft(x, y) {
-    setPlay(false);
+    setPlay(false); sfxDraft = null;
     draft = { t: +T.toFixed(3), x, y, text: draft && draft.text || '' };
     persist(); renderNotes();
   }
@@ -342,7 +347,215 @@
     try { await navigator.clipboard.writeText(lines.join('\n')); $('saved').textContent = 'скопировано ✓'; } catch { prompt('Скопируй:', lines.join('\n')); }
   };
 
+  // ---------- sounds: lane on the timeline + sound card (replace / volume / delete / comment / add) ----------
+  let SFXLIST = [], LIBIDX = [], sfxDraft = null, actx = null;
+  const bufCache = {};
+  const LANE_COLORS = { whoosh: '#22e1ff', hit: '#ff5470', riser: '#ff8a1f', glitch: '#a855f7', electric: '#3b82f6', cinematic: '#e05599',
+    anime: '#ff7ac8', fire: '#ff6b2a', meme: '#9ca3af', other: '#ffd23f', camera: '#e4e5ee', synth: '#6b6a9a' };
+  const sfxCat = src => src.startsWith('lib:') ? src.slice(4).split('/')[0] : 'synth';
+  const dbStr = db => (db > 0 ? '+' : db < 0 ? '−' : '±') + Math.abs(db) + ' dB';
+  const libMeta = id => LIBIDX.find(s => s.id === id);
+
+  async function loadSfx() {
+    try { SFXLIST = await (await fetch('/build/sfx_resolved.json', { cache: 'no-store' })).json(); }
+    catch { SFXLIST = []; }
+    try { LIBIDX = (await (await fetch('/sfxlib/index.json')).json()).sounds || []; } catch { LIBIDX = []; }
+    drawSfxLane();
+  }
+
+  function sfxNotesFor(cue) {
+    return live().filter(n => n.kind === 'sfx' && n.sfx && !n.sfx.new && n.sfx.i === cue.i && Math.abs(n.sfx.t - cue.t) < 0.01 && n.status !== 'done');
+  }
+
+  function drawSfxLane() {
+    const lane = $('sfxlane'); if (!lane) return;
+    lane.innerHTML = '';
+    for (const s of SFXLIST) {
+      const d = document.createElement('div');
+      const pending = sfxNotesFor(s);
+      d.className = 'sx' + (pending.length ? ' noted' : '') + (pending.some(n => n.sfx.delete) ? ' del' : '')
+        + (sfxDraft && sfxDraft.cue && sfxDraft.cue.i === s.i ? ' sel' : '');
+      d.style.left = (s.start / TOTAL * 100) + '%';
+      d.style.width = Math.max(0.25, Math.min(s.dur, 4) / TOTAL * 100) + '%';
+      d.style.background = LANE_COLORS[sfxCat(s.src)] || '#ffd23f';
+      d.title = `${s.type}${s.src !== s.type ? ' → ' + s.src : ''} · ${fmt(s.t)}`;
+      d.addEventListener('mousedown', e => { e.stopPropagation(); openSfx(s); });
+      lane.appendChild(d);
+    }
+    // new-sound notes as small markers
+    for (const n of live().filter(n => n.kind === 'sfx' && n.sfx && n.sfx.new && n.status !== 'done')) {
+      const d = document.createElement('div'); d.className = 'sx new'; d.style.left = (n.t / TOTAL * 100) + '%'; d.title = 'добавить ' + n.sfx.replace;
+      lane.appendChild(d);
+    }
+  }
+
+  async function playBuf(url, db = 0, when = 0) {
+    actx = actx || new AudioContext();
+    if (!bufCache[url]) {
+      const ab = await (await fetch(url)).arrayBuffer();
+      bufCache[url] = await actx.decodeAudioData(ab);
+    }
+    const src = actx.createBufferSource(), g = actx.createGain();
+    src.buffer = bufCache[url]; g.gain.value = Math.pow(10, db / 20);
+    src.connect(g).connect(actx.destination);
+    src.start(actx.currentTime + Math.max(0, when));
+    return src;
+  }
+
+  function openSfx(cue) {
+    setPlay(false);
+    draft = null;
+    sfxDraft = { cue, t: cue.t, replace: null, gainDb: 0, delete: false, align: cue.align || null, text: '' };
+    seek(cue.start, false);
+    renderNotes(); drawSfxLane();
+  }
+  function newSfxHere() {
+    setPlay(false); draft = null;
+    sfxDraft = { cue: null, t: +T.toFixed(3), replace: null, gainDb: 0, delete: false, align: 'peak', text: '' };
+    renderNotes(); drawSfxLane();
+  }
+
+  // audition: the chosen/original sound alone, or the mix around it with the replacement layered on top
+  function previewUrl(d) { return d.replace ? `/sfxlib/${d.replace.slice(4)}.wav` : d.cue && d.cue.preview; }
+  function previewOffset(d) {   // seconds from sound start to its placement time
+    if (!d.replace) return 0;
+    const m = libMeta(d.replace.slice(4));
+    return d.align === 'peak' && m ? m.peak_t : 0;
+  }
+  function inContext(d) {
+    const at = d.cue ? d.cue.t : d.t;
+    const from = Math.max(0, (d.cue ? d.cue.start : at) - 1.5);
+    seek(from); setPlay(true);
+    if (d.replace || d.gainDb) {
+      const url = previewUrl(d); if (!url) return;
+      const baseGain = d.cue ? 20 * Math.log10(Math.max(1e-3, d.cue.play_gain || 1)) : 0;
+      playBuf(url, baseGain + d.gainDb, (at - previewOffset(d) - from) / (+$('rate').value || 1));
+    }
+  }
+
+  function libPicker(d, onPick) {
+    const box = el('div', 'picker');
+    const q = el('input', 'search'); q.placeholder = 'поиск звука: whoosh, hit, pop, glitch, riser…';
+    const list = el('div', 'plist');
+    const render = () => {
+      const ws = q.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const found = LIBIDX.filter(s => ws.every(w => (s.id + ' ' + s.name).toLowerCase().includes(w))).slice(0, 60);
+      list.innerHTML = '';
+      if (!LIBIDX.length) { list.append(el('div', 'cap', 'Библиотека звуков не найдена (python _pipeline/sfx_library.py import …)')); return; }
+      for (const s of found) {
+        const row = el('div', 'prow' + (d.replace === 'lib:' + s.id ? ' on' : ''));
+        const pb = el('button', '', '▶'); pb.onclick = () => playBuf(`/sfxlib/${s.id}.wav`, d.gainDb);
+        const nm = el('span', 'pid', `${esc(s.id)} <i>${s.dur.toFixed(1)}s</i>${s.caution ? ' ⚠' : ''}`);
+        nm.title = s.name + (s.caution ? ' — ' + s.caution : '');
+        nm.onclick = () => onPick('lib:' + s.id);
+        row.append(pb, nm); list.append(row);
+      }
+      if (!found.length) list.append(el('div', 'cap', 'ничего не найдено'));
+    };
+    q.oninput = render; q.onkeydown = e => e.stopPropagation();
+    box.append(q, list); render();
+    setTimeout(() => q.focus(), 0);
+    return box;
+  }
+
+  function sfxSummary(d) {
+    const parts = [];
+    if (!d.cue) parts.push(`добавить ${d.replace}` + (d.align === 'peak' ? ' (пик на этот момент)' : ''));
+    else {
+      if (d.delete) parts.push('удалить');
+      if (d.replace) parts.push(`заменить на ${d.replace}`);
+    }
+    if (d.gainDb) parts.push(`громкость ${dbStr(d.gainDb)}`);
+    const what = d.cue ? `🔊 ${d.cue.type}${d.cue.src !== d.cue.type ? ` (${d.cue.src})` : ''}` : '🔊 новый звук';
+    return `${what}: ${parts.join(', ') || 'комментарий'}`;
+  }
+
+  function sfxCard() {
+    const d = sfxDraft;
+    const c = el('div', 'card active sfxcard');
+    const top = el('div', 'top');
+    top.append(el('span', 'num', '🔊'));
+    const tc = el('span', 'tc', fmt(d.cue ? d.cue.t : d.t)); tc.onclick = () => seek(d.cue ? d.cue.start : d.t);
+    const k = sceneAt(d.cue ? d.cue.t : d.t);
+    top.append(tc, el('span', 'scene', `${k + 1}. ${SCENES[k].name}`));
+    c.append(top);
+    if (d.cue) {
+      const src = d.cue.src !== d.cue.type ? ` → <code>${esc(d.cue.src)}</code>` : '';
+      c.append(el('div', 'sxname', `<code>${esc(d.cue.type)}</code>${src} <i>${d.cue.dur.toFixed(2)}s · gain ${d.cue.gain}${d.cue.origin === 'transition' ? ' · вжух перехода' : ''}</i>`));
+    } else c.append(el('div', 'sxname', 'Новый звук в этот момент'));
+
+    const row1 = el('div', 'acts');
+    const pOrig = el('button', '', d.cue ? '▶ звук' : '▶'); pOrig.title = 'Послушать отдельно (с учётом громкости и замены)';
+    pOrig.onclick = () => { const u = previewUrl(d); if (u) playBuf(u, d.gainDb); };
+    const pCtx = el('button', '', '▶ в контексте'); pCtx.title = 'Проиграть микс вокруг этого места' + (d.cue ? ' (замена накладывается поверх оригинала)' : '');
+    pCtx.onclick = () => inContext(d);
+    row1.append(pOrig, pCtx); c.append(row1);
+
+    // volume
+    const vol = el('div', 'sxrow');
+    const lab = el('span', 'lbl', 'Громкость'); const val = el('b', '', dbStr(d.gainDb));
+    const rng = el('input'); rng.type = 'range'; rng.min = -24; rng.max = 12; rng.step = 1; rng.value = d.gainDb;
+    rng.oninput = () => { d.gainDb = +rng.value; val.textContent = dbStr(d.gainDb); };
+    rng.onchange = () => { const u = previewUrl(d); if (u) playBuf(u, d.gainDb); };
+    vol.append(lab, rng, val); c.append(vol);
+
+    // replace / pick
+    const rep = el('div', 'sxrow');
+    rep.append(el('span', 'lbl', d.cue ? 'Заменить' : 'Звук'));
+    if (d.replace) {
+      const chip = el('span', 'chip', `<code>${esc(d.replace)}</code>`);
+      const x = el('button', 'ghost', '✕'); x.onclick = () => { d.replace = null; renderNotes(); };
+      rep.append(chip, x);
+    } else rep.append(el('span', 'cap', d.cue ? 'оставить как есть' : 'выбери ниже'));
+    c.append(rep);
+    const pickBtn = el('button', '', d.showPicker ? 'скрыть библиотеку' : 'выбрать из библиотеки…');
+    pickBtn.onclick = () => { d.showPicker = !d.showPicker; renderNotes(); };
+    c.append(pickBtn);
+    if (d.showPicker || !d.cue && !d.replace) c.append(libPicker(d, id => { d.replace = id; d.showPicker = false; playBuf(`/sfxlib/${id.slice(4)}.wav`, d.gainDb); renderNotes(); }));
+    if (!d.cue || d.replace) {
+      const al = el('label', 'sxrow');
+      const cb = el('input'); cb.type = 'checkbox'; cb.checked = d.align === 'peak';
+      cb.onchange = () => { d.align = cb.checked ? 'peak' : null; };
+      al.append(cb, el('span', '', 'пик звука ровно на этот момент (для ударов и вжухов)'));
+      c.append(al);
+    }
+    if (d.cue) {
+      const dl = el('label', 'sxrow');
+      const cb = el('input'); cb.type = 'checkbox'; cb.checked = d.delete;
+      cb.onchange = () => { d.delete = cb.checked; };
+      dl.append(cb, el('span', '', 'удалить этот звук'));
+      c.append(dl);
+    }
+    const ta = el('textarea'); ta.placeholder = 'Комментарий (необязательно): «слишком резко», «нужно что-то мягче», «звук раньше на полсекунды»…';
+    ta.value = d.text; ta.oninput = () => { d.text = ta.value; };
+    ta.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveSfx(); } if (e.key === 'Escape') { sfxDraft = null; renderNotes(); drawSfxLane(); } e.stopPropagation(); };
+    c.append(ta);
+    const acts = el('div', 'acts');
+    const sv = el('button', 'primary', 'Сохранить правку'); sv.onclick = saveSfx;
+    const cn = el('button', 'ghost', 'Отмена'); cn.onclick = () => { sfxDraft = null; renderNotes(); drawSfxLane(); };
+    acts.append(sv, cn); c.append(acts);
+    return c;
+  }
+
+  async function saveSfx() {
+    const d = sfxDraft; if (!d) return;
+    if (!d.cue && !d.replace) { alert('Выбери звук из библиотеки'); return; }
+    if (d.cue && !d.replace && !d.gainDb && !d.delete && !d.text.trim()) { alert('Ничего не изменено: замени звук, поменяй громкость, удали или напиши комментарий'); return; }
+    const id = notes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+    const t = d.cue ? d.cue.t : d.t, k = sceneAt(t);
+    const sfx = d.cue
+      ? { i: d.cue.i, t: d.cue.t, type: d.cue.type, src: d.cue.src, gain: d.cue.gain, align: d.cue.align || null, scene: d.cue.scene, origin: d.cue.origin || null,
+          replace: d.replace, replaceAlign: d.replace ? d.align : undefined, gainDb: d.gainDb, delete: d.delete }
+      : { new: true, replace: d.replace, align: d.align, gainDb: d.gainDb };
+    const text = sfxSummary(d) + (d.text.trim() ? '\n' + d.text.trim() : '');
+    notes.push({ id, kind: 'sfx', t, t2: null, x: null, y: null, text, sfx, status: 'open', scene: k + 1, sceneName: SCENES[k].name,
+      caption: captionAt(t), created: new Date().toISOString(), updated: Date.now() });
+    sfxDraft = null; activeId = id;
+    await save(); renderNotes(); drawSfxLane();
+  }
+
   // ---------- inputs ----------
+  $('sfxAdd').onclick = newSfxHere;
   $('c').addEventListener('click', e => {
     const r = e.target.getBoundingClientRect();
     newDraft((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H);
@@ -398,7 +611,7 @@
         if (v.root) { document.title = `${v.root} — ревью`; document.querySelector('aside h1').textContent = `Правки · ${v.root}`; }
       }
       else if (v.v !== codeV) { persist(); sessionStorage.setItem('reloaded', '1'); location.reload(); return; }
-      if (lastN && v.n !== lastN && !draft) { lastN = v.n; loadNotes(); }
+      if (lastN && v.n !== lastN && !draft && !sfxDraft) { lastN = v.n; loadNotes(); }
       if (!lastN) lastN = v.n;
     } catch {}
     setTimeout(poll, 1000);
@@ -414,6 +627,7 @@
     T = keep.T || 0;
     buildTimeline();
     await loadNotes();
+    await loadSfx();
     draw();
     if (sessionStorage.getItem('reloaded')) {
       sessionStorage.removeItem('reloaded');

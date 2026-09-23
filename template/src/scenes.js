@@ -11,6 +11,7 @@
 //     name = 'pop'|'whoosh'|'boing'|'thud'|'blip'|'tick'|'click'|'chime'|'crash'|'zap'|'thunder'|'shimmer'|'impact'|'rumble'
 //            (taken from the sound library when installed, synthesised otherwise)
 //          or 'lib:<id>' — any sound from the library, catalogue: _pipeline/sfx_library/index.md
+//          or 'lib:<id>|<offset>|<dur>' — a slice of a long library sound (seconds), with a short fade-out
 //     align = 'peak' to put the sound's loudest moment exactly at `time` (hits, whooshes); default: it starts at `time`
 // ======================================================================
 
@@ -24,6 +25,7 @@ const ASSETS = {
   },
 };
 // const CAPTION_STYLE = { size: 70, y: 0.765 };   // optional caption overrides; { off: true } hides them
+// const TRANS_WHOOSH = 'lib:whoosh/15-quick-a';  // optional: library whoosh on every transition, peak on the cut
 
 // ---------------------------------------------------------------- 1
 const S0 = {

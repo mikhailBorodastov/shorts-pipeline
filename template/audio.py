@@ -199,32 +199,57 @@ def build_sfx():
     except FileNotFoundError:
         events = []
     used_lib = 0
-    for e in events:
+    resolved = []            # what actually plays — read by the review UI (sound lane)
+    os.makedirs(os.path.join("build", "sfx_preview"), exist_ok=True)
+    for i, e in enumerate(events):
         typ, t, gain = e["type"], e["t"], e.get("gain", 1)
+        rec = {"i": i, "t": t, "type": typ, "gain": e.get("gain", 1), "align": e.get("align"), "scene": e.get("scene"), "origin": e.get("origin")}
         sid, peak_at = None, None
+        cut = None
         if typ.startswith("lib:"):
             sid = typ[4:]
-            peak_at = 0.0 if e.get("align") == "peak" else None
+            if "|" in sid:                        # 'lib:<id>|<offset>|<dur>' — a slice of a long sound
+                sid, off, dur = sid.split("|"); cut = (float(off), float(dur))
+            peak_at = 0.0 if e.get("align") == "peak" and not cut else None
         elif USE_LIBRARY and typ in LIB_DEFAULTS and lib_index():
             d = LIB_DEFAULTS[typ]
             sid, peak_at, gain = d["id"], d.get("peak_at"), gain * d.get("gain", 1)
         if sid:
             y, pk = lib_sound(sid)
+            if y is not None and cut:
+                y = y[int(cut[0] * SR):int((cut[0] + cut[1]) * SR)].copy()
+                f = min(len(y), int(0.08 * SR)); y[len(y) - f:] *= np.linspace(1, 0, f)
             if y is not None:
                 start = t + peak_at - pk if peak_at is not None else t
                 if start < 0:                         # peak-aligned sound that would start before 0: trim its head
                     y = y[int(-start * SR):]; start = 0
                 put(out, start, y * gain); used_lib += 1
+                resolved.append({**rec, "src": "lib:" + sid, "start": round(start, 3), "dur": round(len(y) / SR, 3),
+                                 "play_gain": round(gain, 3), "preview": "/sfxlib/" + sid + ".wav", "slice": list(cut) if cut else None})
                 continue
             if typ.startswith("lib:"):
                 print("  ! нет в библиотеке:", sid); continue
         fn = SFX.get(typ)
         if not fn:
             print("  ! неизвестный звук:", typ); continue
-        put(out, t, fn() * gain)
+        y = fn()
+        put(out, t, y * gain)
+        prev = os.path.join("build", "sfx_preview", f"synth-{typ}.wav")
+        if not os.path.exists(prev):
+            write_mono(prev, y / max(1e-9, np.abs(y).max()) * 0.9)
+        resolved.append({**rec, "src": "synth:" + typ, "start": round(t, 3), "dur": round(len(y) / SR, 3),
+                         "play_gain": round(gain, 3), "preview": "/build/sfx_preview/synth-" + typ + ".wav"})
+    with open(os.path.join("build", "sfx_resolved.json"), "w", encoding="utf-8") as f:
+        json.dump(resolved, f, ensure_ascii=False)
     if used_lib:
         print(f"  звуков из библиотеки: {used_lib}")
     return out
+
+
+def write_mono(path, y):
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+        w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
 
 
 def put(out, t, y):

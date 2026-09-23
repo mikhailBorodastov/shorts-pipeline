@@ -18,7 +18,7 @@ GET  /api/version      -> mtime исходников (авто-перезагр�
 """
 import base64, json, os, re, socket, sys, time, urllib.request, webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -32,6 +32,8 @@ SHOTS = os.path.join(REVIEW, "shots")
 NOTES = os.path.join(REVIEW, "notes.json")
 WATCH = [os.path.join(ROOT, "src"), os.path.join(ROOT, "build", "mix.wav")]
 PORT = int(os.environ.get("REVIEW_PORT", "8765"))
+SFX_LIB = os.environ.get("SFX_LIBRARY") or os.path.join(os.path.dirname(ROOT), "_pipeline", "sfx_library")
+MIME = {".wav": "audio/wav", ".json": "application/json; charset=utf-8", ".md": "text/markdown; charset=utf-8", ".html": "text/html; charset=utf-8"}
 os.makedirs(SHOTS, exist_ok=True)
 
 
@@ -72,13 +74,40 @@ def notes_md(notes):
             lines.append(f"- Точка на кадре: x={round(n['x'])}, y={round(n['y'])} (из 1080×1920)")
         if n.get("caption"):
             lines.append(f"- Субтитр в этот момент: «{n['caption']}»")
-        lines.append(f"- Скрин: review/shots/{n['id']}.png")
+        if n.get("kind") == "sfx":
+            lines += sfx_lines(n)
+        else:
+            lines.append(f"- Скрин: review/shots/{n['id']}.png")
         lines.append("")
         lines.append(n.get("text", "").strip() or "_(пусто)_")
         for r in n.get("replies", []):
             lines.append(f"> **{r.get('who', '')}**: {r.get('text', '')}")
         lines.append("")
     return "\n".join(lines)
+
+
+def sfx_lines(n):
+    """Readable description of a sound note (kind='sfx') for Claude."""
+    s = n.get("sfx") or {}
+    out = []
+    if s.get("new"):
+        out.append(f"- 🔊 **Добавить звук** `{s.get('replace')}` в {fmt(n['t'])} (сцена {n.get('scene', '?')})"
+                   + (f", громкость {s['gainDb']:+.0f} dB" if s.get("gainDb") else "") + (", пик на этот момент" if s.get("align") == "peak" else ""))
+        return out
+    cue = f"cue #{s.get('i')} · `{s.get('type')}`" + (f" (играет `{s.get('src')}`)" if s.get("src") and s.get("src") != s.get("type") else "")
+    where = (f"автоматический вжух перехода в сцену {(s.get('scene') or 0) + 1} (main.js; отключить — noWhoosh, заменить — свой add() в sfx сцены)"
+             if s.get("origin") == "transition" else f"сцена {(s.get('scene') or 0) + 1}, scenes.js → sfx(add)")
+    out.append(f"- 🔊 Звук: {cue} · t={s.get('t')} · gain {s.get('gain')} · {where}")
+    acts = []
+    if s.get("delete"):
+        acts.append("**удалить**")
+    if s.get("replace"):
+        acts.append(f"**заменить** на `{s['replace']}`")
+    if s.get("gainDb"):
+        acts.append(f"**громкость {s['gainDb']:+.0f} dB** (множитель ×{10 ** (s['gainDb'] / 20):.2f})")
+    if acts:
+        out.append("- Действие: " + ", ".join(acts))
+    return out
 
 
 class H(SimpleHTTPRequestHandler):
@@ -109,6 +138,18 @@ class H(SimpleHTTPRequestHandler):
             self.send_response(302); self.send_header("Location", "/src/review.html"); self.end_headers(); return
         if u.path == "/api/notes":
             return self._json(load())
+        if u.path.startswith("/sfxlib/"):                 # shared sound library (_pipeline/sfx_library)
+            rel = os.path.normpath(unquote(u.path[len("/sfxlib/"):])).replace("\\", "/")
+            f = os.path.join(SFX_LIB, rel)
+            if rel.startswith("..") or not os.path.isfile(f):
+                return self.send_error(404)
+            data = open(f, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", MIME.get(os.path.splitext(f)[1].lower(), "application/octet-stream"))
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if u.path == "/api/version":
             m = 0
             for w in WATCH:

@@ -168,9 +168,16 @@ function renderFrame(T) {
 function buildSFX() {
   const ev = [];
   // add(t, 'pop' | 'lib:whoosh/15-quick-a', gain, 'peak'?) — 'peak' puts the library sound's loudest point at t
-  const add = (t, type, gain = 1, align) => ev.push(Object.assign({ t: +Math.max(0, t).toFixed(3), type, gain }, align ? { align } : {}));
-  for (let k = 1; k < SCENES.length; k++) if (SCENES[k].trans !== 'cut' && !SCENES[k].noWhoosh) add(B[k] - 0.45, 'whoosh', 0.9);
-  SCENES.forEach((s, k) => s.sfx && s.sfx(add, B[k], B[k + 1]));
+  let scene = 0;   // which scene is adding cues (0-based) — the review UI shows it and Claude uses it to find the cue
+  const add = (t, type, gain = 1, align) => ev.push(Object.assign({ t: +Math.max(0, t).toFixed(3), type, gain, scene }, align ? { align } : {}));
+  for (let k = 1; k < SCENES.length; k++) {   // automatic transition whooshes (origin 'transition'; scene.noWhoosh turns one off)
+    scene = k;
+    if (SCENES[k].trans === 'cut' || SCENES[k].noWhoosh) continue;
+    // TRANS_WHOOSH (optional, in scenes.js) = library sound with its peak on the cut, e.g. 'lib:whoosh/15-quick-a'
+    if (typeof TRANS_WHOOSH !== 'undefined') add(B[k], TRANS_WHOOSH, 0.5, 'peak'); else add(B[k] - 0.45, 'whoosh', 0.9);
+    ev[ev.length - 1].origin = 'transition';
+  }
+  SCENES.forEach((s, k) => { scene = k; s.sfx && s.sfx(add, B[k], B[k + 1]); });
   return ev.sort((a, b) => a.t - b.t);
 }
 
