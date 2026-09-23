@@ -304,6 +304,8 @@ def build_music():
 def load_vo():
     out = np.zeros(N)
     for s in VO["sections"]:
+        if not s.get("file"):                      # silent section
+            continue
         raw = subprocess.run(["ffmpeg", "-v", "error", "-i", s["file"], "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"],
                              capture_output=True).stdout
         put(out, s["start"], np.frombuffer(raw, dtype=np.float32).astype(float))

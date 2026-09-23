@@ -2,11 +2,15 @@
 
     python tts.py
 
-Читает script.md: каждая секция "## ..." — одна сцена, её текст берётся из поля "Голос:".
-Настройки в шапке script.md (необязательно):
+Читает script.md в любом из двух форматов:
+  • пайплайн:  "## 1. Название" + поле "Голос: …"
+  • сценарист (_pipeline/prompts/scriptwriter.md): "### 0:00–0:04 — НАЗВАНИЕ" + "**VO:**" и строки "> …"
+Каждый заголовок с голосом — одна сцена; разделы без голоса (упаковка, источники) пропускаются.
+Настройки до первой сцены (необязательно):
     voice: ru-RU-DmitryNeural      (или ru-RU-SvetlanaNeural)
     rate: +25%
     произношение: Chrono Trigger = Кроно Триггер
+    вопрос: верим                  (слово, которому нужна вопросительная интонация)
 
 Пишет build/vo/sec{N}.mp3, build/vo_timing.json и src/vo_timing.js (window.VO).
 """
@@ -19,27 +23,67 @@ TAIL = 2.0          # хвост после последней фразы
 OUT = os.path.join("build", "vo")
 
 
+SCENE_HEAD = re.compile(r"^#{2,3}\s+(.+?)\s*$", re.M)
+TIMECODE = re.compile(r"(\d+:\d{2}(?:\.\d+)?)\s*[–—-]\s*(\d+:\d{2}(?:\.\d+)?)")
+
+
+def _secs(tc):
+    m, s = tc.split(":")
+    return int(m) * 60 + float(s)
+
+
+def _voice_of(block):
+    """Voice-over text of one scene block, in either format:
+       pipeline:     'Голос: текст…'                         (until the next 'Поле:' line)
+       scriptwriter: '**VO:**' followed by '> текст' lines   (prompts/scriptwriter.md)"""
+    # '**VO:**' (optionally followed by a note like '*(шёпотом)*' on the same line) + '> …' quote lines
+    m = re.search(r"\**VO\**\s*:\**[ \t]*([^\n]*)\n((?:[ \t]*>.*\n?)+)", block, re.I)
+    if m:
+        lines = [re.sub(r"^\s*>\s?", "", l) for l in m.group(2).splitlines() if l.strip()]
+        return " ".join(lines)
+    m = re.search(r"\**VO\**\s*:\**\s*(\S.+)", block, re.I)          # '**VO:** текст' on one line
+    if m:
+        return m.group(1)
+    m = re.search(r"(?:^|\n)\s*[-*]?\s*\**Голос\**\s*:\s*(.+?)(?=\n\s*[-*]?\s*\**[А-ЯA-Z][а-яa-z]+\**\s*:|\Z)", block, re.S)
+    return m.group(1) if m else None
+
+
 def parse_script(path="script.md"):
+    """Scenes = '## ' or '### ' headings that contain a voice-over; everything else (packaging, sources…) is ignored.
+       Settings (voice, rate, произношение, вопрос) are read from the lines before the first scene."""
     text = open(path, encoding="utf-8").read()
-    cfg = {"voice": "ru-RU-DmitryNeural", "rate": "+25%", "pron": {}}
-    head = text.split("\n## ", 1)[0]
+    cfg = {"voice": "ru-RU-DmitryNeural", "rate": "+25%", "pron": {}, "rise": []}
+    heads = list(SCENE_HEAD.finditer(text))
+    head = text[:heads[0].start()] if heads else text
     for line in head.splitlines():
         m = re.match(r"\s*(voice|rate)\s*:\s*(.+)", line, re.I)
         if m:
             cfg[m.group(1).lower()] = m.group(2).strip()
+        m = re.match(r"\s*вопрос\s*:\s*(.+)", line, re.I)
+        if m:
+            cfg["rise"].append(m.group(1).strip().lower())
         m = re.match(r"\s*произношение\s*:\s*(.+?)\s*=\s*(.+)", line, re.I)
         if m:
             cfg["pron"][m.group(1).strip()] = m.group(2).strip()
     sections = []
-    for block in re.split(r"\n## ", "\n" + text)[1:]:
-        title = block.splitlines()[0].strip()
-        m = re.search(r"(?:^|\n)\s*[-*]?\s*\**Голос\**\s*:\s*(.+?)(?=\n\s*[-*]?\s*\**[А-ЯA-Z][а-яa-z]+\**\s*:|\n## |\Z)", block, re.S)
-        if not m:
+    for k, h in enumerate(heads):
+        block = text[h.end():heads[k + 1].start() if k + 1 < len(heads) else len(text)]
+        voice = _voice_of(block)
+        if not voice:
+            # a scene with a timecode and a picture but no voice = a silent beat of that length
+            tc = TIMECODE.search(h.group(1))
+            if tc and re.search(r"\**(Картинка|Визуал)\**\s*:", block, re.I):
+                dur = _secs(tc.group(2)) - _secs(tc.group(1))
+                if dur > 0:
+                    sections.append({"title": h.group(1).replace("**", "").strip(), "text": "", "silence": round(dur, 3)})
             continue
-        voice = re.sub(r"\s+", " ", m.group(1)).strip().strip("«»\"")
-        sections.append({"title": title, "text": voice})
+        voice = re.sub(r"\*\([^)]*\)\*", " ", voice)                   # director's notes *(…)* are not spoken
+        voice = re.sub(r"[*_]{1,2}", "", voice)                          # markdown emphasis
+        voice = re.sub(r"\s+", " ", voice).strip().strip("«»\"")
+        if voice:
+            sections.append({"title": h.group(1).replace("**", "").strip(), "text": voice})
     if not sections:
-        sys.exit("В script.md не найдено ни одной секции с полем «Голос:»")
+        sys.exit("В script.md не найдено ни одной сцены с голосом (поле «Голос:» или «**VO:**» с цитатой «> …»)")
     return cfg, sections
 
 
@@ -79,6 +123,110 @@ async def synth_retry(i, text, cfg):
     raise RuntimeError("TTS failed")
 
 
+MAX_PAUSE = 0.32   # паузы между фразами длиннее этого ужимаются (edge-tts делает ~1 с)
+
+
+def tighten(path, words):
+    """Вырезает лишнюю тишину между словами; сдвигает тайминги."""
+    import numpy as np
+    SR = 24000
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(SR), "-"],
+                         capture_output=True).stdout
+    a = np.frombuffer(raw, dtype=np.int16)
+    keep, cur, shift = [], 0, 0.0
+    out_words = []
+    for k, w in enumerate(words):
+        w = dict(w); w["t"] -= shift; out_words.append(w)
+        if k + 1 < len(words):
+            end = words[k]["t"] + words[k]["d"]; gap = words[k + 1]["t"] - end
+            if gap > MAX_PAUSE:
+                cut = gap - MAX_PAUSE
+                c0 = int((end + MAX_PAUSE / 2) * SR); c1 = int((end + MAX_PAUSE / 2 + cut) * SR)
+                keep.append(a[cur:c0]); cur = c1; shift += cut
+    keep.append(a[cur:])
+    b = np.concatenate(keep)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "s16le", "-ar", str(SR), "-ac", "1", "-i", "-", "-b:a", "96k", path],
+                   input=b.tobytes(), check=True)
+    return out_words
+
+
+def _f0_track(y, sr, hop):
+    """F0 по кадрам (автокорреляция); 0 = глухой кадр."""
+    import numpy as np
+    n = int(0.03 * sr); lo, hi = sr // 350, sr // 65; out = []
+    thr = 0.02 * (np.abs(y).max() + 1e-9)
+    for i in range(0, len(y), hop):
+        w = y[i:i + n]
+        if len(w) < n or np.sqrt(np.mean(w ** 2)) < thr: out.append(0.0); continue
+        w = w - w.mean(); ac = np.correlate(w, w, "full")[n - 1:]
+        lag = lo + int(np.argmax(ac[lo:hi]))
+        out.append(sr / lag if ac[lag] > 0.25 * ac[0] else 0.0)
+    return np.array(out)
+
+
+def psola(y, sr, a, b, factor):
+    """TD-PSOLA: меняет высоту тона на отрезке [a, b] c (factor(u), u = 0..1 по отрезку), не меняя длительность."""
+    import numpy as np
+    A, Bi = int(a * sr), int(b * sr)
+    seg = y[A:Bi].astype(float); hop = int(0.005 * sr)
+    f0 = _f0_track(seg, sr, hop)
+    per = lambda i: sr / f0[min(len(f0) - 1, i // hop)] if f0[min(len(f0) - 1, i // hop)] > 0 else None
+    marks, i = [], 0                                       # analysis pitch marks on local maxima
+    while i < len(seg):
+        P = per(i) or int(0.006 * sr)
+        j0, j1 = max(0, i - int(P * 0.3)), min(len(seg), i + int(P * 0.3) + 1)
+        m = j0 + int(np.argmax(seg[j0:j1])) if per(i) else i
+        if marks and m <= marks[-1]: m = marks[-1] + int(P * 0.5)
+        marks.append(m); i = m + int(P)
+    marks = np.array([m for m in marks if m < len(seg)])
+    out = np.zeros(len(seg) + sr // 10); wsum = np.zeros_like(out)
+    ts = float(marks[0]) if len(marks) else 0.0
+    while len(marks) and ts < len(seg):
+        k = int(np.argmin(np.abs(marks - ts))); m = marks[k]
+        P = int(marks[k + 1] - m) if k + 1 < len(marks) else int(0.006 * sr)
+        P = max(20, min(P, int(0.016 * sr)))
+        voiced = per(m) is not None
+        f = factor(ts / len(seg)) if voiced else 1.0
+        w = np.hanning(2 * P + 1); s0 = m - P
+        src = np.zeros(2 * P + 1); lo_, hi_ = max(0, s0), min(len(seg), s0 + 2 * P + 1)
+        src[lo_ - s0:hi_ - s0] = seg[lo_:hi_]
+        d0 = int(ts) - P
+        if d0 >= 0: out[d0:d0 + 2 * P + 1] += src * w; wsum[d0:d0 + 2 * P + 1] += w
+        ts += P / f
+    out = out[:len(seg)]; wsum = wsum[:len(seg)]
+    res = np.where(wsum > 0.2, out / np.maximum(wsum, 1e-9), seg)
+    fade = min(len(seg) // 4, int(0.012 * sr))           # crossfade into the untouched audio
+    ramp = np.linspace(0, 1, fade)
+    res[:fade] = seg[:fade] * (1 - ramp) + res[:fade] * ramp
+    res[-fade:] = res[-fade:] * (1 - ramp) + seg[-fade:] * ramp
+    y = y.copy(); y[A:Bi] = res
+    return y
+
+
+QUESTION = {"peak": 1.3, "tail": 1.45}   # вопрос: пик на ударном слоге ×1.3, конец слова не проваливается (×1.45)
+
+
+def rise_tail(path, words, keys):
+    """Вопросительная интонация для слов из `вопрос:` — плавный контур через PSOLA, без нарезки."""
+    import numpy as np
+    SR = 24000
+    y = None
+    for w in words:
+        if not any(k in _norm(w["w"]) for k in keys):
+            continue
+        if y is None:
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(SR), "-"], capture_output=True).stdout
+            y = np.frombuffer(raw, dtype=np.int16).astype(float)
+        pk, tl = QUESTION["peak"], QUESTION["tail"]
+        fac = lambda u: 1 + (pk - 1) * np.exp(-((u - 0.3) / 0.18) ** 2) + (tl - 1) * np.clip((u - 0.45) / 0.45, 0, 1)
+        y = psola(y, SR, w["t"], w["t"] + w["d"] + 0.12, fac)
+    if y is not None:
+        y = np.clip(y, -32768, 32767).astype(np.int16)
+        tmp = path + ".q.mp3"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "s16le", "-ar", str(SR), "-ac", "1", "-i", "-", "-b:a", "96k", tmp], input=y.tobytes(), check=True)
+        os.replace(tmp, path)
+
+
 def map_display_words(text, spoken_words, spoken_text):
     """Переносит тайминги произнесённых слов на слова оригинального текста (для субтитров)."""
     merged = []
@@ -113,7 +261,19 @@ async def main():
     t = LEAD_IN
     sections = []
     for i, s in enumerate(secs):
+        if s.get("silence"):                       # silent beat: a file of pure silence, no words
+            path = os.path.join(OUT, f"sec{i}.mp3")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                            "-t", str(s["silence"]), "-b:a", "96k", path], check=True)
+            sections.append({"title": s["title"], "start": round(t, 3), "dur": s["silence"], "file": path.replace("\\", "/"),
+                             "words": [], "silent": True})
+            print(f"sec{i} «{s['title']}»: start {t:.2f}  тишина {s['silence']:.2f}")
+            t += s["silence"] + GAP
+            continue
         path, words, spoken = await synth_retry(i, s["text"], cfg)
+        words = tighten(path, words)
+        if cfg["rise"]:
+            rise_tail(path, words, cfg["rise"])
         d = duration(path)
         sections.append({"title": s["title"], "start": round(t, 3), "dur": round(d, 3), "file": path.replace("\\", "/"),
                          "words": map_display_words(s["text"], words, spoken)})

@@ -33,6 +33,10 @@ def main():
     t = LEAD_IN
     sections = []
     for i, s in enumerate(secs):
+        if s.get("silence"):                       # silent beat from the script: nothing to record
+            sections.append({"title": s["title"], "start": round(t, 3), "dur": s["silence"], "file": None, "words": [], "silent": True})
+            t += s["silence"] + GAP
+            continue
         path = find_file(i)
         if not path:
             sys.exit(f"Нет файла для секции {i} «{s['title']}»: положи build/vo/sec{i}.mp3 (или .wav)")

@@ -7,3 +7,4 @@ template/review/notes.*
 template/review/shots/*
 !template/review/shots/.gitkeep
 sfx_library/
+HANDOFF_*.md
