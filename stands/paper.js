@@ -5,7 +5,8 @@
 // Нужны helpers из template/src/lib.js (W, H, TAU, lerp, remap, clamp, E, rng, noise1, rr, circle, font, vgrad, radial, imgFit…).
 // Если тулкит в роликах обновился — перенеси сюда свежую версию.
 try {
-  const ff = new FontFace('Caveat', 'url(/fonts/Caveat.ttf)', { weight: '400 700' });
+  const fu = /\/src\/[^/]*$/.test(location.pathname) ? '../assets/fonts/Caveat.ttf' : '/fonts/Caveat.ttf';   // проект ролика (src/index.html) или стенд приложения
+  const ff = new FontFace('Caveat', `url(${fu})`, { weight: '400 700' });
   document.fonts.add(ff); ff.load().catch(() => {});
 } catch (e) {}
 

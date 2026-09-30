@@ -152,10 +152,11 @@ function scenePropRefs(scene) {
   return [...new Set(refs.filter(k => /^(lib|el):/.test(k || '')))];
 }
 function scenePropUrl(ref, plan) {
+  const U = typeof SCENE_URLS !== 'undefined' ? SCENE_URLS : null;   // проект ролика (монтаж S6): файлы скопированы в assets/studio/
   let m = /^lib:([a-z]+)\/([a-z0-9-]+)@(\d+)$/.exec(ref || '');
-  if (m) return `/api/lib/file/video:${plan}/${m[1]}/${m[2]}/v${m[3]}/prefab.js`;
+  if (m) return U ? `${U.lib}${m[1]}/${m[2]}/v${m[3]}/prefab.js` : `/api/lib/file/video:${plan}/${m[1]}/${m[2]}/v${m[3]}/prefab.js`;
   m = /^el:([A-Za-z0-9_-]+)@v?(\d+)$/.exec(ref || '');
-  if (m) return `/rscene/${plan}/${m[1]}/v${m[2]}/prefab.js`;
+  if (m) return U ? `${U.el}${m[1]}/v${m[2]}/prefab.js` : `/rscene/${plan}/${m[1]}/v${m[2]}/prefab.js`;
   return null;
 }
 // load(src) — загрузчик скриптов страницы; into — уже загруженные (S.lib). Модели glb догружаются, если движок уже поднят
@@ -178,7 +179,8 @@ async function loadSceneProps(refs, plan, load, into = {}, scene = null) {
   if (typeof RIG !== 'undefined' && typeof rigAnim === 'function' && into.__scene) {
     for (const id of sceneAnimRefs(into.__scene)) {
       if (RIG.anims[id]) continue;
-      try { const r = await fetch(`/api/lib/file/video:${plan}/anims/${id}.json?v=${Date.now()}`); if (r.ok) rigAnim(await r.json()); } catch (e) { console.warn('scene: клип не загрузился', id); }
+      const u = typeof SCENE_URLS !== 'undefined' ? `${SCENE_URLS.anims}${id}.json` : `/api/lib/file/video:${plan}/anims/${id}.json?v=${Date.now()}`;
+      try { const r = await fetch(u); if (r.ok) rigAnim(await r.json()); } catch (e) { console.warn('scene: клип не загрузился', id); }
     }
   }
   if (typeof X3 !== 'undefined' && X3.R && typeof loadModels3 === 'function') await loadModels3();

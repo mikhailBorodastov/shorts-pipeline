@@ -65,6 +65,7 @@ import preprod  # noqa: E402  модель элементов препродак
 import assets  # noqa: E402  поиск и скачивание бесплатных 3D / 2D ассетов
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
 import char_api  # noqa: E402  персонажи со скелетом (S4): библиотека, позы, версии
+import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
@@ -80,7 +81,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -112,6 +113,10 @@ def aapi():
 
 def chapi():
     return _fresh(char_api, "chr")
+
+
+def mnapi():
+    return _fresh(montage_api, "mnt")
 
 
 def scapi():
@@ -796,6 +801,8 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
+        elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
+            mnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("charrig", "charemotions"):          # персонажи (S4): сохранение скелета, эмоции; charparts — обычная задача Claude ниже
             chapi().run_job(sys.modules[__name__], job)
         else:
@@ -1185,6 +1192,12 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
+    if p == "/api/montage":
+        try:
+            if mnapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p in ("/api/char", "/api/chars", "/api/anims"):
         try:
             if chapi().handle_get(sys.modules[__name__], h, p, q):
@@ -1298,6 +1311,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p.startswith("/api/montage/") and mnapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/char/") and chapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/scene/") and scapi().handle_post(sys.modules[__name__], h, p, body):
@@ -1351,6 +1366,7 @@ def cli(argv):
     | op KEY '<JSON: операция или список операций set/add/del/move>'
     | produce ID  (🚀 проект ролика в папке видео)
     | scene show|ops|history|undo|version|clip|validate|finish ID EL …  (сцены редактора, scene_api.cli)
+    | montage show|gen|build <видео>  (монтаж S6, montage_api.cli)
     | char list|show|pose|skeleton|version …  (персонажи со скелетом, char_api.cli)
     | lib list|show|publish …  (библиотека канала, studio_api.cli)"""
     cmd, a = argv[0], argv[1:]
@@ -1418,6 +1434,8 @@ def cli(argv):
         return True
     if cmd == "scene":
         return scapi().cli(sys.modules[__name__], a)
+    if cmd == "montage":
+        return mnapi().cli(sys.modules[__name__], a)
     if cmd == "char":
         return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":

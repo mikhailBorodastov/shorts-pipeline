@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "server"))
 import paths as P  # noqa: E402
 
-ENGINE_FILES = ("lib.js", "stage3d.js", "moves3d.js", "scene.js", "scene.schema.json", "vendor")
+ENGINE_FILES = ("lib.js", "stage3d.js", "moves3d.js", "scene.js", "scene.schema.json", "props3d.js", "rig.js", "vendor")   # + stands/paper.js (тулкит) — ниже
 
 
 def copy_missing(src, dst, ignore=None):
@@ -38,6 +38,9 @@ def make(dst, install=True):
             copy_missing(s, os.path.join(dst, "src", f))
         elif os.path.isfile(s) and not os.path.exists(os.path.join(dst, "src", f)):
             shutil.copy2(s, os.path.join(dst, "src", f))
+    pj = os.path.join(P.STANDS, "paper.js")                    # бумажный тулкит (drawHog, cut…) — нужен персонажам и префабам сцен редактора
+    if os.path.isfile(pj) and not os.path.exists(os.path.join(dst, "src", "paper.js")):
+        shutil.copy2(pj, os.path.join(dst, "src", "paper.js"))
     for d in ("refs", "review/shots", "build", "out", "assets"):
         os.makedirs(os.path.join(dst, d), exist_ok=True)
     stub = os.path.join(P.ROOT, "CLAUDE.md")          # Claude loads the studio instructions in the work folder

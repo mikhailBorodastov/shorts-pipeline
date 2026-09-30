@@ -57,7 +57,7 @@ function character(def) {
   def.url = src.replace(location.origin, '');
   def.needs = (def.costumes || []).map(c => (/^(\/|https?:)/.test(c) ? c : base + c).replace(location.origin, ''));
   def.skel = RIG.skeletons[def.skeleton] || null;
-  if (/\/characters\/[^/]+\/v\d+\/$/.test(base)) def.extrasUrl = base + '../emotions.json';   // библиотека: эмоции, утверждённые после публикации — общие для всех версий
+  if (/\/characters\/[^/]+\/v\d+\/$/.test(base)) def.extrasUrl = base + '../emotions.json';   // и в проекте ролика: assets/studio/lib/characters/<slug>/   // библиотека: эмоции, утверждённые после публикации — общие для всех версий
   if (def.rig === 'parts') def.rigUrl = base + 'rig.json';           // части: суставы, крепление частей, позы — данными (редактор скелета их двигает)
   // префаб сцены: kind 'group' — engine/scene.js собирает его как 3D-пропс (S.lib), см. charCard
   def.kind = 'group';
@@ -432,7 +432,8 @@ function rigEnvAt(sid, T) { const E = RIG.envs[sid]; if (!E) return 0; const i =
 async function loadSceneEnvs(scene, plan, el) {
   for (const o of scene.objects || []) {
     const sid = o.lipsync && o.lipsync.sound; if (!sid) continue;
-    try { const r = await fetch(`/api/scene/env?key=${encodeURIComponent('plan:' + plan)}&el=${el}&sid=${sid}`); if (r.ok) RIG.envs[sid] = await r.json(); } catch (e) {}
+    const u = typeof SCENE_URLS !== 'undefined' ? `${SCENE_URLS.env}${sid}.json` : `/api/scene/env?key=${encodeURIComponent('plan:' + plan)}&el=${el}&sid=${sid}`;
+    try { const r = await fetch(u); if (r.ok) RIG.envs[sid] = await r.json(); } catch (e) {}
   }
 }
 

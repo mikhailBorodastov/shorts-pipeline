@@ -307,7 +307,26 @@ def put(out, t, y):
 
 
 # ---------------- music ----------------
+def build_music_files(items):
+    """Музыка монтажа Claude Studio (S6): build/music.json = [{file, at, gain, from, dur, fadeIn, fadeOut}] — файлы на таймлайне ролика."""
+    out = np.zeros(N)
+    for m in items:
+        cmd = ["ffmpeg", "-v", "error"] + (["-ss", str(m["from"])] if m.get("from") else []) + (["-t", str(m["dur"])] if m.get("dur") else []) + \
+              ["-i", m["file"], "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"]
+        y = np.frombuffer(subprocess.run(cmd, capture_output=True).stdout, dtype=np.float32).astype(float)
+        if not len(y):
+            print("! музыка не прочиталась:", m["file"]); continue
+        t = np.arange(len(y)) / SR
+        fi, fo = float(m.get("fadeIn") or 0), float(m.get("fadeOut") or 0)
+        if fi: y *= np.minimum(1, t / fi)
+        if fo: y *= np.minimum(1, np.maximum(0, (len(y) / SR - t) / fo))
+        put(out, float(m.get("at") or 0), y * float(m.get("gain", 1)))
+    return out
+
+
 def build_music():
+    if os.path.isfile("build/music.json"):                   # монтаж приложения: музыка — файлы, синтез не нужен
+        return build_music_files(json.load(open("build/music.json", encoding="utf-8")))
     M = MUSIC
     beat = 60 / M["bpm"]; bar = beat * 4
     bass_from, arp_from = M["bass_from"] * TOTAL, M["arp_from"] * TOTAL

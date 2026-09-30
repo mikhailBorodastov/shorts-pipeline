@@ -34,6 +34,7 @@ const READY = (async () => {
   await document.fonts.ready;
   // 3D worlds (stage3d.js): wait for three.js, then build scenes (textures need fonts and images)
   if (window.THREE_READY) await window.THREE_READY;
+  if (typeof window.STUDIO_READY === 'function') await window.STUDIO_READY();   // монтаж Claude Studio: персонажи, пропсы, клипы — до построения миров
   if (typeof stage3dInit === 'function') await stage3dInit();
   return true;
 })();
@@ -42,7 +43,8 @@ function seqFrame(key, i) { const s = SEQ[key]; if (!s || !s.length) return null
 
 // ---------- timeline ----------
 // scene k covers [B[k], B[k+1]); boundaries follow the voice-over sections (scene k <-> section k)
-const B = SCENES.map((_, k) => (k === 0 ? 0 : VO.sections[Math.min(k, VO.sections.length - 1)].start - 0.2));
+// монтаж Claude Studio (S6, src/montage.js) задаёт границы сам: SCENE_B = [начало каждой сцены…]
+const B = typeof SCENE_B !== 'undefined' ? SCENE_B.slice(0, SCENES.length) : SCENES.map((_, k) => (k === 0 ? 0 : VO.sections[Math.min(k, VO.sections.length - 1)].start - 0.2));
 B.push(TOTAL);
 const TD = 0.7; // default transition length
 
