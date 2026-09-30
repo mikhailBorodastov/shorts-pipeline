@@ -1,17 +1,12 @@
-"""Штурм идей: локальный сервис по методике «Мастер-планера», в двух режимах (шортс и длинное видео) и двух путях:
-«есть идея» (идея и референсы → вопросы Claude → биты → название → препродакшен: сцены, персонажи, пропсы, звуки → обложка)
-и «штурм» (идеи → биты → название → образы → превью → структура → в работу → итоги).
+"""Claude Studio — локальный скрипт приложения (бывший «Штурм идей»): страница, API, задачи Claude. Окно — app/ (S2), вход — studio.py.
 
-    python ideas_server.py [--open]      -> http://localhost:8790/  (порт занят — 8791, 8792, …; пишется в _ideas/.port)
-    python ideas_server.py port          (порт уже запущенного сервиса)
-    python ideas_server.py list | show ID | bank | new short|long "Имя" [--topic "…"] [--idea "…"] [--storm]
-                           | add-ideas ID "…" … | add-beats ID "вопрос | ответ" … | add-bank "Идея" [--desc …]
-                           | add-questions ID "вопрос" … | add-elements ID scene|char|prop|sound "название | описание" …
-                           | set KEY путь значение | produce ID "Проект" [--attach]
-                                         (команды для Claude в сессии, полный список — ideas_api.cli)
+    python studio.py [--open]      -> http://localhost:8790/  (порт занят — 8791, 8792, …; пишется в <рабочая папка>/.studio/.port)
+    python studio.py port          (порт уже запущенного приложения)
+    python studio.py channels | use ID | list | show ID | new short|long "Имя" | add-questions … | add-elements … | set … | op …
+                     | produce ID | scene … | lib …        (команды для Claude в сессии, полный список — ideas_api.cli)
 
-Код лежит здесь (_pipeline/ideas), данные — в <рабочая папка>/_ideas, вне git (plans/*.json + *.md, bank.json,
-brand.json, stats.json, files/, копия PDF тетради). Вся логика запросов — в ideas_api.py, он перезагружается на лету.
+Код — _studio/server (этот файл — ядро: порт, запуск, CLI), вся логика запросов — в ideas_api.py, он перезагружается на лету.
+Где что лежит — server/paths.py; данные — каналы в рабочей папке (<канал>/videos/<видео>/video.json …), состояние — .studio/.
 """
 import importlib, json, os, socket, sys, threading, time, urllib.request, webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -23,8 +18,9 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PORT = int(os.environ.get("IDEAS_PORT", "8790"))
+PORT = int(os.environ.get("STUDIO_PORT") or os.environ.get("IDEAS_PORT") or "8790")
 sys.path.insert(0, HERE)
+import paths  # noqa: E402  where things are
 import ideas_api  # noqa: E402  (all request logic lives there and is hot-reloaded)
 
 _api_lock = threading.Lock()
@@ -48,7 +44,7 @@ def api():
 
 class H(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
-        super().__init__(*a, directory=os.path.join(HERE, "web"), **kw)
+        super().__init__(*a, directory=paths.WEB, **kw)
 
     def log_message(self, *a):
         pass
@@ -102,7 +98,7 @@ def is_busy(port):
 
 
 def probe(port):
-    """True if this port serves «Штурм идей» for the same data folder."""
+    """True if this port serves Claude Studio for the same work folder."""
     if not is_busy(port):
         return False
     try:
@@ -147,7 +143,7 @@ def serve(open_browser):
 
 
 def ticker():
-    """Once a minute: background duties of the API (bank auto-refresh from news sites)."""
+    """Once a minute: background duties of the API (ideas_api.auto_tick)."""
     while True:
         time.sleep(60)
         try:
@@ -155,7 +151,7 @@ def ticker():
             if hasattr(a, "auto_tick"):
                 a.auto_tick()
         except Exception as e:
-            print("! автообновление банка:", e)
+            print("! фоновая задача:", e)
 
 
 if __name__ == "__main__":

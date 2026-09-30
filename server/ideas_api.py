@@ -1,60 +1,45 @@
-"""Логика «Штурма идей»: документы и операции, экспорт для Claude, запуск Claude со страницы, передача в производство.
+"""Логика Claude Studio (бывший «Штурм идей»): документы и операции, экспорт для Claude, запуск Claude со страницы, начало производства.
 
-ideas_server.py перезагружает этот модуль при изменении файла (а он сам перезагружает ideas_claude.py).
-Поднимай API_VERSION, когда меняется то, от чего зависит страница: она покажет плашку «перезапусти сервис».
+ideas_server.py перезагружает этот модуль при изменении файла (а он сам перезагружает ideas_claude.py, scene_api.py, studio_api.py).
+Поднимай API_VERSION, когда меняется то, от чего зависит страница: она покажет плашку «перезапусти».
 
-Документы — JSON в DATA (= <рабочая папка>/_ideas), у каждого счётчик rev:
-    plan:<id> -> plans/<id>.json  (+ plans/<id>.md — читаемая версия для Claude в сессии)
-    bank      -> bank.json        (трекер идей)
-    brand     -> brand.json       (лист проекта)
-    stats     -> stats.json       (трекер просмотров и выводы)
-    index.md  — обзор всего для Claude, пересобирается при каждом сохранении.
+Где что лежит — paths.py. Документы — JSON с счётчиком rev:
+    plan:<id>     -> <канал>/videos/<папка>/video.json (+ video.md — читаемая версия для Claude); до переезда — _ideas/plans/<id>.json
+    channel:<id>  -> <канал>/channel.json
+    <канал>/index.md — обзор канала для Claude, пересобирается при каждом сохранении.
 Правки приходят операциями (set / add / del / move, см. apply_op) и применяются к свежему файлу под блокировкой.
 Поэтому страница, Claude на странице и Claude в сессии (CLI) не затирают правки друг друга.
 
-GET  /api/state            -> версия API, доступен ли Claude и PDF, сводки штурмов
+GET  /api/state            -> версия API, доступен ли Claude, каналы, текущий канал и его видео
 GET  /api/revs             -> rev всех документов + задачи Claude (страница опрашивает раз в 2 с)
 GET  /api/doc?key=…        -> документ целиком
 POST /api/op               <- {key, base, ops}          -> {rev, prev}
-POST /api/new              <- {mode, name, topic, bank} -> {id}
-POST /api/delete           <- {key}  (штурм уходит в _ideas/trash)
+POST /api/new              <- {mode, name, topic, channel} -> {id}   (+ видео: папка в <канал>/videos)
+POST /api/delete           <- {key}  (папка видео уходит в _archive/videos)
 POST /api/file?plan=ID     <- картинка (dataURL или байты) -> {path: "files/ID/N.png"}
 POST /api/claude           <- {action, key, scope, params} -> {job}
 GET  /api/job?id=…         -> задача с результатом;  POST /api/job/cancel?id=…
-POST /api/produce          <- {id, name, attach}       -> {job}  (new_project.py + refs/штурм.md + препродакшен)
-POST /api/refparse         <- {key, ref}               -> {job}  (видео-референс: контактные листы + расшифровка, refvideo.py)
-GET  /api/sound/search?q=… -> кандидаты из библиотеки, Freesound, Commons (sounds.py)
-POST /api/sound/fetch      <- {key, el, url, start, end} -> {job}  (скачать звук в элемент препродакшена)
-GET  /api/assets/search?q=…&kind=3d|2d|tex -> бесплатные ассеты (assets.py: Poly Pizza, Poly Haven, Sketchfab, OpenGameArt, Openverse, Commons, ambientCG)
-POST /api/assets/fetch     <- {key, el, as: ref|work, row} -> {job}  (📌 превью в референсы элемента / ⬇ сам ассет в files/<plan>/assets/)
-POST /api/layout3d         <- {key, el, base, layout, groups, auto} -> {job}  (✋ расстановка 3D-сцены -> новая версия черновика с WORLD.groups + WORLD.layout)
-GET  /api/projects         -> папки проектов;  GET /api/projstats?name=… -> заметки ревью и даты проекта
-GET  /files/…, /fonts/…, /planner.pdf, /sfxlib/<id>.wav (библиотека звуков), /tpl/… (src шаблона ролика, 3D-стенд)
-POST-запросы принимаются только со страницы сервиса (заголовок X-Ideas и Origin localhost).
-
-Два пути штурма (поле flow): «idea» — идея уже есть (идея и референсы → вопросы Claude → биты и челлендж → смыслы и название →
-препродакшен: сцены, персонажи, пропсы, звуки → обложка и первый кадр → в работу); «storm» — старый путь от 10 идей (нет поля flow).
+POST /api/produce          <- {id}                     -> {job}  (🚀 проект ролика в папке видео + refs/штурм.md + препродакшен)
+POST /api/refparse, /api/sound/fetch, /api/assets/fetch, /api/layout3d — как раньше; /api/scene… — scene_api; /api/studio…, /api/lib… — studio_api
+GET  /files/<id>/…, /rscene/<id>/… (файлы и черновики видео), /fonts/…, /sfxlib/<id>.wav, /tpl/… (движок, потом шаблон), /render/… (стенды), /editor/…
+POST-запросы принимаются только со страницы (заголовок X-Ideas и Origin localhost).
 """
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
 API_VERSION = 4
 
-HERE = os.path.dirname(os.path.abspath(__file__))          # _pipeline/ideas
-PIPE = os.path.dirname(HERE)                                # _pipeline
-ROOT = os.path.dirname(PIPE)                                # рабочая папка с проектами
-DATA = os.path.abspath(os.environ.get("IDEAS_DIR") or os.path.join(ROOT, "_ideas"))
-PLANS = os.path.join(DATA, "plans")
-FILES = os.path.join(DATA, "files")
-TRASH = os.path.join(DATA, "trash")
+import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
+HERE = P.SERVER                                             # _studio/server
+PIPE = P.STUDIO                                             # _studio (бывший _pipeline)
+ROOT = P.ROOT                                               # рабочая папка: каналы, _archive, .studio
+DATA = P.STATE                                              # состояние приложения: .port, .lock, .jobs, state.json, токены
 JOBS_DIR = os.path.join(DATA, ".jobs")
-RENDER = os.path.join(DATA, "render")
 LOCK = os.path.join(DATA, ".lock")
-WEB = os.path.join(HERE, "web")
-FONTS = os.path.join(PIPE, "template", "assets", "fonts")
-TPL = os.path.join(PIPE, "template", "src")
-SFXLIB = os.path.join(PIPE, "sfx_library")
-PDF = os.path.join(DATA, "master-planer.pdf")
+WEB = P.WEB
+FONTS = P.FONTS
+TPL = P.TPL_SRC
+SFXLIB = P.SFXLIB
 FILE_MAX = 12 * 1024 * 1024
 MODEL = os.environ.get("IDEAS_MODEL", "")                  # пусто — модель по умолчанию из Claude Code
 EFFORT = os.environ.get("IDEAS_EFFORT", "")
@@ -71,15 +56,14 @@ MIME = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-
         ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".svg": "image/svg+xml"}
 STATUS = {"draft": "штурм", "prod": "в работе", "out": "вышло", "archived": "архив"}
 BAD_NAME = r'\/:*?"<>|'
-for _d in (PLANS, FILES):
-    os.makedirs(_d, exist_ok=True)
+os.makedirs(DATA, exist_ok=True)
 
 import ideas_claude  # noqa: E402  промпты и схемы кнопок ✨
-import youtube  # noqa: E402  статистика канала (YouTube Data + Analytics API)
 import sounds  # noqa: E402  поиск и скачивание звуков препродакшена
 import refvideo  # noqa: E402  разбор видео-референсов
 import preprod  # noqa: E402  модель элементов препродакшена и экспорт в проект
 import assets  # noqa: E402  поиск и скачивание бесплатных 3D / 2D ассетов
+import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
@@ -92,7 +76,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "ytlogin", "ytsync", "ytfresh", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -104,10 +88,6 @@ def _fresh(mod, tag):
             print(mod.__name__, "перезагружен")
         _refc[tag] = m
     return mod
-
-
-def yapi():
-    return _fresh(youtube, "yt")
 
 
 def sapi():
@@ -128,6 +108,10 @@ def aapi():
 
 def scapi():
     return _fresh(scene_api, "scn")
+
+
+def stapi():
+    return _fresh(studio_api, "std")
 
 
 def capi():
@@ -203,38 +187,33 @@ class FileLock:
 
 
 # ---------------- documents ----------------
-def default_plan(pid, mode, name="", topic="", flow="idea"):
+def default_plan(pid, mode, name="", topic="", flow="idea", engine="3d"):
+    """A new video (video.json, architecture §3.2): idea -> questions -> title -> preproduction -> scenes -> script -> … -> packaging."""
     t = now_ms()
     mode = mode if mode in ("short", "long") else "short"
-    d = {
-        "id": pid, "rev": 0, "created": t, "updated": t, "mode": mode,
-        "name": (name or "").strip() or "Новый штурм", "status": "draft", "project": "", "web": False,
-        "topic": topic or "", "ideas": [], "chosen": "", "beats": [], "q7": {}, "meanings": [],
-        "titles": [], "images": [], "thumbs": [], "final": {"title": "", "thumb": ""},
-        "structure": {"scheme": "V" if mode == "short" else "acts", "minutes": 12, "slots": {}, "notes": {}, "marks": {}, "steps": []},
-        "retro": {"hours": {}, "planned": "", "out": "", "awesome": ""}, "reaction": {}, "stats": "",
-    }
-    if flow != "storm":                      # «есть идея»: идея + референсы -> вопросы -> биты -> смыслы -> препродакшен -> обложка
-        d.update(flow="idea", idea="", refs=[], qa=[], challenge=None, elements=[], engine="2d")
-    return d
+    return {"schema": 2, "id": pid, "rev": 0, "created": t, "updated": t, "mode": mode, "flow": "idea",
+            "name": (name or "").strip() or "Новое видео", "status": "draft", "stage": "idea", "project": "", "web": False,
+            "idea": "", "topic": topic or "", "refs": [], "qa": [], "titles": [], "final": {"title": "", "thumb": ""},
+            "engine": engine, "elements": [], "thumbs": []}
 
 
 def is_idea(d):
     return (d or {}).get("flow") == "idea"
 
 
-DEFAULTS = {
-    "bank": lambda: {"rev": 0, "web": False, "items": []},
-    "brand": lambda: {"rev": 0, "name": "", "team": [], "bring": "", "differ": "", "killer": "", "never": "", "ritual": "", "hours": {}},
-    "stats": lambda: {"rev": 0, "items": [], "conclusions": {"short": {}, "long": {}}},
-}
+DEFAULTS = {}                               # банк, лист проекта и статистика ушли в _archive/ideas (S2)
 
 
 def doc_path(key):
-    if key in DEFAULTS:
-        return os.path.join(DATA, key + ".json")
+    """plan:<id> -> <канал>/videos/<папка>/video.json (до переезда — _ideas/plans/<id>.json); channel:<id> -> <канал>/channel.json."""
     if key.startswith("plan:") and re.fullmatch(r"[a-z0-9-]{3,40}", key[5:]):
-        return os.path.join(PLANS, key[5:] + ".json")
+        p = P.video_json(key[5:])
+        if p:
+            return p
+    if key.startswith("channel:"):
+        c = P.channel(key[8:])
+        if c and c.get("id") == key[8:]:
+            return os.path.join(c["dir"], "channel.json")
     raise KeyError(key)
 
 
@@ -256,8 +235,8 @@ def save(key, doc):
     os.replace(tmp, p)
     try:
         if key.startswith("plan:"):
-            write_text(p[:-5] + ".md", plan_md(doc))
-        write_text(os.path.join(DATA, "index.md"), index_md())
+            write_text(p[:-5] + ".md", plan_md(doc))            # video.md — читаемая версия для Claude
+        write_index()
     except Exception as e:                   # the export must never break saving
         print("! экспорт md:", e)
 
@@ -279,23 +258,36 @@ def rev_of(path):
     return r
 
 
+def _video_files():
+    """[(id, video.json)] of all videos (all channels), or the legacy plans before the move."""
+    if P.legacy():
+        d = os.path.join(P.LEGACY, "plans")
+        return [(f[:-5], os.path.join(d, f)) for f in os.listdir(d) if f.endswith(".json")] if os.path.isdir(d) else []
+    return [(vid, os.path.join(v["dir"], "video.json")) for vid, v in P.index()["videos"].items()]
+
+
 def all_revs():
-    out = {k: rev_of(doc_path(k)) or 0 for k in DEFAULTS}
-    for f in os.listdir(PLANS):
-        if f.endswith(".json"):
-            out["plan:" + f[:-5]] = rev_of(os.path.join(PLANS, f)) or 0
+    out = {"plan:" + vid: rev_of(p) or 0 for vid, p in _video_files()}
+    for c in P.channels():
+        out["channel:" + c["id"]] = rev_of(os.path.join(c["dir"], "channel.json")) or 0
     return out
 
 
-def plans():
+def plans(channel=None):
+    """Videos of a channel (all channels when channel is None), newest first; each gets _channel and _folder."""
     out = []
-    for f in os.listdir(PLANS):
-        if f.endswith(".json"):
-            try:
-                with open(os.path.join(PLANS, f), encoding="utf-8") as fh:
-                    out.append(json.load(fh))
-            except Exception as e:
-                print("! штурм не читается:", f, e)
+    for vid, f in _video_files():
+        try:
+            with open(f, encoding="utf-8") as fh:
+                d = json.load(fh)
+        except Exception as e:
+            print("! видео не читается:", f, e)
+            continue
+        v = P.index()["videos"].get(vid) or {}
+        if channel and v.get("channel") != channel:
+            continue
+        d["_channel"], d["_folder"] = v.get("channel"), v.get("folder")
+        out.append(d)
     return sorted(out, key=lambda d: -d.get("updated", 0))
 
 
@@ -366,30 +358,34 @@ def apply_ops(key, ops):
         return {"rev": doc["rev"], "prev": prev}
 
 
-def new_plan(mode, name="", topic="", bank_id="", flow="idea"):
+def folder_name(name, base):
+    """A folder name for a video from its name: no forbidden characters, unique inside base."""
+    n = re.sub(r'[\/:*?"<>|]+', " ", (name or "").strip()).strip(" .") or "Новое видео"
+    n, k, out = n[:80], 2, n[:80]
+    while os.path.exists(os.path.join(base, out)):
+        out, k = f"{n} {k}", k + 1
+    return out
+
+
+def new_plan(mode, name="", topic="", bank_id="", flow="idea", channel=None):
+    """+ видео: <канал>/videos/<Имя>/video.json (+ files/, preprod/, refs/). До переезда — _ideas/plans/<id>.json."""
     pid = time.strftime("%y%m%d") + "-" + uuid.uuid4().hex[:4]
-    doc = default_plan(pid, mode, name, topic, flow)
-    if bank_id:
-        bank = load("bank")
-        it = next((i for i in bank["items"] if i.get("id") == bank_id), None)
-        if it:
-            doc["mode"] = it.get("mode") if it.get("mode") in ("short", "long") else doc["mode"]
-            doc["structure"]["scheme"] = "V" if doc["mode"] == "short" else "acts"
-            doc["name"] = (name or "").strip() or it.get("title") or doc["name"]
-            text = " — ".join(x for x in (it.get("title"), it.get("desc")) if x)
-            if is_idea(doc):
-                doc["idea"] = text
-                doc["topic"] = topic or (f"Источник: {it['src']}" if it.get("src") else "")
-            else:
-                doc["topic"] = topic or "\n".join(x for x in (it.get("title"), it.get("desc"), it.get("src")) if x)
-                idea = {"id": new_id("i"), "text": text, "why": "", "src": it.get("src", ""), "star": True, "by": it.get("by", "me"), "bank": bank_id}
-                doc["ideas"].append(idea)
-                doc["chosen"] = idea["id"]
+    c = P.channel(channel)
+    doc = default_plan(pid, mode, name, topic, flow, engine=((c or {}).get("defaults") or {}).get("engine", "3d"))
     with _lock, FileLock():
+        if P.legacy() or not c:
+            os.makedirs(os.path.join(P.LEGACY, "plans"), exist_ok=True)
+            with open(os.path.join(P.LEGACY, "plans", pid + ".json"), "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False, indent=1)
+        else:
+            base = os.path.join(c["dir"], "videos")
+            d = os.path.join(base, folder_name(doc["name"], base))
+            for sub in ("files", "preprod", "refs"):
+                os.makedirs(os.path.join(d, sub), exist_ok=True)
+            with open(os.path.join(d, "video.json"), "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False, indent=1)
+            P.index(True)
         save("plan:" + pid, doc)
-    if bank_id:
-        apply_ops("bank", [{"op": "set", "path": ["items", bank_id, "status"], "value": "plan"},
-                           {"op": "set", "path": ["items", bank_id, "plan"], "value": pid}])
     return doc
 
 
@@ -594,30 +590,31 @@ def plan_md(d, img=lambda p: p, where=None, folders=None):
     return "\n".join(L)
 
 
-def index_md():
+STAGES = ["idea", "qa", "title", "pre", "scenes", "script", "voice", "montage", "review", "pack"]
+STAGE_LABEL = {"idea": "идея", "qa": "вопросы", "title": "название", "pre": "препродакшен", "scenes": "сцены", "script": "сценарий",
+               "voice": "голос", "montage": "монтаж", "review": "ревью", "pack": "упаковка"}
+
+
+def index_md(channel=None):
+    """<канал>/index.md — обзор канала для Claude: видео, их этапы и где что лежит."""
+    c = P.channel(channel) or {}
     R = ref()
-    ps = plans()
-    L = ["# Штурм идей — обзор для Claude", "",
-         f"Сервис: `_pipeline/ideas` (страница — «Штурм идей.bat» в рабочей папке). Обновлено {time.strftime('%Y-%m-%d %H:%M')}.",
-         "Каждый штурм целиком — `plans/<id>.md`. Писать сюда — через CLI: `python _pipeline/ideas/ideas_server.py …` (не правь JSON руками).", "",
-         "## Штурмы", "| id | формат | статус | рабочее имя | название | проект |", "|---|---|---|---|---|---|"]
-    for d in ps:
+    L = [f"# {c.get('icon', '')} {c.get('name', 'Claude Studio')} — обзор для Claude".strip(), "",
+         f"Приложение: `_studio` (Claude Studio). Обновлено {time.strftime('%Y-%m-%d %H:%M')}.",
+         "Каждое видео — папка `videos/<Имя>/`: `video.json` (идея, вопросы, название, препродакшен…), `video.md` (читаемая версия), "
+         "проект ролика (script.md, src/, build.sh), `preprod/` (черновики элементов, сцены редактора), `files/` (картинки).",
+         "Писать в видео — только через CLI: `python _studio/server/studio.py …` (не правь JSON руками). Стиль канала — `style/style-guide.md`.", "",
+         "## Видео", "| id | формат | статус | этап | папка | название |", "|---|---|---|---|---|---|"]
+    for d in plans(c.get("id")):
         s = plan_summary(d)
-        L.append(f"| `{s['id']}` | {R['modes'].get(s['mode'], {}).get('icon', '')} | {STATUS.get(s['status'], s['status'])} | {_cell(s['name'])} | {_cell(s['final']) or '—'} | {_cell(s['project']) or '—'} |")
-    bank = load("bank")["items"]
-    live = [i for i in bank if i.get("status") not in ("done", "dropped")]
-    L += ["", f"## Банк идей ({len(live)} живых из {len(bank)})"]
-    for i in sorted(live, key=lambda i: (-int(i.get("cool") or 0), -i.get("created", 0)))[:40]:
-        L.append(f"- {'★' * int(i.get('cool') or 0) or '·'} {i.get('title', '')}" + (f" — {i['desc']}" if i.get("desc") else "")
-                 + f" ({R['modes'].get(i.get('mode'), {}).get('icon', 'любой формат')}"
-                 + (f", {i['fresh']}" if i.get("fresh") else "") + (f", {i['src']}" if i.get("src") else "") + ")")
-    st = load("stats")
-    if st["items"]:
-        L += ["", "## Просмотры", "| ролик | формат | вышел | оценка до цифр | 1ч | сутки | 7д | 28д |", "|---|---|---|---|---|---|---|---|"]
-        for r in st["items"]:
-            L.append(f"| {_cell(r.get('name'))} | {R['modes'].get(r.get('mode'), {}).get('icon', '')} | {r.get('date', '')} | {r.get('awesome', '')} | "
-                     + " | ".join(str(r.get(k, "")) for k in ("h1", "d1", "d7", "d28")) + " |")
+        L.append(f"| `{s['id']}` | {R['modes'].get(s['mode'], {}).get('icon', '')} | {STATUS.get(s['status'], s['status'])} | {STAGE_LABEL.get(d.get('stage'), '—')} "
+                 f"| {_cell(d.get('_folder') or '')} | {_cell(s['final']) or '—'} |")
     return "\n".join(L) + "\n"
+
+
+def write_index():
+    for c in P.channels():
+        write_text(os.path.join(c["dir"], "index.md"), index_md(c["id"]))
 
 
 # ---------------- files ----------------
@@ -643,7 +640,7 @@ def save_file(pid, data):
     ext = img_ext(data)
     if not ext:
         raise ValueError("это не картинка png/jpg/webp/gif")
-    d = os.path.join(FILES, pid)
+    d = P.files(pid)
     os.makedirs(d, exist_ok=True)
     with _lock:
         ks = [int(m.group(1)) for f in os.listdir(d) if (m := re.match(r"(\d+)\.", f))]
@@ -667,46 +664,6 @@ def flat(rel):
     """files/<plan>/ref_x/sheet1.jpg -> ref_x_sheet1.jpg (unique name inside refs/штурм/)."""
     parts = rel.replace("\\", "/").split("/")
     return "_".join(parts[2:]) if len(parts) > 2 and parts[0] == "files" else parts[-1]
-
-
-# ---------------- projects of the work folder ----------------
-def projects():
-    out = []
-    for name in sorted(os.listdir(ROOT), key=str.lower):
-        p = os.path.join(ROOT, name)
-        if name.startswith(("_", ".")) or not os.path.isdir(p):
-            continue
-        if not (os.path.exists(os.path.join(p, "script.md")) or os.path.isdir(os.path.join(p, "src"))):
-            continue
-        vids = [os.path.join(p, "out", f) for f in os.listdir(os.path.join(p, "out"))] if os.path.isdir(os.path.join(p, "out")) else []
-        vids = [v for v in vids if v.lower().endswith(".mp4")]
-        out.append({"name": name, "video": bool(vids), "created": int(os.path.getctime(p) * 1000),
-                    "built": int(max((os.path.getmtime(v) for v in vids), default=0) * 1000),
-                    "brainstorm": os.path.exists(os.path.join(p, "refs", "штурм.md"))})
-    return out
-
-
-def projstats(name):
-    """Review notes and dates of a project — the «работа над ошибками» numbers."""
-    p = os.path.join(ROOT, name)
-    if not name or any(c in name for c in BAD_NAME) or not os.path.isdir(p):
-        raise ValueError("нет такого проекта")
-
-    def notes(fn):
-        f = os.path.join(p, "review", fn)
-        try:
-            with open(f, encoding="utf-8") as fh:
-                ns = [n for n in json.load(fh) if not n.get("deleted")]
-        except Exception:
-            return {"all": 0, "open": 0}
-        return {"all": len(ns), "open": sum(1 for n in ns if n.get("status") != "done")}
-
-    vids = [os.path.join(p, "out", f) for f in os.listdir(os.path.join(p, "out"))] if os.path.isdir(os.path.join(p, "out")) else []
-    built = max((os.path.getmtime(v) for v in vids if v.lower().endswith(".mp4")), default=0)
-    created = os.path.getctime(p)
-    return {"name": name, "review": notes("notes.json"), "script": notes("script_notes.json"),
-            "created": int(created * 1000), "built": int(built * 1000),
-            "days": round((built - created) / 86400, 1) if built else None}
 
 
 # ---------------- Claude ----------------
@@ -827,19 +784,10 @@ def _run_job(job):
             asset_fetch(job)
         elif job.kind == "layout3d":
             layout3d(job)
+        elif job.kind.startswith("lib"):
+            stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
-        elif job.kind == "ytlogin":
-            job.result = yapi().login(DATA)
-            job.summary = f"Google: вход выполнен, канал «{job.result['channel']}»"
-        elif job.kind == "ytfresh":
-            ops = yapi().fresh(DATA, load("stats"))
-            if ops:
-                apply_ops("stats", ops)
-            job.summary = f"живой счётчик: {sum(1 for o in ops if o['op'] == 'add' or o['path'][-1] == 'snaps')} свежих роликов"
-        elif job.kind == "ytsync":
-            ops, job.summary = yapi().sync(DATA, load("stats"))
-            apply_ops("stats", ops)
         else:
             run_action(job)
         job.status = "done"
@@ -857,28 +805,8 @@ def _run_job(job):
 
 
 def auto_tick():
-    """Every minute from the server: YouTube stats every 6 h (if logged in) and bank auto-refresh from news sites."""
-    yt = load("stats").get("yt") or {}
-    busy = lambda k: any(j.status == "running" and j.kind == k for j in JOBS.values())
-    if yapi().status(DATA)["token"]:
-        if now_ms() - int(yt.get("tried") or 0) > 6 * 3600 * 1000 and not busy("ytsync"):
-            apply_ops("stats", [{"op": "set", "path": ["yt", "tried"], "value": now_ms()}])
-            start_job("ytsync", "stats", "ytsync", {})
-            print(time.strftime("%H:%M"), "статистика YouTube")
-        if now_ms() - int(yt.get("fresh") or 0) > 10 * 60 * 1000 and not busy("ytfresh") and not busy("ytsync"):
-            apply_ops("stats", [{"op": "set", "path": ["yt", "fresh"], "value": now_ms()}])
-            start_job("ytfresh", "stats", "ytfresh", {})
-    b = load("bank")
-    a = b.get("auto") or {}
-    if not a.get("on") or not claude_bin():
-        return
-    if now_ms() - int(a.get("last") or 0) < float(a.get("hours") or 12) * 3600 * 1000:
-        return
-    if any(j.status == "running" and j.key == "bank" for j in JOBS.values()):
-        return
-    apply_ops("bank", [{"op": "set", "path": ["auto", "last"], "value": now_ms()}])   # before the run: a failure must not retry every minute
-    start_job("bank", "bank", "auto", {"auto": True, "n": int(a.get("n") or 5)})
-    print(time.strftime("%H:%M"), "автообновление банка идей из новостей")
+    """Every minute from the server. The bank auto-refresh and YouTube stats went to _archive in S2 — nothing periodic for now."""
+    return
 
 
 def _docs(key):
@@ -886,18 +814,31 @@ def _docs(key):
         port = int(open(os.path.join(DATA, ".port")).read().strip())
     except (OSError, ValueError):
         port = 8790
-    return {"plan": load(key) if key.startswith("plan:") else None, "brand": load("brand"), "bank": load("bank"),
-            "stats": load("stats"), "key": key, "data": DATA, "save": save_file, "port": port, "here": HERE, "root": ROOT,
-            "pipe": PIPE, "sound": fetch_sound}
+    plan = load(key) if key.startswith("plan:") else None
+    ch = (P.channel(P.index()["videos"].get(key[5:], {}).get("channel")) if plan else None) or P.channel() or {}
+    return {"plan": plan, "channel": ch, "brand": channel_brand(ch), "bank": {"items": []}, "stats": {"items": []},
+            "key": key, "data": DATA, "save": save_file, "port": port, "here": HERE, "root": ROOT, "pipe": PIPE, "sound": fetch_sound}
+
+
+def channel_brand(ch):
+    """The channel for the prompts (what the old «лист проекта» gave): name + the first lines of its style guide."""
+    guide = ""
+    try:
+        with open(os.path.join(ch["dir"], "style", "style-guide.md"), encoding="utf-8") as f:
+            guide = f.read()[:1500]
+    except (OSError, KeyError, TypeError):
+        pass
+    return {"name": (ch or {}).get("name", ""), "bring": (ch or {}).get("about", ""), "differ": "", "killer": guide, "never": ""}
 
 
 def rel_data(path):
-    return os.path.relpath(path, DATA).replace("\\", "/")
+    """A path on disk -> how documents write it (files/<id>/…, render/<id>/…)."""
+    return P.rel_of(path)
 
 
 def fetch_sound(pid, url, start=None, end=None, by="me", why=""):
     """Download a sound into _ideas/files/<plan>/sfx/N.wav -> the element's sound item."""
-    r = sapi().fetch(url, os.path.join(FILES, pid, "sfx"), start, end)
+    r = sapi().fetch(url, os.path.join(P.files(pid), "sfx"), start, end)
     return {"id": new_id("s"), "file": rel_data(r["file"]), "title": (r.get("title") or "")[:160], "author": r.get("author", ""),
             "license": r.get("license", ""), "page": r.get("page", ""), "src": r.get("src", ""), "url": url, "dur": r.get("dur"),
             "peak_t": r.get("peak_t"), "rms_db": r.get("rms_db"), "start": r.get("start"), "end": r.get("end"), "by": by, "why": why, "ts": now_ms()}
@@ -936,7 +877,7 @@ def ref_parse(job):
     def log(s):
         job.summary = s
     try:
-        res = vapi().parse(src, os.path.join(FILES, key[5:], "ref_" + rid), log)
+        res = vapi().parse(src, os.path.join(P.files(key[5:]), "ref_" + rid), log)
     except Exception as e:
         apply_ops(key, [{"op": "set", "path": ["refs", rid, "parse"], "value": {"status": "error", "err": str(e)[:300], "at": now_ms()}}])
         raise
@@ -970,7 +911,7 @@ def asset_fetch(job):
         job.summary = f"В референсы: «{row.get('title', '')[:60]}»"
         return
     iid = new_id("a")
-    dst = os.path.join(FILES, pid, "assets", iid)
+    dst = os.path.join(P.files(pid), "assets", iid)
 
     def log(t):
         job.summary = t
@@ -1042,7 +983,7 @@ def layout3d(job):
     base = _by_id(rs, job.params.get("base")) or _by_id(rs, e.get("render")) or (rs[-1] if rs else None)
     if not base or not base.get("three"):
         raise ValueError("у элемента нет 3D-черновика")
-    src = os.path.join(RENDER, *base["dir"].split("/"), "element.js")
+    src = os.path.join(P.resolve("render/" + base["dir"]), "element.js")
     code = open(src, encoding="utf-8").read()
     i = code.find(LAYOUT_MARK)
     if i >= 0:
@@ -1052,12 +993,12 @@ def layout3d(job):
         code = code.rstrip() + "\n\n" + layout_code(lay, [a for a in job.params.get("auto") or [] if a in used], groups)
     v = max([r.get("v", 0) for r in rs] + [0]) + 1
     rel = f"{plan['id']}/{eid}/v{v}"
-    wd = os.path.join(RENDER, *rel.split("/"))
+    wd = P.resolve("render/" + rel)
     os.makedirs(wd, exist_ok=True)
     write_text(os.path.join(wd, "element.js"), code)
     job.summary = "снимаю кадры новой расстановки…"
     url = f"http://127.0.0.1:{_docs(key)['port']}/tpl/stand3d.html?scene=/rscene/{rel}/element.js&parts=element"
-    r = subprocess.run(["node", os.path.join(HERE, "render_shot.js"), url, wd, "0.2,2.5"], cwd=HERE, capture_output=True, text=True,
+    r = subprocess.run(["node", os.path.join(P.STANDS, "render_shot.js"), url, wd, "0.2,2.5"], cwd=P.STANDS, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=300, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     main = os.path.join(wd, "element.png")
     if not os.path.isfile(main):
@@ -1091,42 +1032,52 @@ def run_action(job):
 
 
 def produce(job):
-    """«В работу»: project folder from the template (new_project.py) + the whole brainstorm in refs/штурм.md."""
+    """«🚀 Начать производство»: проект ролика (шаблон + движок, new_project.py --into) прямо в папке видео,
+    всё видео — в refs/штурм.md (+ картинки в refs/штурм/), препродакшен — в refs/препродакшен/. До переезда — отдельная папка, как раньше."""
     pid = job.key[5:]
-    name = (job.params.get("name") or "").strip().rstrip(".")
-    if not name or any(c in name for c in BAD_NAME):
-        raise ValueError("в названии проекта нельзя: " + " ".join(BAD_NAME))
-    dst = os.path.join(ROOT, name)
-    if os.path.exists(dst) and not job.params.get("attach"):
-        raise ValueError(f"папка «{name}» уже есть — можно привязать штурм к ней")
-    if not os.path.exists(dst):
-        job.summary = "создаю проект и ставлю зависимости…"
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-        r = subprocess.run([sys.executable, os.path.join(PIPE, "new_project.py"), name], cwd=ROOT, env=env,
-                           capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if not os.path.isdir(dst):
-            raise RuntimeError("new_project.py: " + (r.stdout + r.stderr).strip()[-400:])
     doc = load(job.key)
+    vdir = None if P.legacy() else P.video(pid)
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    if vdir:
+        dst, name = vdir, os.path.basename(vdir)
+        if not os.path.isfile(os.path.join(dst, "build.sh")):
+            job.summary = "кладу шаблон ролика и ставлю зависимости…"
+            r = subprocess.run([sys.executable, os.path.join(PIPE, "new_project.py"), "--into", dst], cwd=ROOT, env=env,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if not os.path.isfile(os.path.join(dst, "build.sh")):
+                raise RuntimeError("new_project.py: " + (r.stdout + r.stderr).strip()[-400:])
+    else:
+        name = (job.params.get("name") or "").strip().rstrip(".")
+        if not name or any(c in name for c in BAD_NAME):
+            raise ValueError("в названии проекта нельзя: " + " ".join(BAD_NAME))
+        dst = os.path.join(ROOT, name)
+        if os.path.exists(dst) and not job.params.get("attach"):
+            raise ValueError(f"папка «{name}» уже есть — можно привязать к ней")
+        if not os.path.exists(dst):
+            job.summary = "создаю проект и ставлю зависимости…"
+            r = subprocess.run([sys.executable, os.path.join(PIPE, "new_project.py"), name], cwd=ROOT, env=env,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if not os.path.isdir(dst):
+                raise RuntimeError("new_project.py: " + (r.stdout + r.stderr).strip()[-400:])
     refs = os.path.join(dst, "refs")
     pics = os.path.join(refs, "штурм")
     os.makedirs(refs, exist_ok=True)
     for rel in plan_images(doc):
-        src = os.path.join(DATA, rel)
+        src = P.resolve(rel)
         if os.path.isfile(src):
             os.makedirs(pics, exist_ok=True)
             shutil.copy2(src, os.path.join(pics, flat(rel)))
-    where, folders = pr().export(doc, DATA, dst, os.path.join(WEB, "render", "paper.js"))
+    where, folders = pr().export(doc, DATA, dst, os.path.join(P.STANDS, "paper.js"))
     write_text(os.path.join(refs, "штурм.md"), plan_md(doc, img=lambda p: "refs/штурм/" + flat(p), where=where, folders=folders))
     with open(os.path.join(refs, "штурм.json"), "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
-    ops = [{"op": "set", "path": ["project"], "value": name}]
+    ops = [{"op": "set", "path": ["project"], "value": name}, {"op": "set", "path": ["stage"], "value": "script"}]
     if doc.get("status") == "draft":
         ops.append({"op": "set", "path": ["status"], "value": "prod"})
     apply_ops(job.key, ops)
     job.result = {"project": name, "path": dst}
     n = len([e for e in doc.get("elements") or [] if e.get("status") != "drop"])
-    job.summary = f"Проект «{name}» готов, штурм лежит в refs/штурм.md" + (f", препродакшен ({n}) — в refs/препродакшен (README, manifest.json) и assets/sfx" if n else "")
+    job.summary = f"Проект ролика готов в «{name}», видео целиком — в refs/штурм.md" + (f", препродакшен ({n}) — в refs/препродакшен" if n else "")
 
 
 # ---------------- HTTP ----------------
@@ -1181,6 +1132,13 @@ def _static(h, base, rel):
     return True
 
 
+def backups_dir(vid):
+    """<видео>/.backups (до переезда — _ideas/trash)."""
+    d = os.path.join(P.LEGACY, "trash") if P.legacy() else os.path.join(P.video(vid) or os.path.join(DATA, "orphan", vid), ".backups")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def web_mtime():
     return max((os.path.getmtime(os.path.join(WEB, f)) for f in os.listdir(WEB)), default=0)
 
@@ -1193,8 +1151,12 @@ def handle_get(h):
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
-        h._json({"api": API_VERSION, "data": DATA, "root": ROOT, "claude": bool(claude_bin()), "pdf": os.path.isfile(PDF), "yt": yapi().status(DATA),
-                 "model": MODEL, "plans": [plan_summary(d) for d in plans()]}); return True
+        ch = P.channel()
+        h._json({"api": API_VERSION, "data": DATA, "root": ROOT, "claude": bool(claude_bin()), "model": MODEL, "legacy": P.legacy(),
+                 "channels": [{k: c.get(k) for k in ("id", "name", "icon", "lang", "formats")} for c in P.channels()],
+                 "channel": ch and {k: v for k, v in ch.items() if k != "dir"},
+                 "plans": [dict(plan_summary(d), stage=d.get("stage") or "idea", folder=d.get("_folder"), channel=d.get("_channel"))
+                           for d in plans(ch["id"] if ch else None)]}); return True
     if p == "/api/revs":
         jobs = [j.info() for j in JOBS.values() if j.status == "running" or time.time() - j.finished < 90]
         h._json({"docs": all_revs(), "jobs": jobs, "web": web_mtime(), "api": API_VERSION}); return True
@@ -1207,22 +1169,23 @@ def handle_get(h):
     if p == "/api/job":
         j = JOBS.get(q.get("id", [""])[0])
         h._json(j.info(full=True) if j else {"error": "нет такой задачи", "status": "gone"}, 200 if j else 404); return True
-    if p == "/api/projects":
-        h._json(projects()); return True
-    if p == "/api/projstats":
+    if p.startswith("/api/studio/") or p.startswith("/api/lib"):
         try:
-            h._json(projstats(q.get("name", [""])[0]))
-        except ValueError as e:
-            h._json({"error": str(e)}, 404)
-        return True
+            if stapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p.startswith("/api/scene"):
         try:
             if scapi().handle_get(sys.modules[__name__], h, p, q):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
-    if p.startswith("/files/"):
-        return _static(h, FILES, p[len("/files/"):])
+    if p.startswith("/files/") or p.startswith("/rscene/"):   # files/<id>/… and render/<id>/… of a video (paths.resolve)
+        m = re.match(r"/(files|rscene)/([a-z0-9-]{3,40})/(.+)$", unquote(p))
+        if not m:
+            h.send_error(404); return True
+        return _static(h, P.files(m.group(2)) if m.group(1) == "files" else P.render(m.group(2)), m.group(3))
     if p.startswith("/fonts/"):
         return _static(h, FONTS, p[len("/fonts/"):])
     if p == "/api/sound/search":              # ⬇ candidates for a sound element (library, Freesound, Commons) — a few seconds
@@ -1235,24 +1198,19 @@ def handle_get(h):
         if not q_:
             h._json({"error": "пустой запрос"}, 400); return True
         h._json(aapi().search(q_, q.get("kind", ["3d"])[0], int(q.get("n", ["12"])[0]), data_dir=DATA)); return True
-    if p == "/tpl/stand3d.html":              # 3D render stand lives next to the template src, so its vendor/… paths resolve
-        _send_file(h, os.path.join(WEB, "render", "stand3d.html")); return True
+    if p == "/tpl/stand3d.html":              # 3D render stand is served under /tpl/, so its vendor/… paths resolve (engine/vendor)
+        _send_file(h, os.path.join(P.STANDS, "stand3d.html")); return True
+    if p.startswith("/render/"):              # the stands: page.html (2D), paper.js (the paper toolkit)
+        return _static(h, P.STANDS, p[len("/render/"):])
     if p == "/tpl/editor.html":               # the scene editor (S1 Claude Studio): same trick, vendor/… of the template
         _send_file(h, os.path.join(WEB, "editor", "editor.html")); return True
     if p.startswith("/editor/"):
         return _static(h, os.path.join(WEB, "editor"), p[len("/editor/"):])
-    if p.startswith("/tpl/"):                 # the video template: lib.js for the 2D stand, stage3d.js / moves3d.js / vendor for the 3D one
-        return _static(h, TPL, p[len("/tpl/"):])
+    if p.startswith("/tpl/"):                 # the engine (lib.js, stage3d.js, scene.js, vendor/…), then the video template src
+        rel = p[len("/tpl/"):]
+        return _static(h, P.ENGINE if os.path.exists(os.path.join(P.ENGINE, *unquote(rel).split("/"))) else TPL, rel)
     if p.startswith("/sfxlib/"):              # the pipeline sound library: /sfxlib/<category>/<id>.wav
         return _static(h, SFXLIB, p[len("/sfxlib/"):])
-    if p.startswith("/rscene/"):              # scenes Claude writes in «Отрисовать»: _ideas/render/<plan>/<concept>/v<N>/scene.js
-        return _static(h, RENDER, p[len("/rscene/"):])
-    if p == "/planner.pdf":
-        if os.path.isfile(PDF):
-            _send_file(h, PDF)
-        else:
-            h.send_error(404, "положи PDF тетради в _ideas/master-planer.pdf")
-        return True
     return False
 
 
@@ -1274,9 +1232,10 @@ def handle_post(h):
                 h._json({"error": "нет ops"}, 400); return True
             h._json(apply_ops(body.get("key", ""), ops)); return True
         if p == "/api/new":
-            d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), body.get("bank", ""),
-                         "storm" if body.get("flow") == "storm" else "idea")
-            h._json({"id": d["id"], "flow": d.get("flow") or "storm"}); return True
+            d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))
+            h._json({"id": d["id"], "flow": "idea"}); return True
+        if (p.startswith("/api/studio/") or p.startswith("/api/lib")) and stapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p == "/api/refparse":
             j = start_job("refparse", body.get("key", ""), "refparse:" + body.get("ref", ""), {"ref": body.get("ref", "")})
             h._json({"job": j.info()}); return True
@@ -1292,40 +1251,32 @@ def handle_post(h):
         if p == "/api/layout3d":
             j = start_job("layout3d", body.get("key", ""), f"layout3d:{body.get('el', '')}", {k: body.get(k) for k in ("el", "base", "layout", "groups", "auto")})
             h._json({"job": j.info()}); return True
-        if p == "/api/delete":
+        if p == "/api/delete":                  # the whole video folder goes to _archive/videos (nothing is deleted)
+            key = body.get("key", "")
+            if not key.startswith("plan:"):
+                h._json({"error": "нет такого видео"}, 404); return True
+            h._json(stapi().archive_video(sys.modules[__name__], key[5:])); return True
+        if p == "/api/backup":                  # copy of video.json before «Начать заново» -> <видео>/.backups/<id>-backup-<ts>.json
             key = body.get("key", "")
             src = doc_path(key)
             if not key.startswith("plan:") or not os.path.exists(src):
-                h._json({"error": "нет такого штурма"}, 404); return True
-            os.makedirs(TRASH, exist_ok=True)
-            with _lock, FileLock():
-                shutil.move(src, os.path.join(TRASH, f"{key[5:]}-{int(time.time())}.json"))
-                md = src[:-5] + ".md"
-                if os.path.exists(md):
-                    os.remove(md)
-                write_text(os.path.join(DATA, "index.md"), index_md())
-            h._json({"ok": True}); return True
-        if p == "/api/backup":                  # copy of the plan before «Начать заново» -> _ideas/trash/<id>-backup-<ts>.json
-            key = body.get("key", "")
-            src = doc_path(key)
-            if not key.startswith("plan:") or not os.path.exists(src):
-                h._json({"error": "нет такого штурма"}, 404); return True
-            os.makedirs(TRASH, exist_ok=True)
+                h._json({"error": "нет такого видео"}, 404); return True
+            bdir = backups_dir(key[5:])
             name = f"{key[5:]}-backup-{now_ms()}.json"
             with _lock, FileLock():
-                shutil.copy2(src, os.path.join(TRASH, name))
+                shutil.copy2(src, os.path.join(bdir, name))
             h._json({"file": name}); return True
         if p == "/api/restore":                 # bring a backup back; the current state is backed up first, so this is undoable too
             key, name = body.get("key", ""), body.get("file", "")
-            if not key.startswith("plan:") or not re.fullmatch(re.escape(key[5:]) + r"-backup-\d+\.json", name) \
-                    or not os.path.isfile(os.path.join(TRASH, name)):
+            bdir = backups_dir(key[5:]) if key.startswith("plan:") else ""
+            if not bdir or not re.fullmatch(re.escape(key[5:]) + r"-backup-\d+\.json", name) or not os.path.isfile(os.path.join(bdir, name)):
                 h._json({"error": "нет такой копии"}, 404); return True
-            with open(os.path.join(TRASH, name), encoding="utf-8") as f:
+            with open(os.path.join(bdir, name), encoding="utf-8") as f:
                 old = json.load(f)
             with _lock, FileLock():
                 cur = load(key)
                 keep = f"{key[5:]}-backup-{now_ms()}.json"
-                shutil.copy2(doc_path(key), os.path.join(TRASH, keep))
+                shutil.copy2(doc_path(key), os.path.join(bdir, keep))
                 backups = [b for b in cur.get("backups", []) if b.get("file") != name]
                 backups.append({"id": new_id("v"), "file": keep, "ts": now_ms(), "note": "перед возвратом прошлой версии"})
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
@@ -1350,10 +1301,6 @@ def handle_post(h):
                 if j.proc and j.proc.poll() is None:
                     j.proc.kill()
             h._json({"ok": bool(j)}); return True
-        if p in ("/api/yt/login", "/api/yt/sync"):
-            kind = "ytlogin" if p.endswith("login") else "ytsync"
-            j = start_job(kind, "stats", kind, {})
-            h._json({"job": j.info()}); return True
         if p == "/api/produce":
             j = start_job("produce", "plan:" + body.get("id", ""), "produce", {"name": body.get("name", ""), "attach": bool(body.get("attach"))})
             h._json({"job": j.info()}); return True
@@ -1371,38 +1318,48 @@ def _opt(argv, k, default=None):
 
 def _plan_key(pid):
     key = "plan:" + pid
-    doc_path(key)
-    if not os.path.exists(doc_path(key)):
-        sys.exit(f"нет штурма {pid} (список: python ideas_server.py list)")
-    return key
+    try:
+        if os.path.exists(doc_path(key)):
+            return key
+    except KeyError:
+        pass
+    sys.exit(f"нет видео {pid} (список: python studio.py list)")
 
 
 def cli(argv):
-    """list | show ID | bank | new short|long "Имя" [--topic …] [--idea …] [--storm] | add-ideas ID "…" … | add-beats ID "вопрос | ответ" …
+    """channels | use CHANNEL | list [CHANNEL] | show ID | new short|long "Имя" [--topic …] [--idea …] [--channel ID]
     | add-questions ID "вопрос" …  | add-elements ID scene|char|prop|sound "название | описание" …
-    | add-bank "Идея" [--desc …] [--cool 1-3] [--speed 1-3] [--mode short|long|any] [--fresh …] [--src …]
-    | set KEY путь.через.точки значение  (KEY: plan:ID | bank | brand | stats; значение — JSON или текст)
+    | set KEY путь.через.точки значение  (KEY: plan:ID | channel:ID; значение — JSON или текст)
     | op KEY '<JSON: операция или список операций set/add/del/move>'
-    | produce ID "Проект" [--attach]
-    | scene show|ops|history|undo|version|clip|validate|finish PLAN EL …  (сцены редактора, scene_api.cli)"""
+    | produce ID  (🚀 проект ролика в папке видео)
+    | scene show|ops|history|undo|version|clip|validate|finish ID EL …  (сцены редактора, scene_api.cli)
+    | lib list|show|publish …  (библиотека канала, studio_api.cli)"""
     cmd, a = argv[0], argv[1:]
     by = "claude"
+    if cmd == "channels":
+        cur = (P.channel() or {}).get("id")
+        for c in P.channels():
+            print(f"{'→' if c['id'] == cur else ' '} {c['id']:<12} {c.get('icon', '')} {c.get('name')}  ({c['dir']})")
+        return True
+    if cmd == "use":
+        if not P.channel(a[0]) or P.channel(a[0]).get("id") != a[0]:
+            sys.exit("нет такого канала (список: channels)")
+        P.state_set("channel", a[0])
+        print("текущий канал:", a[0])
+        return True
     if cmd == "list":
-        for d in plans():
+        for d in plans(a[0] if a else (P.channel() or {}).get("id")):
             s = plan_summary(d)
-            print(f"{s['id']}  {ref()['modes'].get(s['mode'], {}).get('icon', '')} {STATUS.get(s['status'], s['status'])}  «{s['name']}»"
-                  + (f"  → «{s['final']}»" if s["final"] else "") + (f"  [проект: {s['project']}]" if s["project"] else ""))
+            print(f"{s['id']}  {ref()['modes'].get(s['mode'], {}).get('icon', '')} {STATUS.get(s['status'], s['status'])}  {STAGE_LABEL.get(d.get('stage'), '—'):<12} «{s['name']}»"
+                  + (f"  → «{s['final']}»" if s["final"] else "") + (f"  [{d.get('_folder')}]" if d.get("_folder") else ""))
         return True
     if cmd == "show":
         print(plan_md(load(_plan_key(a[0]))))
         return True
-    if cmd == "bank":
-        print(index_md().split("## Банк идей", 1)[-1].split("## Просмотры")[0].strip())
-        return True
     if cmd == "new":
         d = new_plan(a[0] if a and a[0] in ("short", "long") else "short", a[1] if len(a) > 1 and not a[1].startswith("--") else "",
-                     _opt(a, "--topic", ""), flow="storm" if "--storm" in a else "idea")
-        if _opt(a, "--idea") and is_idea(d):
+                     _opt(a, "--topic", ""), channel=_opt(a, "--channel"))
+        if _opt(a, "--idea"):
             apply_ops("plan:" + d["id"], [{"op": "set", "path": ["idea"], "value": _opt(a, "--idea")}])
         print(d["id"])
         return True
@@ -1423,24 +1380,6 @@ def cli(argv):
                                                                    "why": "", "status": "", "refs": [], "by": by}})
         print(apply_ops(key, ops))
         return True
-    if cmd == "add-ideas":
-        key = _plan_key(a[0])
-        print(apply_ops(key, [{"op": "add", "path": ["ideas"], "item": {"id": new_id("i"), "text": t, "why": "", "star": False, "by": by}} for t in a[1:]]))
-        return True
-    if cmd == "add-beats":
-        key = _plan_key(a[0])
-        ops = []
-        for t in a[1:]:
-            qq, _, aa = t.partition("|")
-            ops.append({"op": "add", "path": ["beats"], "item": {"id": new_id("b"), "q": qq.strip(), "a": aa.strip(), "src": "", "keep": True, "by": by}})
-        print(apply_ops(key, ops))
-        return True
-    if cmd == "add-bank":
-        it = {"id": new_id("k"), "title": a[0], "desc": _opt(a, "--desc", ""), "cool": int(_opt(a, "--cool", "1")),
-              "speed": int(_opt(a, "--speed", "2")), "mode": _opt(a, "--mode", "any"), "fresh": _opt(a, "--fresh", ""),
-              "src": _opt(a, "--src", ""), "status": "new", "by": by, "created": now_ms()}
-        print(apply_ops("bank", [{"op": "add", "path": ["items"], "item": it}]))
-        return True
     if cmd == "set":
         key, path, raw = a[0], a[1].split("."), a[2]
         if key.startswith("plan:"):
@@ -1460,16 +1399,10 @@ def cli(argv):
         return True
     if cmd == "scene":
         return scapi().cli(sys.modules[__name__], a)
-    if cmd == "yt-login":
-        print(yapi().login(DATA))
-        return True
-    if cmd == "yt-sync":
-        ops, summary = yapi().sync(DATA, load("stats"))
-        apply_ops("stats", ops)
-        print(summary)
-        return True
+    if cmd == "lib":
+        return stapi().cli(sys.modules[__name__], a)
     if cmd == "produce":
-        job = Job("produce", _plan_key(a[0]), "produce", {"name": a[1], "attach": "--attach" in a})
+        job = Job("produce", _plan_key(a[0]), "produce", {"name": a[1] if len(a) > 1 else "", "attach": "--attach" in a})
         produce(job)
         print(job.summary)
         return True

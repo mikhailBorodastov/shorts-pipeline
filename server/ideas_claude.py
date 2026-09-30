@@ -6,10 +6,11 @@ docs = {"plan": штурм или None, "brand", "bank", "stats", "key", "data"}
 Методика — «Мастер-планер» (пересказ), подача шортсов — prompts/style-guide.md.
 """
 import json, os, re, shutil, sys, time, uuid
+import paths as P  # где что лежит (Claude Studio)
 import preprod  # модель элементов препродакшена: @-ссылки, состав сцен, слои звука
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(HERE, "web", "ref.json"), encoding="utf-8") as _f:
+with open(os.path.join(P.WEB, "ref.json"), encoding="utf-8") as _f:
     REF = json.load(_f)
 
 BRAND = [("name", "Канал"), ("bring", "Что несём зрителю"), ("differ", "Чем отличаемся от конкурентов"),
@@ -121,7 +122,7 @@ def refs_files(plan, data):
     out = []
     for r in plan.get("refs") or []:
         for rel in ([r["img"]] if r.get("img") else []) + list((r.get("parse") or {}).get("sheets") or []):
-            p = os.path.abspath(os.path.join(data, rel))
+            p = os.path.abspath(P.resolve(rel))
             if os.path.isfile(p):
                 out.append(p)
     return out
@@ -463,8 +464,8 @@ type — тип по карте превью, лучше из «золотого
     elif action == "critique":
         c = next((x for x in plan.get("thumbs", []) if x["id"] == params.get("thumb")), None) or {}
         t = next((x for x in plan.get("titles", []) if x["id"] == c.get("title")), None) or {}
-        read = [os.path.abspath(os.path.join(docs["data"], c[k])) for k in ("img", "frameImg")
-                if c.get(k) and os.path.isfile(os.path.join(docs["data"], c[k]))]
+        read = [os.path.abspath(P.resolve(c[k])) for k in ("img", "frameImg")
+                if c.get(k) and os.path.isfile(P.resolve(c[k]))]
         tt = REF["thumbTypes"].get(c.get("type"), {}).get("label", "не выбран")
         prompt = f"""Разбери концепт {'связки шортса' if mode == 'short' else 'превью'} как строгий редактор. Название ролика: «{t.get('text', '')}».
 Описание: {c.get('desc') or '(нет)'}
@@ -595,7 +596,7 @@ def fx_prompt(fb, fxs, base, data, wd, v):
             lines.append(f"- в целом: «{n['text']}»")
         for i, p in enumerate(e["pins"], 1):
             lines.append(f"- пин {i} (x≈{round(p['x'] * 1080)}, y≈{round(p['y'] * 1920)} из 1080×1920): «{p['text'] or 'автор отметил это место без слов — посмотри, что там не так'}»")
-        src = os.path.join(data, *(base.get(part) or "").split("/"))
+        src = P.resolve(base.get(part) or "")
         dst = os.path.join(wd, f"pins_{part}.png")
         if e["pins"] and base.get(part) and os.path.isfile(src) and mark_pins(src, dst, e["pins"]):
             lines.append(f"  Прошлая версия с номерами пинов: {dst.replace(chr(92), '/')} — посмотри через Read.")
@@ -614,11 +615,11 @@ def render_spec(docs, params, sysp, genre):
     renders = c.get("renders", [])
     v = max([r.get("v", 0) for r in renders] + [0]) + 1
     rel = f"{plan['id']}/{c['id']}/v{v}"
-    wd = os.path.join(data, "render", *rel.split("/"))
+    wd = P.resolve("render/" + rel)
     os.makedirs(wd, exist_ok=True)
     base = next((r for r in renders if r.get("id") == params.get("base")), None)
     if base:
-        prev = os.path.join(data, "render", *base["dir"].split("/"), "scene.js")
+        prev = os.path.join(P.resolve("render/" + base["dir"]), "scene.js")
         if os.path.isfile(prev):
             shutil.copy2(prev, os.path.join(wd, "scene.js"))
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
@@ -626,14 +627,14 @@ def render_spec(docs, params, sysp, genre):
     def fwd(x):
         return x.replace(chr(92), "/")
 
-    shot = fwd(os.path.join(docs["here"], "render_shot.js"))
-    paper = fwd(os.path.join(docs["here"], "web", "render", "paper.js"))
+    shot = fwd(os.path.join(P.STANDS, "render_shot.js"))
+    paper = fwd(os.path.join(P.STANDS, "paper.js"))
     url = f"http://127.0.0.1:{docs['port']}/render/page.html?scene=/rscene/{rel}/scene.js"
     cmd = f'node {shot} "{url}" {fwd(wd)} 0.2,1.5'
-    sk = [(k, fwd(os.path.join(data, c[k]))) for k in ("img", "frameImg") if c.get(k) and os.path.isfile(os.path.join(data, c[k]))]
+    sk = [(k, fwd(P.resolve(c[k]))) for k in ("img", "frameImg") if c.get(k) and os.path.isfile(P.resolve(c[k]))]
     ms = {m["id"]: m for m in plan.get("meanings", [])}
-    pics = [g for g in plan.get("images", []) if g.get("img") and os.path.isfile(os.path.join(data, g["img"]))]
-    pic_lines = chr(10).join(f"- IMG-ключ i{n}: '/{g['img']}' (файл {fwd(os.path.join(data, g['img']))}) — {g.get('text') or ''} "
+    pics = [g for g in plan.get("images", []) if g.get("img") and os.path.isfile(P.resolve(g["img"]))]
+    pic_lines = chr(10).join(f"- IMG-ключ i{n}: '/{g['img']}' (файл {fwd(P.resolve(g['img']))}) — {g.get('text') or ''} "
                           f"[смысл: {ms.get(g.get('meaning'), {}).get('text', '')}]" for n, g in enumerate(pics, 1)) or "(картинок нет)"
     fb, fxs = fx_of(c, params)
     params["_fx"] = fxs
@@ -647,8 +648,8 @@ def render_spec(docs, params, sysp, genre):
         r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1] if rs else None)
         if r and x.get("status") != "drop":
             pre.append(f"- {KINDS.get(x.get('kind'), '')} @[{x.get('name', '')}]{' (утверждён)' if x.get('status') == 'ok' else ''}"
-                       f"{' ← автор отметил его через @ в концепте или правках — он обязан быть в кадре' if x['id'] in marked else ''}: картинка {fwd(os.path.join(data, r['img']))}, "
-                       f"код {fwd(os.path.join(data, 'render', *r['dir'].split('/'), 'element.js'))}" + (f", функция {r['fn']}" if r.get("fn") else ""))
+                       f"{' ← автор отметил его через @ в концепте или правках — он обязан быть в кадре' if x['id'] in marked else ''}: картинка {fwd(P.resolve(r['img']))}, "
+                       f"код {fwd(os.path.join(P.resolve('render/' + r['dir']), 'element.js'))}" + (f", функция {r['fn']}" if r.get("fn") else ""))
     pre_block = ("Готовые элементы препродакшена этого ролика (@[Название] в текстах автора — ссылка на них) — бери их код (скопируй нужные функции в scene.js) и держи тот же вид, "
                  "что автор уже утвердил (3D-сцены здесь не отрисуются — возьми из них палитру и детали для 2D):" + chr(10) + chr(10).join(pre)) if pre else ""
     sketch = ("- Эскизы автора — посмотри их через Read и повтори композицию (что где стоит, размеры, ракурс), переводя в наш стиль, "
@@ -699,7 +700,7 @@ def render_spec(docs, params, sysp, genre):
     return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 1500,
             "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
             "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {shot}:*)"],
-            "dirs": [wd, os.path.join(data, "files", plan["id"]), os.path.join(docs["here"], "web", "render"), os.path.join(data, "render", plan["id"])],
+            "dirs": [wd, P.files(plan["id"]), P.STANDS, P.render(plan["id"])],
             "schema": S({"summary": STR, "cover": STR, "frame": STR})}
 
 
@@ -728,8 +729,9 @@ def _example_3d(root):
     out = []
     for proj, f, what in (("Не жми эту кнопку в лифте детской поликлиники", "clinic3d.js", "интерьер поликлиники: коридоры, лифт, лампы"),
                           ("Коты сыщики 3D", "yard3d.js", "двор-диорама, время суток")):
-        p = os.path.join(root, proj, "src", f)
-        if os.path.isfile(p):
+        d = P.project(proj)
+        p = os.path.join(d, "src", f) if d else ""
+        if p and os.path.isfile(p):
             out.append((p, what))
     return out
 
@@ -746,23 +748,23 @@ def element_spec(docs, params, sysp, genre):
     renders = e.get("renders", [])
     v = max([r.get("v", 0) for r in renders] + [0]) + 1
     rel = f"{plan['id']}/{e['id']}/v{v}"
-    wd = os.path.join(data, "render", *rel.split("/"))
+    wd = P.resolve("render/" + rel)
     os.makedirs(wd, exist_ok=True)
     base = next((r for r in renders if r.get("id") == params.get("base")), None)
     if base:
-        prev = os.path.join(data, "render", *base["dir"].split("/"), "element.js")
+        prev = os.path.join(P.resolve("render/" + base["dir"]), "element.js")
         if os.path.isfile(prev):
             shutil.copy2(prev, os.path.join(wd, "element.js"))
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
     three = e.get("kind") == "scene" and plan.get("engine") == "3d"
     params["_three"] = three
-    shot = _fwd(os.path.join(docs["here"], "render_shot.js"))
-    paper = _fwd(os.path.join(docs["here"], "web", "render", "paper.js"))
+    shot = _fwd(os.path.join(P.STANDS, "render_shot.js"))
+    paper = _fwd(os.path.join(P.STANDS, "paper.js"))
     stand = "tpl/stand3d.html" if three else "render/page.html"
     url = f"http://127.0.0.1:{docs['port']}/{stand}?scene=/rscene/{rel}/element.js&parts=element"
     cmd = f'node {shot} "{url}" {_fwd(wd)} {"0.2,2.5" if three else "1.5"}'
     what, sheet, fn = SHEETS[e["kind"]]
-    refs = [(r, os.path.join(data, r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(os.path.join(data, r["img"]))]
+    refs = [(r, P.resolve(r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
     ref_lines = "\n".join(f"- '/{r['img']}' (файл {_fwd(p)})" + (f" — {r['note']}" if r.get("note") else "") for r, p in refs) or "(автор референсов не дал — опирайся на описание и узнаваемую конкретику)"
     own = preprod.assets_brief(e, data, three)
     # a scene is assembled from its characters and props (uses): their drafts and code go in first
@@ -773,10 +775,10 @@ def element_spec(docs, params, sysp, genre):
         r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1] if rs else None)
         line = f"- {KINDS.get(x.get('kind'), '')} @[{x.get('name', '')}] — {x.get('desc') or 'без описания'}" + (" (утверждён автором)" if x.get("status") == "ok" else "")             + (" (автор отметил через @ в тексте сцены)" if via == "@" else "")
         if r:
-            line += (f"\n  черновик {_fwd(os.path.join(data, r['img']))}, код {_fwd(os.path.join(data, 'render', *r['dir'].split('/'), 'element.js'))}"
+            line += (f"\n  черновик {_fwd(P.resolve(r['img']))}, код {_fwd(os.path.join(P.resolve('render/' + r['dir']), 'element.js'))}"
                      + (f", функция {r['fn']}" if r.get("fn") else ""))
         else:
-            refs_x = [_fwd(os.path.join(data, rr["img"])) for rr in x.get("refs") or [] if rr.get("img")]
+            refs_x = [_fwd(P.resolve(rr["img"])) for rr in x.get("refs") or [] if rr.get("img")]
             line += "\n  черновика ещё нет — нарисуй по описанию" + (" и референсам: " + ", ".join(refs_x) if refs_x else "")
         ab = preprod.assets_brief(x, data, three, "  ")
         if ab:
@@ -788,7 +790,7 @@ def element_spec(docs, params, sysp, genre):
         rs = x.get("renders") or []
         r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1] if rs else None)
         if x["id"] != e["id"] and x["id"] not in {c["id"] for c, _ in cast} and r and x.get("status") != "drop":
-            done.append(f"- {KINDS.get(x.get('kind'), '')} «{x.get('name', '')}»: код {_fwd(os.path.join(data, 'render', *r['dir'].split('/'), 'element.js'))}"
+            done.append(f"- {KINDS.get(x.get('kind'), '')} «{x.get('name', '')}»: код {_fwd(os.path.join(P.resolve('render/' + r['dir']), 'element.js'))}"
                         + (f", функция {r['fn']}" if r.get("fn") else "") + (" (утверждён автором)" if x.get("status") == "ok" else ""))
     fx = ((e.get("fx") or {}).get("main")) or {}
     pins = [{"id": p.get("id"), "x": float(p.get("x") or 0), "y": float(p.get("y") or 0), "text": (p.get("text") or "").strip()} for p in fx.get("pins") or []]
@@ -802,7 +804,7 @@ def element_spec(docs, params, sysp, genre):
             lines.append(f"- в целом: «{t}»")
         for i, p in enumerate(pins, 1):
             lines.append(f"- пин {i} (x≈{round(p['x'] * 1080)}, y≈{round(p['y'] * 1920)} из 1080×1920): «{p['text'] or 'автор отметил это место без слов — посмотри, что там не так'}»")
-        src = os.path.join(data, *(base.get("img") or "").split("/"))
+        src = P.resolve(base.get("img") or "")
         dst = os.path.join(wd, "pins.png")
         if pins and base.get("img") and os.path.isfile(src) and mark_pins(src, dst, pins):
             lines.append(f"Прошлая версия с номерами пинов: {_fwd(dst)} — посмотри через Read.")
@@ -820,7 +822,7 @@ def element_spec(docs, params, sysp, genre):
     if three:
         ex = _example_3d(docs["root"])
         engine = f"""Движок — 3D (stage3d.js шаблона, three.js): картонная диорама в духе Paper Mario + свет и пост-эффекты Octopath.
-1. Прочитай шапку {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'stage3d.js'))} (API мира: card, box, plane, lamp, sun, ambient, motes, shaft, glow, camKeys; герои hogCard, spriteCard; грабли) и {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'moves3d.js'))}.
+1. Прочитай шапку {_fwd(os.path.join(P.ENGINE, 'stage3d.js'))} (API мира: card, box, plane, lamp, sun, ambient, motes, shaft, glow, camKeys; герои hogCard, spriteCard; грабли) и {_fwd(os.path.join(P.ENGINE, 'moves3d.js'))}.
    Примеры целых миров: {'; '.join(f'{_fwd(p)} — {w}' for p, w in ex) or '(нет)'}. Бумажный тулкит для текстур карточек и drawHog: {paper}.
 2. Запиши в текущую папку файл element.js (только его):
    const PICS = {{ r1: '/files/…png' }};          // если нужны картинки (spriteCard / текстуры) -> IMG.r1
@@ -872,9 +874,9 @@ def element_spec(docs, params, sysp, genre):
 Жанр: {GENRE[genre]}
 
 В ответе: summary — что нарисовано и какие решения (2–3 предложения); fn — имя главной функции элемента (или функции build для 3D); note — что автору стоит проверить или решить."""
-    dirs = [wd, os.path.join(data, "files", plan["id"]), os.path.join(docs["here"], "web", "render"), os.path.join(data, "render", plan["id"])]
+    dirs = [wd, P.files(plan["id"]), P.STANDS, P.render(plan["id"])]
     if three:
-        dirs += [os.path.join(docs["pipe"], "template", "src")] + [os.path.dirname(p) for p, _ in _example_3d(docs["root"])]
+        dirs += [P.ENGINE] + [os.path.dirname(p) for p, _ in _example_3d(docs["root"])]
     return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 1800,
             "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
             "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {shot}:*)"],
@@ -1358,8 +1360,8 @@ def sceneagent_spec(docs, e, doc, c):
             "точно, минимально, по просьбе. Ручные правки автора священны. Отвечай строго JSON по схеме.")
     dirs = [work] + ([os.path.dirname(frame)] if frame else [])
     if c.get("prefabs"):                                   # Opus: may also change how things look (prefabs.js), checks itself with a frame
-        shot = _fwd(os.path.join(docs["here"], "render_shot.js"))
-        dirs += [os.path.join(docs["pipe"], "template", "src"), os.path.join(docs["here"], "web", "render")]
+        shot = _fwd(os.path.join(P.STANDS, "render_shot.js"))
+        dirs += [P.ENGINE, P.STANDS]
         return {"system": sysp, "prompt": prompt.replace("{SHOT}", f'node {shot} "{c["url"]}" {_fwd(c["check"])} {c["t"]:.2f}'), "cwd": work, "timeout": 1500,
                 "tools": ["Read", "Grep", "Edit", "Bash"], "allowed": ["Read", "Grep", "Edit", f"Bash(node {shot}:*)"], "dirs": dirs,
                 "schema": S({"reply": STR, "desc": STR, "ops": ARR(OP_SCHEMA), "allow": ARR(STR), "prefabs": STR}, ["reply", "desc", "ops"])}
@@ -1370,15 +1372,15 @@ def sceneagent_spec(docs, e, doc, c):
 def sceneconvert_spec(docs, e, base, c):
     """Перевод старой 3D-сцены (element.js + блок расстановки автора) в формат редактора: prefabs.js + scene.json, с проверкой кадров «было / стало»."""
     src, work, cmp_dir = c["src"], c["work"], c["cmp"]
-    shot = _fwd(os.path.join(c["here"], "render_shot.js"))
-    diff = _fwd(os.path.join(c["here"], "scene_diff.py"))
+    shot = _fwd(os.path.join(P.STANDS, "render_shot.js"))
+    diff = _fwd(os.path.join(P.STANDS, "scene_diff.py"))
     srv = _fwd(os.path.join(c["here"], "ideas_server.py"))
     url = f"http://127.0.0.1:{c['port']}/tpl/stand3d.html?stage=/rscene/{c['rel']}/scene.json&parts=element"
     new = _fwd(os.path.join(cmp_dir, "new"))
     plan = docs["plan"]
     cast = {x["id"]: x.get("name") for x, _ in preprod.cast_of(e, plan)} if e.get("kind") == "scene" else {}
     els = "\n".join(f"   - {i}: «{n}»" for i, n in cast.items()) or "   —"
-    ex_dir = os.path.join(docs["data"], "render", "260930-08d8", "e6640ce01", "work")
+    ex_dir = os.path.join(P.render("260930-08d8"), "e6640ce01", "work")
     example = (f"Образец готового перевода (сцена «Комната зимним утром»): {_fwd(os.path.join(ex_dir, 'scene.json'))} и хвост {_fwd(os.path.join(ex_dir, 'prefabs.js'))} "
                "(раздел «префабы сцены» в конце файла) — посмотри, как там устроены home, группы, ключи ёжика и параметры.") if os.path.isfile(os.path.join(ex_dir, "scene.json")) and ex_dir != work else ""
     prompt = f"""Задача: перевести 3D-сцену препродакшена «{e.get('name')}» из старого формата (один element.js с кодом world3d) в формат редактора сцены:
@@ -1388,9 +1390,9 @@ prefabs.js (как выглядит каждый предмет — код) + sc
 Запиши ровно два файла в {_fwd(work)}: prefabs.js и scene.json.
 
 Прочитай сначала:
-- формат: {_fwd(os.path.join(docs['pipe'], 'docs', 'studio', 'architecture.md'))} §3.3–3.5;
-- движок: шапку {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'scene.js'))} (kind префабов, home, tick, overlay) и API мира в шапке {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'stage3d.js'))};
-- схему: {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'scene.schema.json'))}.
+- формат: {_fwd(os.path.join(P.DOCS, 'studio', 'architecture.md'))} §3.3–3.5;
+- движок: шапку {_fwd(os.path.join(P.ENGINE, 'scene.js'))} (kind префабов, home, tick, overlay) и API мира в шапке {_fwd(os.path.join(P.ENGINE, 'stage3d.js'))};
+- схему: {_fwd(os.path.join(P.ENGINE, 'scene.schema.json'))}.
 {example}
 
 Как переводить:
@@ -1417,7 +1419,7 @@ prefabs.js (как выглядит каждый предмет — код) + sc
 В ответе: summary — сколько объектов, что группами, что стало ключами, что осталось внутри префабов (2–4 предложения); diff — итог последнего сравнения; note — что автору проверить."""
     sysp = ("Ты — технический художник Claude Studio: переводишь сцены бумажной 3D-анимации из кода в данные редактора, не меняя картинку. "
             "Работаешь аккуратно и проверяешь себя кадрами. Отвечай строго JSON по схеме.")
-    dirs = [work, src, cmp_dir, os.path.join(docs["pipe"], "template", "src"), os.path.join(docs["pipe"], "docs", "studio"), os.path.join(docs["here"], "web", "render"), ex_dir]
+    dirs = [work, src, cmp_dir, P.ENGINE, os.path.join(P.DOCS, "studio"), P.STANDS, ex_dir]
     return {"system": sysp, "prompt": prompt, "cwd": work, "timeout": 1800,
             "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
             "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {shot}:*)", f"Bash(python {diff}:*)", f"Bash(python {srv} scene validate:*)"],

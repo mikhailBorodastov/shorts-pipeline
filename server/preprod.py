@@ -21,6 +21,7 @@
 ассеты «в работу»: assets/models/<slug>/… (glTF), assets/img/<slug>/… (картинки и текстуры) — с лицензиями в README элемента;
 звуки: assets/sfx/<slug>.wav (готовый микс) и assets/sfx/<slug>/<n>-<слой>.wav (слои по отдельности).
 """
+import paths as P  # где что лежит (Claude Studio)
 import json, os, re, shutil, subprocess, wave
 import numpy as np
 
@@ -272,7 +273,7 @@ def assets_brief(e, data, three=False, indent=""):
     for a in el_assets(e):
         k, url = a["id"], "/" + a["main"]
         nm = (a.get("title") or "Предмет") if e.get("kind") == "scene" else e.get("name", "")     # a scene's own asset is one thing in it
-        prev = f"; превью {fwd(os.path.join(data, a['preview']))}" if a.get("preview") else ""
+        prev = f"; превью {fwd(P.resolve(a['preview']))}" if a.get("preview") else ""
         if is_model(a):
             use = (f"3D-модель glTF: в element.js const MODELS = {{ {k}: '{url}' }}; в build: w.model('{k}', {{ h: <высота, м>, pos: [x, 0, z], name: '{nm}', matte: true }})"
                    " (matte — матовый бумажный вид; модель сама встаёт на пол по центру)" if three
@@ -285,7 +286,7 @@ def assets_brief(e, data, three=False, indent=""):
         else:
             use = f"картинка: PICS.{k} = '{url}' -> IMG.{k}; " + ("в 3D — spriteCard(w, '" + k + "', { h, pos, name })" if three else "вырезкой photo / sticker или как образец")
         why = f" — автор: «{a['why'].strip()}»" if (a.get("why") or "").strip() else ""
-        L.append(f"{indent}- «{a.get('title', '')}» ({asset_who(a)}){why}\n{indent}  файл {fwd(os.path.join(data, a['main']))}{prev}\n{indent}  {use}")
+        L.append(f"{indent}- «{a.get('title', '')}» ({asset_who(a)}){why}\n{indent}  файл {fwd(P.resolve(a['main']))}{prev}\n{indent}  {use}")
     return "\n".join(L)
 
 
@@ -306,10 +307,10 @@ def element_brief(e, d, data):
             r = el_render(x)
             line = f"- @[{x.get('name', '')}] — {ONE.get(x.get('kind'), '')}, {STATUS.get(x.get('status') or '', '')}: {x.get('desc') or 'без описания'}"
             if r:
-                line += f"\n  черновик {fwd(os.path.join(data, r['img']))}, код {fwd(os.path.join(data, 'render', *r['dir'].split('/'), 'element.js'))}" + (f", функция {r['fn']}" if r.get("fn") else "")
+                line += f"\n  черновик {fwd(P.resolve(r['img']))}, код {fwd(os.path.join(P.resolve('render/' + r['dir']), 'element.js'))}" + (f", функция {r['fn']}" if r.get("fn") else "")
             s = el_sound(x)
             if s:
-                line += f"\n  звук {fwd(os.path.join(data, s['file']))} ({s.get('dur')} с)"
+                line += f"\n  звук {fwd(P.resolve(s['file']))} ({s.get('dur')} с)"
             L.append(line)
     return "\n".join(L)
 
@@ -368,7 +369,7 @@ def export(doc, data, dst, toolkit):
     full = lambda rel: os.path.join(dst, *rel.split("/"))
 
     def put(src_rel, dst_rel):
-        src = os.path.join(data, *src_rel.split("/"))
+        src = P.resolve(src_rel)
         if not os.path.isfile(src):
             return src_rel + " (файл не найден)"
         os.makedirs(os.path.dirname(full(dst_rel)), exist_ok=True)
@@ -388,12 +389,12 @@ def export(doc, data, dst, toolkit):
                 rec["refs"].append({"file": p, "note": r.get("note", "")})
         rec["assets"] = []
         for n, a in enumerate(el_assets(e), 1):
-            src_dir = os.path.join(data, *a["dir"].split("/"))
+            src_dir = P.resolve(a["dir"])
             if not os.path.isdir(src_dir):
                 continue
             base = f"assets/{'models' if a.get('kind') == '3d' else 'img'}/{slugs[eid]}" + (f"-{n}" if n > 1 else "")
             shutil.copytree(src_dir, full(base), dirs_exist_ok=True)
-            main = base + "/" + os.path.relpath(os.path.join(data, *a["main"].split("/")), src_dir).replace(os.sep, "/")
+            main = base + "/" + os.path.relpath(P.resolve(a["main"]), src_dir).replace(os.sep, "/")
             prev = put(a["preview"], f"{folder}/asset{n}{os.path.splitext(a['preview'])[1]}") if a.get("preview") else ""
             rec["assets"].append({"n": n, "key": slug(a.get("title") or "asset", 20).replace("-", "_") + (f"_{n}" if n > 1 else ""), "title": a.get("title", ""),
                                   "kind": a.get("kind"), "fmt": a.get("fmt"), "file": main, "dir": base + "/", "preview": prev, "model": is_model(a),
@@ -408,7 +409,7 @@ def export(doc, data, dst, toolkit):
                             **({"layout": r["layout"]} if r.get("layout") else {}), **({"groups": r["groups"]} if r.get("groups") else {})}
         fin = [f for f in e.get("final") or [] if (f.get("text") or "").strip()]
         pinned = [(n, float(f["x"]), float(f["y"])) for n, f in enumerate(fin, 1) if f.get("x") is not None]
-        if pinned and r and os.path.isfile(os.path.join(data, r["img"])) and mark_pins(os.path.join(data, r["img"]), full(f"{folder}/final_pins.png"), pinned):
+        if pinned and r and os.path.isfile(P.resolve(r["img"])) and mark_pins(P.resolve(r["img"]), full(f"{folder}/final_pins.png"), pinned):
             rec["final_pins"] = f"{folder}/final_pins.png"
         rec["final"] = [{"n": n, "text": f["text"].strip(), **({"pin": [f["x"], f["y"]]} if f.get("x") is not None else {})} for n, f in enumerate(fin, 1)]
         rec["mentions"] = [{"id": x["id"], "name": x.get("name", ""), "kind": x.get("kind"), "folder": (folders.get(x["id"]) or "") + "/" if folders.get(x["id"]) else None}
@@ -431,7 +432,7 @@ def export(doc, data, dst, toolkit):
                 if len(mix) == 1 and not mix[0]["at"] and mix[0]["gain"] == 1:
                     put(mix[0]["s"]["file"], main)
                 else:
-                    premix([(os.path.join(data, m["s"]["file"]), m["at"], m["gain"]) for m in mix], full(main))
+                    premix([(P.resolve(m["s"]["file"]), m["at"], m["gain"]) for m in mix], full(main))
                 paths[(eid, "mix", "")] = main
                 rec["sound"] = {"file": main, "layers": layers, "mixNote": e.get("mixNote", "")}
         write(full(f"{folder}/README.md"), element_readme(e, rec, doc, folders, idx))
