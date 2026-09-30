@@ -51,6 +51,9 @@ videos/**/*.gltf
 videos/**/*.bin
 videos/**/*.zip
 videos/**/*.ttf
+**/Adobe Premiere Pro*/
+*.cfa
+*.pek
 """
 FINDER = '''
 def _studio_dir(start=None):
