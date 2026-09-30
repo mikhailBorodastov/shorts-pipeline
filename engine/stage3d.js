@@ -63,7 +63,7 @@ function world3d(o) {
 
 // glTF models from ASSETS.models (video) or MODELS (Штурм stand): key -> url. Needs vendor/GLTFLoader.js (boot3d.js loads it).
 async function loadModels3() {
-  const M = Object.assign({}, (typeof ASSETS !== 'undefined' && ASSETS && ASSETS.models) || {}, typeof MODELS !== 'undefined' ? MODELS : {});
+  const M = Object.assign({}, (typeof ASSETS !== 'undefined' && ASSETS && ASSETS.models) || {}, typeof MODELS !== 'undefined' ? MODELS : {}, typeof PROP_MODELS !== 'undefined' ? PROP_MODELS : {});
   const todo = Object.entries(M).filter(([k]) => !X3.models[k]);
   if (!todo.length) return;
   if (!window.GLTFLoader) { console.error('stage3d: GLTFLoader is missing (vendor/GLTFLoader.js) — models are not loaded'); return; }

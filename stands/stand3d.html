@@ -107,6 +107,8 @@
      Сцена из данных (редактор, S1): ?stage=/rscene/<plan>/<element>/work/scene.json[&prefabs=…/prefabs.js]&parts=element
             prefabs.js рядом со scene.json по умолчанию; кадр = WORLD из scene.world + 2D-накладки (kind: 'overlay')
      Модель: ?model=/files/<plan>/assets/<id>/model.glb&view=1 — посмотреть glTF-ассет на полу со светом
+     3D-пропс (S3): ?prop=/rscene/<plan>/<el>/v<N>/prefab.js[&style=paper|toy][&hog=1][&params={…}] — поворотный стол: время = угол,
+            за 8 с оборот, кадры 1,3,5,7 — четыре ракурса по ¾ (render_shot.js); формат prefab.js — props3d.js / docs/studio/stage3-props.md
      Контракт:  const PICS = { key: '/files/<plan>/7.png' };                картинки -> IMG.key (для spriteCard и вырезок)
                 const MODELS = { key: '/files/<plan>/assets/<id>/model.glb' };   glTF -> w.model(key, {h, pos, name})
                 const WORLD = world3d({ fx: 'night', build(w) { … }, update(w, lt, D, T) { … } });
@@ -123,6 +125,7 @@
 <script src="/render/paper.js"></script>
 <script src="/tpl/stage3d.js"></script>
 <script src="/tpl/moves3d.js"></script>
+<script src="/tpl/props3d.js"></script>
 <script src="/tpl/scene.js"></script>
 <script>
   const q = new URLSearchParams(location.search), VIEW = q.get('view') === '1', EDIT = VIEW && q.get('edit') === '1' && q.get('key') && q.get('el');
@@ -146,6 +149,46 @@
     window.ELEMENT = { t: 0.6, len: 14, draw(ctx, T) { w.draw(ctx, T, 4, T); } };
   }
 
+  // ?prop=… — 3D-пропс на поворотном столе (props3d.js). Пропс крутится, камера и свет стоят: тени честные, пины — в координатах пропса
+  const PROP = { def: null, G: null, o: null, size: [1, 1, 1], len: 8 };
+  const propAngle = T => -Math.PI / 4 + (T - 1) / PROP.len * TAU;       // T = 1, 3, 5, 7 -> ¾ спереди-справа, ¾ спереди-слева, ¾ сзади…
+  async function propScene(url) {
+    if (q.get('style')) PROP_STYLE = q.get('style');
+    await load(url);
+    const def = PROPS3D[url.replace(/[?#].*$/, '')] || PROP3D_LAST;
+    if (!def) throw new Error('prefab.js не вызвал prop3d(): ' + url);
+    PROP.def = def;
+    let params = {};
+    try { params = JSON.parse(q.get('params') || '{}'); } catch (e) {}
+    PROP.o = { id: 'prop', name: def.name || 'пропс', params: Object.assign({}, def.params || {}, params) };
+    let fit = { d: 3, y: 0.5 };
+    const w = world3d({ fx: { preset: 'day', dof: null, vignette: { offset: 0.35, darkness: 0.35 }, grade: { sat: 0.05, contrast: 0.04, bright: 0.02 } }, bg: '#ece6da', fov: 26,
+      build(w) {
+        w.ambient('#fffaf0', '#b3a58c', 1.25);
+        w.sun({ intensity: 2.7, area: 2.5, at: [0, 0, 0], dir: [-2.2, 5, 3.6], soft: 7 });
+        w.plane({ size: [40, 40], flat: true, color: '#e6dfd1' });
+        const before = new Set(w.scene.children);
+        const G = new THREE.Group(), r = def.build ? def.build(w, PROP.o) : null;
+        for (const c of w.scene.children.filter(c => !before.has(c))) G.add(c);
+        if (r && r.isObject3D && !r.parent) G.add(r);
+        w.scene.add(G); P3.live(w, G); PROP.G = G;
+        w.item(PROP.o.name, 'group', G);
+        const box = new THREE.Box3().setFromObject(G), sz = box.getSize(new THREE.Vector3());
+        PROP.size = [sz.x, sz.y, sz.z];
+        // кадр 9:16, но лист собирается из центрального квадрата — вписываем пропс в квадрат по диагонали основания
+        const span = Math.max(Math.hypot(sz.x, sz.z), sz.y) * 1.25, vf = (w.o.fov || 26) * Math.PI / 180, hf = 2 * Math.atan(Math.tan(vf / 2) * W / H);
+        fit = { d: Math.max(0.6, span / 2 / Math.tan(hf / 2)), y: sz.y * 0.45 };
+        if (q.get('hog') === '1') hogCard(w, { pos: [-(Math.hypot(sz.x, sz.z) / 2 + 0.3), 0, 0.1], h: 0.9, name: 'ёжик для масштаба' });
+      },
+      update(w, lt) {
+        if (PROP.G) PROP.G.rotation.y = propAngle(lt);
+        if (PROP.def.tick) PROP.def.tick(lt, PROP.o, PROP.G);
+        const el = 0.32;
+        w.cam.position.set(0, fit.y + Math.sin(el) * fit.d, Math.cos(el) * fit.d); w.target.set(0, fit.y, 0);
+      } });
+    window.ELEMENT = { t: 1, len: PROP.len, draw(ctx, T) { w.draw(ctx, T, 4, T); } };
+  }
+
   // ?stage=… — scene.json + prefabs.js (template/src/scene.js)
   async function stageScene(url) {
     await load(q.get('prefabs') || url.replace(/[^/]*$/, 'prefabs.js'));
@@ -161,6 +204,7 @@
     await window.THREE_READY;
     if (q.get('stage')) await stageScene(q.get('stage'));
     else if (q.get('model')) modelScene(q.get('model'));
+    else if (q.get('prop')) await propScene(q.get('prop'));
     else await load(q.get('scene'));
     const P = typeof PICS !== 'undefined' ? PICS : {};   // pictures before the world is built: spriteCard reads IMG in build()
     await Promise.all(Object.entries(P).map(([k, s]) => pic(k, s)));
