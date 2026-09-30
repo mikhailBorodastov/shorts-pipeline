@@ -4,7 +4,7 @@
 `_ideas/render/260930-08d8/e6640ce01/v4/element.js` (1687 строк, 3D, `len: 10`, одна пара ключей камеры, объекты без `name`).
 Состав сцены — 12 элементов (ёжик в пижаме, стол, монитор, полка с дисками, системный блок, клавиатура, лампа, кресло, окно с метелью, часы…), у большинства есть утверждённые 2D-черновики.
 
-Этап делается **внутри нынешнего «Штурма»** (`_pipeline/ideas/`), до переезда в Claude Studio (S2). Всё новое сразу пишется так, чтобы переехать без переделки:
+Этап делается **внутри нынешнего «Штурма»** (`_studio/server/`), до переезда в Claude Studio (S2). Всё новое сразу пишется так, чтобы переехать без переделки:
 отдельные модули, профессиональная тема, операции и история по [architecture.md](architecture.md).
 
 ## Состояние (30.09.2026): сделано, ждёт приёмки автором
@@ -12,7 +12,7 @@
 | раздел | что есть | отличия от ТЗ / что не сделано |
 |---|---|---|
 | §3 данные | `work/scene.json` + `prefabs.js` + `history.jsonl`; `scene.schema.json` + проверка на сервере (`scene_api.validate`, `check_ids`) | группы — через `parent` у детей (без `children`); у пачки с правкой вида — копия старого `prefabs.js` в `work/_prefabs/` |
-| §4 движок | `template/src/scene.js`: `evalKeys`, `sceneCamAt` (планы, склейки), `buildFromScene`, `applyScene`, `syncScene`, `sceneWorld`, `drawSceneOverlays`; префабы `card / box / group / model / env / overlay`, `home`, `tick`; стенд `?stage=` | тесты: `node template/src/test/scene.test.js` (18) |
+| §4 движок | `engine/scene.js`: `evalKeys`, `sceneCamAt` (планы, склейки), `buildFromScene`, `applyScene`, `syncScene`, `sceneWorld`, `drawSceneOverlays`; префабы `card / box / group / model / env / overlay`, `home`, `tick`; стенд `?stage=` | тесты: `node engine/test/scene.test.js` (18) |
 | §5 конвертер | задача `sceneconvert` (Opus) + `scene_diff.py` + «Перевести в редактор» в карточке. **«Комната» переведена в сессии реализатора** (тот же код v4 разложен на 22 объекта, 2 группы, 6 источников света; ёжик, кресло и полка — ключами). «Было / стало»: средняя 3.5 / 3.2 / 0.0 из 255 — в пределах порога | сам `sceneconvert` через кнопку ещё не гонялся на другой сцене (стоит Opus-прогона) |
 | §2, §6 экран | раскладка Blender, тёмная тема, размеры панелей запоминаются; один WebGLRenderer: свободный вид (прямой рендер) + мини-вид камеры и вид камеры (через пост-эффекты сцены); дерево (виртуальный список, поиск, группы, перетаскивание в группу, F2, 👁 🔒, клавиатура); свойства (числа, колёсико, перетаскивание подписи, ◆, источник, параметры префаба с умолчаниями); гизмо TransformControls (W / E / T — режим); модальные G / R / S (ось, плоскость, число, Ctrl — шаг, Esc); Alt+G/R/S; Shift+D → G; X / Delete; H / Alt+H; Ctrl+G / Ctrl+Alt+G | «💡 как в кадре» для основного вида не сделан (кадр как в ролике — в мини-виде и в виде камеры); гизмо — только у одного выбранного (несколько — через G / R / S); иконки — эмодзи (Lucide не качали); разгруппировать можно только несдвинутую группу |
 | §7 время и ключи | автоключ, I / Alt+I; таймлайн: линейка, курсор, I / O, масштаб Ctrl+колесо, маркеры, камера (ключи + ✂), объекты (свёрнуто / по свойствам), ключи: выбор, рамка, Shift, перетаскивание с прилипанием (Alt — без), Delete, ПКМ — ease / копировать / вставить, двойной клик — к моменту; J / K / L, ← →, Shift, ↑ ↓, Home / End; длина сцены | на таймлайне — анимированные и выбранные объекты (не все) |
@@ -23,8 +23,8 @@
 | §12 агент | панель «/», Sonnet / Opus, одна пачка, блокировка сцены, «↺ отменить»; Opus может ещё и поправить вид предмета в `prefabs.js` (копия для отмены, страница перезагружается) | живой лог и реплики посреди работы — S7 |
 | §13 Штурм | «🎬 Оформить сцену» / «🎬 Перевести в редактор» в карточке, строка «в редакторе · кадры совпадают ✓ · было / стало · клип», маршрут `#/p/<plan>/pre/<el>/stage`; «Поправить» у сцены в редакторе → агент сцены (Opus) → новая версия | экспорт в проект (`preprod.export` → `scene.json`, `prefabs.js`, `clip.mp4`) не сделан — к S6 |
 
-Файлы S1 (фактически): `template/src/scene.js`, `scene.schema.json`, `test/scene.test.js`, `vendor/TransformControls.js`; `ideas/scene_api.py`, `scene_diff.py`, `render_clip.js`;
-`ideas/web/editor/` — `editor.html`, `editor.css`, `editor.js` (оболочка, операции, время, звук, хоткеи, версии, меню), `viewport.js`, `panels.js` (дерево + свойства), `timeline.js`,
+Файлы S1 (фактически): `engine/scene.js`, `scene.schema.json`, `test/scene.test.js`, `vendor/TransformControls.js`; `server/scene_api.py`, `scene_diff.py`, `render_clip.js`;
+`web/editor/` — `editor.html`, `editor.css`, `editor.js` (оболочка, операции, время, звук, хоткеи, версии, меню), `viewport.js`, `panels.js` (дерево + свойства), `timeline.js`,
 `keys.js` (ключи и автоключ), `ops.js`, `agent.js`, `keymap.json`.
 
 ---
@@ -70,21 +70,21 @@
 
 ## 3. Данные и файлы
 
-- Рабочая копия: `_ideas/render/<plan>/<el>/work/scene.json` + `prefabs.js` + `history.jsonl` (формат — [architecture §3.3–3.4](architecture.md#33-сцена-scenejson--главный-формат-редактора)).
-- JSON-схема: `template/src/scene.schema.json`; сервер проверяет каждую запись.
+- Рабочая копия: `<канал>/videos/<видео>/preprod/<el>/work/scene.json` + `prefabs.js` + `history.jsonl` (формат — [architecture §3.3–3.4](architecture.md#33-сцена-scenejson--главный-формат-редактора)).
+- JSON-схема: `engine/scene.schema.json`; сервер проверяет каждую запись.
 - Документ для операций: ключ `scene:<plan>/<el>` в `ideas_api` (тот же `apply_op`, пути через `id`), файл — рабочий `scene.json`.
 - **Версия** («💾 версия», Ctrl+S, и после каждой правки агента): `v<N>/` = копия `scene.json` + `prefabs.js` + кадры `element.png`, `element_*.png` (со стенда в режиме сцены)
   + запись в `renders[]` элемента `{…, "stage": true, "scene": "v<N>/scene.json"}` — карточка препродакшена показывает её как обычную версию.
 - `authored`: каждая операция автора добавляет путь; агент получает список и не трогает его без прямой просьбы (валидатор на сервере).
 
-## 4. Движок (`template/src/scene.js`)
+## 4. Движок (`engine/scene.js`)
 
 - `buildFromScene(w, scene, PREFABS)` → `{ objects: Map(id → THREE.Object3D), camera, lights }`; группы — `THREE.Group`, дети внутри.
 - `applyScene(S, t)`: для каждого объекта — статичные значения или `evalKeys` по `pos / rot / scale / hide`; камера — ключи внутри сегмента между `cuts`
   (склейка = без интерполяции через неё); `handheld` — шум от `t`; свет — позиция и `intensity` по ключам. Карточки и префабы с `dynamic` перерисовываются от `t` как сейчас.
 - `evalKeys(keys, t, base)`: `linear | io | in | out | hold`; вне диапазона — крайние значения; углы — без скачка через ±π.
 - Стенд: `stand3d.html?stage=/rscene/<plan>/<el>/work/scene.json&prefabs=…` — строит сцену из данных (для рендера кадров, клипа и редактора — один код).
-- Тесты `template/src/test/scene.test.js` (node, без браузера): интерполяция, ease, hold, склейки, группы, углы. Запуск — `node template/src/test/scene.test.js`.
+- Тесты `engine/test/scene.test.js` (node, без браузера): интерполяция, ease, hold, склейки, группы, углы. Запуск — `node engine/test/scene.test.js`.
 
 ## 5. Конвертер старой сцены (`sceneconvert`, Opus)
 
@@ -173,18 +173,18 @@
 ## 14. Файлы
 
 ```
-_pipeline/template/src/scene.js              движок сцены (buildFromScene, applyScene, evalKeys)
-_pipeline/template/src/scene.schema.json     схема scene.json
-_pipeline/template/src/test/scene.test.js    тесты движка (node)
-_pipeline/template/src/vendor/TransformControls.js   three r186 examples (MIT) — скачать (подтверждение автора)
-_pipeline/ideas/scene_api.py                 документ сцены, операции, история, версии, задачи sceneconvert / sceneclip / sceneagent (перезагрузка на лету, как sounds.py)
-_pipeline/ideas/scene_diff.py                сравнение кадров до / после конвертации
-_pipeline/ideas/render_clip.js               клип сцены в mp4
-_pipeline/ideas/ideas_claude.py              + sceneconvert_spec, sceneagent_spec, element_spec для сцен нового формата
-_pipeline/ideas/web/render/stand3d.html      + режим ?stage=… (сцена из данных)
-_pipeline/ideas/web/editor/                  editor.js (оболочка, маршрут), viewport.js, tree.js, props.js, timeline.js, keys.js, camera.js,
+_studio/engine/scene.js              движок сцены (buildFromScene, applyScene, evalKeys)
+_studio/engine/scene.schema.json     схема scene.json
+_studio/engine/test/scene.test.js    тесты движка (node)
+_studio/engine/vendor/TransformControls.js   three r186 examples (MIT) — скачать (подтверждение автора)
+_studio/server/scene_api.py                 документ сцены, операции, история, версии, задачи sceneconvert / sceneclip / sceneagent (перезагрузка на лету, как sounds.py)
+_studio/stands/scene_diff.py                сравнение кадров до / после конвертации
+_studio/stands/render_clip.js               клип сцены в mp4
+_studio/server/ideas_claude.py              + sceneconvert_spec, sceneagent_spec, element_spec для сцен нового формата
+_studio/stands/stand3d.html      + режим ?stage=… (сцена из данных)
+_studio/web/editor/                  editor.js (оболочка, маршрут), viewport.js, tree.js, props.js, timeline.js, keys.js, camera.js,
                                              ops.js (операции, отмена), keymap.js (хоткеи, keymap.json), agent.js, editor.css
-_pipeline/docs/…                             обновить: preproduction.md (§5–6, §13), architecture.md (если что-то уточнилось), этот файл (отметки ✓)
+_studio/docs/…                             обновить: preproduction.md (§5–6, §13), architecture.md (если что-то уточнилось), этот файл (отметки ✓)
 ```
 
 ## 15. Вне этапа

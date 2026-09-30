@@ -1,6 +1,6 @@
 # Препродакшен — спецификация
 
-Состояние на 30.09.2026. Код: `_pipeline/ideas/` (сервис «Штурм идей»), движок: `_pipeline/template/src/` (`stage3d.js`, `lib.js`), тулкит: `ideas/web/render/paper.js`.
+Состояние на 30.09.2026. Код: `_studio/server/` (сервис «Штурм идей»), движок: `_studio/template/src/` (`stage3d.js`, `lib.js`), тулкит: `stands/paper.js`.
 Общий обзор сервиса — [shturm.md](shturm.md). Этот документ — про главный этап: препродакшен.
 
 ---
@@ -99,7 +99,7 @@
 Claude пишет `element.js`, сам рендерит его `node render_shot.js …&parts=element`, смотрит PNG (Read) и правит 2–4 прохода.
 Задача — `ideas_claude.element_spec`, инструменты: Read/Write/Edit/Glob/Grep и единственная команда `node render_shot.js`.
 
-### 2D — `web/render/page.html` (персонажи, пропсы, сцены при `engine: '2d'`)
+### 2D — `stands/page.html` (персонажи, пропсы, сцены при `engine: '2d'`)
 
 ```js
 const PICS = { r1: '/files/<plan>/7.png' };            // картинки -> IMG.r1 (вырезки photo / sticker)
@@ -107,11 +107,11 @@ function drawLiftPanel(ctx, x, yНог, рост, o = {}) {…} // сам эле
 const ELEMENT = { t: 0.6, draw(ctx, T) { … } };        // лист-витрина 1080×1920 (раскладка по типу — SHEETS в ideas_claude.py)
 ```
 Листы: персонаж — крупно в рост + 3 позы/эмоции; пропс — крупно + состояния; сцена — кадр 9:16 с ёжиком для масштаба.
-Тулкит — `paper.js`: `cut/torn/note/photo/sticker/label/scrawl`, `drawHog(ctx, x, yНог, рост, {kind, look, mouth, armL/R, walk, backView…})`; хелперы — `template/src/lib.js`.
+Тулкит — `paper.js`: `cut/torn/note/photo/sticker/label/scrawl`, `drawHog(ctx, x, yНог, рост, {kind, look, mouth, armL/R, walk, backView…})`; хелперы — `engine/lib.js`.
 
 ### 3D — `/tpl/stand3d.html` (сцены при `engine: '3d'`)
 
-Стенд лежит в `ideas/web/render/stand3d.html`, но отдаётся как `/tpl/stand3d.html`, чтобы `vendor/` шаблона находился.
+Стенд лежит в `stands/stand3d.html`, но отдаётся как `/tpl/stand3d.html`, чтобы `vendor/` шаблона находился.
 ```js
 const PICS = { r1: '/files/…png' };                    // spriteCard, текстуры
 const MODELS = { m1: '/files/<plan>/assets/<id>/x.glb' }; // glTF из ассетов -> w.model('m1', {...})
@@ -172,13 +172,13 @@ const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); } }; 
 - **Старый формат** (`element.js` + блок расстановки) → кнопка «🎬 Перевести в редактор» в карточке 3D-сцены (задача `sceneconvert`, Opus, 5–10 мин):
   Claude пишет `render/<plan>/<el>/work/prefabs.js` + `scene.json`, сам сравнивает кадры «было / стало» (`scene_diff.py`), сервер проверяет ещё раз
   и пишет `e.stage = {work, from, fromV, diff, compare, ts}`. У сцены в редакторе «✋ Расставить» скрыт: расстановка теперь в редакторе.
-- **Редактор** — `#/p/<plan>/pre/<el>/stage`: iframe `/tpl/editor.html?key=…&el=…` поверх страницы (модули `web/editor/`, движок `template/src/scene.js`).
+- **Редактор** — `#/p/<plan>/pre/<el>/stage`: iframe `/tpl/editor.html?key=…&el=…` поверх страницы (модули `web/editor/`, движок `engine/scene.js`).
   Правки — операциями `POST /api/scene/op` (история `work/history.jsonl`, отмена — обратная пачка), `authored` — что автор правил руками.
 - **Версия** («💾 версия», Ctrl+S) → `v<N>/` = `scene.json` + `prefabs.js` + кадры, запись в `renders[]` с `stage: true` — карточка показывает её как обычную версию.
   «🎞 клип» → `work/clip.mp4` (`render_clip.js`, звуки дорожки сведены), ссылка в `e.stage.clip`.
 - **«Поправить»** у сцены в редакторе уходит не в `element_spec`, а агенту сцены (`sceneagent`, Opus): пины и «в целом» → одна пачка операций → новая версия.
 - **Агент** в редакторе («/»): просьба → `sceneagent` (Sonnet, переключатель Opus) → одна пачка; лента — `e.stage.chat`. Пока он работает, сцена только для просмотра.
-- CLI: `python ideas_server.py scene show|ops|history|undo|version|clip|validate|finish <plan> <el>` (`finish` — зарегистрировать перевод, сделанный руками).
+- CLI: `python studio.py scene show|ops|history|undo|version|clip|validate|finish <plan> <el>` (`finish` — зарегистрировать перевод, сделанный руками).
 
 ## 7. Сцены и их состав
 
@@ -194,7 +194,7 @@ const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); } }; 
 
 | вид | источники | что качается «в работу» |
 |---|---|---|
-| 🧊 3D | **Poly Pizza** (low-poly, много CC0 от Kenney и Quaternius, CC-BY от Google Poly) · Poly Haven (CC0) · Sketchfab (скачиваемые) · OpenGameArt (3D) | `.glb` / glTF 1k с текстурами; Sketchfab — только с токеном `_ideas/sketchfab_token.txt`; OGA — файлы страницы (часто не glTF → только референс) |
+| 🧊 3D | **Poly Pizza** (low-poly, много CC0 от Kenney и Quaternius, CC-BY от Google Poly) · Poly Haven (CC0) · Sketchfab (скачиваемые) · OpenGameArt (3D) | `.glb` / glTF 1k с текстурами; Sketchfab — только с токеном `.studio/sketchfab_token.txt`; OGA — файлы страницы (часто не glTF → только референс) |
 | 🖼 2D | Openverse (фото и рисунки под CC: Flickr, Wikimedia…) · Wikimedia Commons · OpenGameArt (2D) | картинка (если оригинал не отдаётся — превью) |
 | 🧱 текстуры | ambientCG (CC0) · Poly Haven (CC0) | карты 1K (цвет, нормали, шероховатость…), главная — карта цвета |
 
@@ -209,7 +209,7 @@ const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); } }; 
   (превью и лицензия — из каталога, не со слов Claude) и кладёт в `picks[]`. **Ничего не скачивается без автора.**
 - **Использование:** в черновике — через `MODELS` + `w.model(key, { h, pos, rotY, name, matte: true, anim })` (модель встаёт на пол по центру,
   `matte` — матовый «бумажный» вид), картинки — `PICS` / `spriteCard` / вырезки, текстуры — в `draw` плоскости.
-  Загрузчик — `template/src/vendor/GLTFLoader.js` + `SkeletonUtils.js` (three r186 examples, MIT), `boot3d.js` грузит их необязательно.
+  Загрузчик — `engine/vendor/GLTFLoader.js` + `SkeletonUtils.js` (three r186 examples, MIT), `boot3d.js` грузит их необязательно.
 - **Права:** лицензия и автор едут в README элемента; где `attr` — пометка «нужна подпись автора», реализатор переносит в «Права» упаковки.
 
 ## 9. Звуки 🔊
@@ -241,7 +241,7 @@ const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); } }; 
 
 README элемента: статус · что это · где в ролике · **«Для финала» — требования автора** · что в сцене / где стоит · @-ссылки · ассеты с лицензиями
 и строками кода · звук со слоями · файлы (черновик, код и как его переносить, расстановка автора, тулкит).
-Правила для реализатора — `_pipeline/CLAUDE.md`, шаг A.2: README элемента читать перед тем, как его делать; ✓ — делать по черновику;
+Правила для реализатора — `_studio/CLAUDE.md`, шаг A.2: README элемента читать перед тем, как его делать; ✓ — делать по черновику;
 сцену собирать из `cast`, код брать из папок элементов; блок расстановки переносить вместе с миром; ассеты использовать, права — в упаковку.
 
 ## 11. Задачи Claude препродакшена
@@ -343,7 +343,7 @@ README элемента: статус · что это · где в ролике
   в 3D-сцене карточка доворачивается к камере, как в Paper Mario (правило проекта «Доедать будешь», у других каналов может быть иначе).
 - Версии сцены: автосохранение + явные версии (кнопкой и после каждой правки агента). **Git** — заводим.
 - Эталон этапа 1 — сцена «Комната зимним утром» (штурм `260930-08d8`, элемент `e6640ce01`).
-- Планируем **все этапы** сразу; реализует следующий агент (Opus) по плану: `_pipeline/docs/studio/`.
+- Планируем **все этапы** сразу; реализует следующий агент (Opus) по плану: `_studio/docs/studio/`.
 
 ### 13.1 Сцена как данные
 
@@ -399,7 +399,7 @@ element.js  (код, пишет Claude)                          scene.json  (д
 - **Включить:** на таймлайне у персонажа полоса клипа `{t, anim, dur, loop, speed}` из выпадающего списка (Tab/Enter, как везде).
 - **Добавить промптом:** в «Правках» персонажа поле «+ анимация» («чешет затылок левой лапой, 1.5 с», «испуганно оглядывается»). Кнопка `anim` (Claude, Opus):
   пишет функцию позы в `anims.js`, рисует ленту кадров, смотрит, правит, кладёт в `anims[]` с превью. Дальше её можно включать в любой сцене.
-  Удачные общие движения — в `template/src/moves3d.js` и `_pipeline/ANIMATIONS.md`.
+  Удачные общие движения — в `engine/moves3d.js` и `_studio/ANIMATIONS.md`.
 - **Слой под будущее:** у записи есть `rig: 'card2d'`. Для 3D-персонажей (`rig: 'glb'`) клипами станут анимации из самого glTF (`w.model(..., {anim})` это уже умеет) —
   на таймлайне они работают точно так же.
 

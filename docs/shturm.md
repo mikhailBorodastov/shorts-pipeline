@@ -1,13 +1,13 @@
 # «Штурм идей» — документация сервиса
 
-Состояние на 30.09.2026. Код — `_pipeline/ideas/`, данные — `_ideas/` рядом с проектами (вне git).
+Состояние на 30.09.2026. Код — `_studio/server/`, данные — `_ideas/` рядом с проектами (вне git).
 Главный этап — препродакшен, у него отдельный документ: [preproduction.md](preproduction.md).
 
 ---
 
 ## 1. Что это
 
-Локальная страница `http://localhost:8790/` (запуск — `Штурм идей.bat` в рабочей папке или `_pipeline/ideas.bat`), где автор
+Локальная страница `http://localhost:8790/` (запуск — `Claude Studio.bat` в рабочей папке или `_studio/server.bat`), где автор
 вместе с Claude готовит ролик **до** сценария: идея → вопросы → биты → название → препродакшен → обложка → проект.
 На выходе — папка проекта из шаблона, в которой уже лежит всё, что нужно сценаристу и аниматору (`refs/штурм.md`, `refs/препродакшен/`, `assets/`).
 После публикации сюда же возвращаются цифры и выводы.
@@ -57,8 +57,8 @@ ideas_api.py    — логика: документы и операции, экс
    ├─ sounds.py       — поиск и скачивание звуков (библиотека, Freesound, Commons, любые ссылки, yt-dlp)
    ├─ refvideo.py     — разбор видео-референса
    └─ youtube.py      — статистика канала
-web/render/page.html   — 2D-стенд (обложка, первый кадр, элементы), paper.js — бумажный тулкит
-web/render/stand3d.html — 3D-стенд (/tpl/stand3d.html): рендер черновиков, живой просмотр, редактор расстановки, просмотр моделей
+stands/page.html   — 2D-стенд (обложка, первый кадр, элементы), paper.js — бумажный тулкит
+stands/stand3d.html — 3D-стенд (/tpl/stand3d.html): рендер черновиков, живой просмотр, редактор расстановки, просмотр моделей
 render_shot.js         — puppeteer: снимает PNG со стенда (вызывает Claude и задача layout3d)
 web/ref.json           — единый справочник: вкладки путей, типы элементов, группы вопросов, углы атаки, схемы… (страница, экспорт и промпты)
 ```
@@ -72,7 +72,7 @@ web/ref.json           — единый справочник: вкладки п�
   Путь по спискам идёт через `id` элемента, а не индекс. Операции применяются к свежему файлу под блокировкой — страница, Claude на странице
   и Claude в сессии (CLI) не затирают правки друг друга.
 - Страница держит документ открытым и сливает изменения по `rev`; незаписанный текст в полях без привязки хранят `Drafts`.
-- `_ideas/index.md` — обзор всех штурмов для Claude, пересобирается при каждом сохранении.
+- `<канал>/index.md` — обзор всех штурмов для Claude, пересобирается при каждом сохранении.
 
 ### Задачи
 `start_job(kind, key, scope, params)` → поток → `Job` (`status`, `summary`, `result`, `elapsed`). Лог — `_ideas/.jobs/log.txt` (стоимость и ходы Claude).
@@ -95,15 +95,15 @@ web/ref.json           — единый справочник: вкладки п�
 
 Писать в штурм из сессии — только так, JSON руками не править:
 ```
-python _pipeline/ideas/ideas_server.py list | show ID | bank | port
-python _pipeline/ideas/ideas_server.py new short|long "Имя" [--topic …] [--idea …] [--storm]
-python _pipeline/ideas/ideas_server.py add-ideas ID "…" … | add-beats ID "вопрос | ответ" … | add-questions ID "вопрос" …
-python _pipeline/ideas/ideas_server.py add-elements ID scene|char|prop|sound "название | описание" …
-python _pipeline/ideas/ideas_server.py add-bank "Идея" [--desc … --cool 1-3 --speed 1-3 --mode short|long|any --fresh … --src …]
-python _pipeline/ideas/ideas_server.py set KEY путь.через.точки значение  |  op KEY '<JSON-операции>'
-python _pipeline/ideas/ideas_server.py produce ID "Проект" [--attach]  |  yt-sync
-python _pipeline/ideas/assets.py search "q1" "q2" --kind 3d|2d|tex  |  fetch <src> <id> <папка>
-python _pipeline/ideas/sounds.py search "q" | fetch <ссылка|lib:id> <папка> [--start … --end …]
+python _studio/server/studio.py list | show ID | bank | port
+python _studio/server/studio.py new short|long "Имя" [--topic …] [--idea …] [--storm]
+python _studio/server/studio.py add-ideas ID "…" … | add-beats ID "вопрос | ответ" … | add-questions ID "вопрос" …
+python _studio/server/studio.py add-elements ID scene|char|prop|sound "название | описание" …
+python _studio/server/studio.py add-bank "Идея" [--desc … --cool 1-3 --speed 1-3 --mode short|long|any --fresh … --src …]
+python _studio/server/studio.py set KEY путь.через.точки значение  |  op KEY '<JSON-операции>'
+python _studio/server/studio.py produce ID "Проект" [--attach]  |  yt-sync
+python _studio/server/assets.py search "q1" "q2" --kind 3d|2d|tex  |  fetch <src> <id> <папка>
+python _studio/server/sounds.py search "q" | fetch <ссылка|lib:id> <папка> [--start … --end …]
 ```
 
 ## 5. Данные `_ideas/`
@@ -126,7 +126,7 @@ master-planer.pdf            тетрадь (не в git)
 
 - **«🚀 Создать проект»** = `new_project.py` + `refs/штурм.md` + `refs/штурм.json` + эскизы и листы кадров в `refs/штурм/` + экспорт препродакшена
   (`refs/препродакшен/`, `assets/models|img|sfx/`). Штурм помечается `status: prod`, в нём запоминается `project`.
-- **Сценарий:** `_pipeline/CLAUDE.md`, вход 3 («пришёл со штурмом»): штурм — часть ТЗ, этапы сценариста короче, сцены строятся из локаций препродакшена.
+- **Сценарий:** `_studio/CLAUDE.md`, вход 3 («пришёл со штурмом»): штурм — часть ТЗ, этапы сценариста короче, сцены строятся из локаций препродакшена.
 - **Анимация:** шаг A.2 — README элементов, `manifest.json`, черновики как стартовый код, «для финала» — обязательные требования.
 - **Обложка:** концепт и `scene.js` из «🎨 Отрисовать» — первый вариант `THUMBNAILS`.
 - **Итоги:** после публикации цифры и комментарии возвращаются во вкладку «Итоги» и в «Просмотры»; выводы по 1, 3, 5, 10 роликам — кандидаты в `style-guide.md`.

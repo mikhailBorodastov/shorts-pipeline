@@ -154,7 +154,7 @@ applyScene(S, t);                                    // каждый кадр: �
   Каждый объект — `THREE.Group`-держатель с трансформацией из данных; `S.hold` — объекты, которые сейчас тянет мышь (ключи их не перетирают).
   `syncScene(S, rebuild)` — после структурных правок (добавить, удалить, в группу, сменить префаб / params). `sceneWorld(scene, PREFABS)` — мир целиком.
   Глобальные имена движка — с префиксом `scene…` (`sceneCamAt`, `sceneShotOf`…): в тулките `paper.js` уже есть `camAt`.
-- В S1 файл лежит в `template/src/scene.js` (переедет в `engine/` в S2), тесты — `template/src/test/scene.test.js`.
+- В S1 файл лежит в `engine/scene.js` (переедет в `engine/` в S2), тесты — `engine/test/scene.test.js`.
 - Оценка ключей — чистые функции (`evalKeys(keys, t, fallback)`), покрыты тестами (node, без браузера).
 - `render_clip.js` — рендер сцены в mp4 (кадры со стенда → ffmpeg), используется для «🎞 клип сцены» и превью в библиотеке.
 
