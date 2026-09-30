@@ -264,7 +264,8 @@ def publish_rigged(A, job, doc, vid, e, r, as_):
     C = A.chapi()
     c = channel_dir(P.index()["videos"].get(vid, {}).get("channel"))
     src = P.resolve("render/" + r["dir"])
-    rig = json.load(open(os.path.join(src, "rig.json"), encoding="utf-8"))
+    rp = os.path.join(src, "rig.json")
+    rig = json.load(open(rp, encoding="utf-8")) if os.path.isfile(rp) else {"type": "hog", "param": True}   # ёжик: риг по параметрам, скелет hog
     sl = as_.split("/", 1)[1] if as_ and as_ != "new" else slug(e.get("name"))
     tmp = os.path.join(lib_dir(c), "characters", sl, "_new")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -272,16 +273,21 @@ def publish_rigged(A, job, doc, vid, e, r, as_):
     for f in os.listdir(src):
         if f.endswith(".js") or f == "rig.json":
             shutil.copy2(os.path.join(src, f), os.path.join(tmp, f))
+        elif f == "costumes":
+            shutil.copytree(os.path.join(src, f), os.path.join(tmp, f))
     card = C.load_card(lib_dir(c), sl)
     v = max([x["v"] for x in (card or {}).get("versions") or []] + [0]) + 1
     dst = os.path.join(lib_dir(c), "characters", sl, f"v{v}")
     shutil.move(tmp, dst)
-    res = C.add_version(A, sl, dst, {"rig": "parts", "skeleton": rig.get("type") or "?", "name": e.get("name"), "desc": e.get("desc", ""),
+    res = C.add_version(A, sl, dst, {"rig": "param" if rig.get("param") else "parts", "skeleton": rig.get("type") or "?", "name": e.get("name"), "desc": e.get("desc", ""),
                                      "note": r.get("summary", "")}, cid=c["id"], video={"video": vid, "videoName": doc.get("name"), "element": e["id"], "render": r.get("id")})
     sk = {"schema": 1, "type": rig.get("type"), "name": rig.get("typeName") or rig.get("type"), "rig": "parts",
           "bones": [{k: b[k] for k in ("id", "parent", "limits") if k in b} for b in rig.get("bones") or []],
           "slots": rig.get("slots") or {}, "poses": rig.get("poses") or {}, "from": {"character": sl, "v": res["v"]}}
-    if rig.get("type"):
+    if rig.get("param"):
+        if not os.path.isfile(os.path.join(lib_dir(c), "skeletons", "hog.json")):
+            C.save_skeleton(A, C.skeleton_hog(), c["id"])
+    elif rig.get("type"):
         p = os.path.join(lib_dir(c), "skeletons", rig["type"] + ".json")
         if not os.path.isfile(p):                              # тип скелета заводится первым персонажем; дальше его кости — общий договор
             C.save_skeleton(A, sk, c["id"])

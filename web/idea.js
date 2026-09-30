@@ -406,7 +406,7 @@ Object.assign(Plan, {
         cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         p3 && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
-        rc && h('button.primary', { onclick: () => Plan.viewSkel(d, e, cur), title: 'Двигать суставы мышью, проверять позами; сохраняется новой версией без Claude' }, '🦴 Редактор скелета'),
+        rc && cur.fn !== 'hog' && h('button.primary', { onclick: () => Plan.viewSkel(d, e, cur), title: 'Двигать суставы мышью, проверять позами; сохраняется новой версией без Claude' }, '🦴 Редактор скелета'),
         !cur && rig && Claude.btn({ label: '🦴 Собрать персонажа', icon: '', action: 'charparts', key, scope, params: { el: e.id },
           title: 'Claude (Opus) нарисует персонажа частями, предложит скелет, пять проверочных поз и лица — 10–20 минут' }),
         !cur && !rig && Claude.btn({ label: prop3 ? (has2d ? 'Сделать в 3D' : 'Сделать 3D-пропс') : 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,

@@ -57,5 +57,14 @@ test('ходьба включается сама от ключей позици�
   assert.ok(!R.rigSceneLayer(ch, Object.assign({}, o, { walk: 'off' }), 1, {}).card);
 });
 
+test('ключи позы: IK держится, «отпустить» (null) плавно снимает его', () => {
+  const ch = { rig: 'parts', skeleton: 't', rigData: { foot: [0, 0], height: 100, bones: [{ id: 'root', joint: [0, 0] }, { id: 'arm', parent: 'root', joint: [0, 0] }, { id: 'fore', parent: 'arm', joint: [60, 0], end: [110, 0] }] } };
+  const o = { walk: 'off', pose: [{ t: 1, ik: { arm: [0.8, 0.3] } }, { t: 2, ik: { arm: null } }] };
+  const a = R.rigSceneLayer(ch, o, 1, {}), m = R.rigSceneLayer(ch, o, 1.5, {}), z = R.rigSceneLayer(ch, o, 2.5, {});
+  assert.ok(a.bones && Math.abs(a.bones.arm.rot) > 0.1);
+  assert.ok(Math.abs(m.bones.arm.rot) < Math.abs(a.bones.arm.rot) && Math.abs(m.bones.arm.rot) > 0.01);
+  assert.ok(!z.bones || !z.bones.arm || Math.abs(z.bones.arm.rot || 0) < 1e-6);
+});
+
 console.log(`\n${n - failed} / ${n} тестов прошли`);
 process.exit(failed ? 1 : 0);

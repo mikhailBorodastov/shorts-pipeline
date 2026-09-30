@@ -426,6 +426,16 @@ function rigPath(o, T) {
   return { dist, speed: (D[j] - D[k]) / ((j - k) / 30 || 1) };
 }
 
+// ---- липсинк: громкость звуков сцены (сервер: /api/scene/env), RIG.envs[sid] = { t0, fps, env }
+RIG.envs = RIG.envs || {};
+function rigEnvAt(sid, T) { const E = RIG.envs[sid]; if (!E) return 0; const i = Math.floor((T - E.t0) * E.fps); return i >= 0 && i < E.env.length ? E.env[i] : 0; }
+async function loadSceneEnvs(scene, plan, el) {
+  for (const o of scene.objects || []) {
+    const sid = o.lipsync && o.lipsync.sound; if (!sid) continue;
+    try { const r = await fetch(`/api/scene/env?key=${encodeURIComponent('plan:' + plan)}&el=${el}&sid=${sid}`); if (r.ok) RIG.envs[sid] = await r.json(); } catch (e) {}
+  }
+}
+
 // ---- объект сцены -> поза: клипы, ходьба, ключи позы, IK, эмоция, костюмы, липсинк. env(T) — громкость звука липсинка 0..1
 function rigSceneLayer(char, o, T, base, env) {
   let p = base || {};
@@ -453,15 +463,32 @@ function rigSceneLayer(char, o, T, base, env) {
       for (const [b, f] of Object.entries(k.bones || {})) for (const [ff, v] of Object.entries(f)) (chans['b.' + b + '.' + ff] = chans['b.' + b + '.' + ff] || []).push([k.t, v, k.ease || 'io']);
       for (const [b, v] of Object.entries(k.ik || {})) (chans['ik.' + b] = chans['ik.' + b] || []).push([k.t, v, k.ease || 'io']);
       for (const [f, v] of Object.entries(k.face || {})) (chans['f.' + f] = chans['f.' + f] || []).push([k.t, v, k.ease || 'io']);
+      for (const f of ['sit', 'facing']) if (k[f] !== undefined) (chans['s.' + f] = chans['s.' + f] || []).push([k.t, k[f]]);   // ступенькой
     }
-    const L = {};
+    const L = {}, IW = {};
     for (const [ch, list] of Object.entries(chans)) {
-      const v = rigTrackAt(list, T), [kind, b, f] = ch.split('.');
+      const [kind, b, f] = ch.split('.');
+      if (kind === 'ik') {                                 // цель лапы; ключ с null — «отпустить»: вес IK плавно уходит в 0
+        const K = list.slice().sort((x, y) => x[0] - y[0]);
+        let tg = null, wt = 0;
+        if (T <= K[0][0]) { tg = K[0][1]; wt = tg ? 1 : 0; }
+        else if (T >= K[K.length - 1][0]) { tg = K[K.length - 1][1]; wt = tg ? 1 : 0; }
+        else {
+          let i = 0; while (i < K.length - 2 && T >= K[i + 1][0]) i++;
+          const A0 = K[i], B0 = K[i + 1], e = (_RIG_EASE[A0[2] || 'io'] || _RIG_EASE.io)((T - A0[0]) / (B0[0] - A0[0] || 1));
+          if (A0[1] && B0[1]) { tg = _rigLerp(A0[1], B0[1], e); wt = 1; } else if (A0[1]) { tg = A0[1]; wt = 1 - e; } else if (B0[1]) { tg = B0[1]; wt = e; }
+        }
+        if (tg && wt > 0) { (L.ik = L.ik || {})[b] = tg; IW[b] = wt; }
+        continue;
+      }
+      const v = rigTrackAt(list, T);
       if (kind === 'b') ((L.bones = L.bones || {})[b] = L.bones[b] || {})[f] = v;
       else if (kind === 'ik') (L.ik = L.ik || {})[b] = v;
+      else if (kind === 's') L[b] = v;
       else (L.face = L.face || {})[b] = v;
     }
     p = rigBlend(p, L, 1);
+    if (L.ik) p._ikw = Object.assign({}, p._ikw, IW);
   }
   p = rigSolveIK(char, p);
   if (env != null && o.lipsync) { const e = env(T); if (e > (o.lipsync.threshold || 0.12)) p = rigPose(p, { face: { mouth: 'open' } }); }
@@ -503,14 +530,16 @@ function charCard(w, char, opt = {}) {
   c = w.card({
     name: opt.name || char.name, px: [cw, ch], h: hM * ch / size, foot, rim: 6, dynamic: true, thick: 0.02, glow: opt.self == null ? 0.22 : opt.self, noItem: !!opt.o,
     state(lt, T) { return JSON.stringify(cur(), (k, v) => (k === 'card' ? undefined : typeof v === 'number' ? Math.round(v * 100) / 100 : v)) + '|' + Math.round(T * 8) + '|' + blinkAt(T, (char.base || {}).seed || 1).toFixed(1); },
-    draw(g, cw2, ch2, lt, T) { rigDraw(g, char, cur(), cw2 / 2, ch2 - foot, size, T); },
+    draw(g, cw2, ch2, lt, T) { const st = rigDraw(g, char, cur(), cw2 / 2, ch2 - foot, size, T); if (c) c.lastJoints = st && st.joints; },
   });
   c.char = char;
+  c.cardInfo = { cw, ch, size, foot, hM };                   // холст px -> карточка м: редактор ставит ручки IK на кончики лап
   c.pose = rigPose(char.pose, P.pose, P.emotion ? rigEmotion(char, P.emotion) : null);
   c.basePose = c.pose;
   // ключи объекта сцены: pose.<кость>.<rot|len|sq>, face.<поле>, wear.<костюм> — поверх позы (дорожки S5 ложатся сюда же)
   c.keyed = T => rigPose(c.basePose, c.keyLayer(T));
   // S5: всё, что задаёт объект сцены (клипы, ходьба, ключи позы, IK, эмоция, костюмы, липсинк) поверх base (база персонажа или поза поведения)
+  c.env = T => (so.lipsync && so.lipsync.sound ? rigEnvAt(so.lipsync.sound, T) : 0);       // липсинк: громкость звука сцены
   c.scenePose = (T, base) => rigPose(rigSceneLayer(char, so, T, base || c.basePose, c.env || null), c.keyLayer(T));
   c.keyLayer = T => {                                       // только то, что задают ключи (поверх позы поведения или базы)
     const K = (so.keys) || {};

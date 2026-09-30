@@ -521,12 +521,50 @@ def sound_cues(A, key, doc):
             for m in (A.pr().el_mix(e) if e else []):
                 f = P.resolve(m["s"]["file"])
                 out.append({"id": s.get("id"), "file": f, "url": "/" + m["s"]["file"], "t": t + m["at"], "gain": g * m["gain"], "name": e.get("name", "")})
+        elif src.startswith("file:"):                        # свой файл сцены (work/sounds/…): тестовая фраза для липсинка и т. п.
+            rel = src[5:]
+            f = os.path.join(work_dir(A, _pid(key), doc.get("_el") or ""), *rel.split("/")) if doc.get("_el") else ""
+            if f and os.path.isfile(f):
+                out.append({"id": s.get("id"), "file": f, "url": f"/rscene/{_pid(key)}/{doc['_el']}/work/{rel}", "t": t, "gain": g, "name": s.get("note") or rel})
         elif src.startswith("lib:"):
             rel = src[4:].split("|")[0]
             f = os.path.join(P.SFXLIB, *rel.split("/")) + ".wav"
             if os.path.isfile(f):
                 out.append({"id": s.get("id"), "file": f, "url": f"/sfxlib/{rel}.wav", "t": t, "gain": g, "name": rel})
     return out
+
+
+_ENV = {}
+
+
+def envelope(path):
+    """Громкость звука окнами 1/30 с (RMS), нормирована на 95-й перцентиль — для липсинка (S5). Кэш по времени файла."""
+    import numpy as np
+    m = os.path.getmtime(path)
+    if _ENV.get(path, (0,))[0] == m:
+        return _ENV[path][1]
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "16000", "-f", "s16le", "-"], capture_output=True, timeout=120)
+    x = np.frombuffer(r.stdout, dtype=np.int16).astype(np.float32) / 32768
+    hop = 16000 // 30
+    n = max(1, len(x) // hop)
+    rms = np.sqrt(np.array([np.mean(x[i * hop:(i + 1) * hop] ** 2) if (i + 1) * hop <= len(x) else 0 for i in range(n)]) + 1e-12)
+    ref = float(np.percentile(rms, 95)) or 1
+    env = [round(float(min(1, v / ref)), 3) for v in rms]
+    _ENV[path] = (m, env)
+    return env
+
+
+def say(A, key, el, text, voice="ru-RU-DmitryNeural", rate="+20%"):
+    """Тестовая фраза голосом (edge-tts) -> work/sounds/say-<ts>.wav: звук сцены для проверки липсинка до настоящего голоса (S5)."""
+    import asyncio, edge_tts
+    wd = work_dir(A, _pid(key), el)
+    os.makedirs(os.path.join(wd, "sounds"), exist_ok=True)
+    name = f"say-{now_ms()}"
+    mp3, wav = os.path.join(wd, "sounds", name + ".mp3"), os.path.join(wd, "sounds", name + ".wav")
+    asyncio.run(edge_tts.Communicate(text, voice, rate=rate).save(mp3))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", mp3, "-ac", "1", "-ar", "44100", wav], capture_output=True, timeout=120)
+    os.remove(mp3)
+    return f"sounds/{name}.wav"
 
 
 def clip(A, job):
@@ -539,6 +577,7 @@ def clip(A, job):
     url = stage_url(A._docs(key)["port"], rel)
     out = os.path.join(wd, "clip.mp4")
     job.summary = "снимаю кадры клипа…"
+    doc["_el"] = el
     cues = [c for c in sound_cues(A, key, doc) if os.path.isfile(c["file"])]
     sj = os.path.join(wd, "_clip_sounds.json")
     A.write_text(sj, json.dumps(cues, ensure_ascii=False))
@@ -736,7 +775,7 @@ def handle_get(A, h, p, q):
         e = A._by_id(plan.get("elements"), el) or {}
         sounds = [{"id": x["id"], "name": x.get("name", ""), "ready": bool(A.pr().el_mix(x))} for x in plan.get("elements") or [] if x.get("kind") == "sound" and x.get("status") != "drop"]
         h._json({"scene": doc, "rev": doc.get("rev", 0), "work": rel, "prefabs": f"/rscene/{rel}/prefabs.js", "history": history(A, key, el, 60),
-                 "locked": LOCKS.get(skey(key, el)), "limits": LIM, "cues": sound_cues(A, key, doc), "soundEls": sounds,
+                 "locked": LOCKS.get(skey(key, el)), "limits": LIM, "cues": sound_cues(A, key, dict(doc, _el=el)), "soundEls": sounds,
                  "element": {"id": el, "name": e.get("name", ""), "stage": e.get("stage") or {}, "plan": plan.get("name", ""), "v": (e.get("stage") or {}).get("v"),
                              "versions": [{"v": r.get("v"), "id": r.get("id"), "feedback": r.get("feedback", ""), "img": r.get("img", "")} for r in e.get("renders") or [] if r.get("stage")]},
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
@@ -751,7 +790,16 @@ def handle_get(A, h, p, q):
             rev = A.rev_of(scene_path(A, key, el)) or 0
         h._json({"rev": rev, "locked": LOCKS.get(skey(key, el))}); return True
     if p == "/api/scene/cues":
-        h._json({"cues": sound_cues(A, key, load_scene(A, key, el))}); return True
+        h._json({"cues": sound_cues(A, key, dict(load_scene(A, key, el), _el=el))}); return True
+    if p == "/api/scene/env":                                       # липсинк (S5): громкость звука сцены по id — {t0, fps, env}
+        key, el, sid = _q1(q, "key"), _q1(q, "el"), _q1(q, "sid")
+        doc = load_scene(A, key, el)
+        doc["_el"] = el
+        cues = [c for c in sound_cues(A, key, doc) if c.get("id") == sid and os.path.isfile(c["file"])]
+        if not cues:
+            h._json({"error": "нет такого звука или файла"}, 404); return True
+        c = cues[0]
+        h._json({"sid": sid, "t0": c["t"], "fps": 30, "env": envelope(c["file"])}); return True
     if p == "/api/scene/sfxlib":                                    # the pipeline sound library for «+ звук»: search by words
         words = [w for w in _q1(q, "q").lower().split() if w]
         idx = os.path.join(P.SFXLIB, "index.json")
@@ -766,6 +814,15 @@ def handle_get(A, h, p, q):
 
 def handle_post(A, h, p, body):
     key, el = body.get("key", ""), body.get("el", "")
+    if p == "/api/scene/say":                                       # тестовая фраза для липсинка: файл + звук сцены на моменте t
+        text = (body.get("text") or "").strip()
+        if not text:
+            raise ValueError("нет текста")
+        rel = say(A, key, el, text, body.get("voice") or "ru-RU-DmitryNeural")
+        sid = new_id("s")
+        r = apply(A, key, el, [{"op": "add", "path": ["sounds"], "item": {"id": sid, "t": round(float(body.get("t") or 0), 3), "src": "file:" + rel, "gain": 1, "note": "🗣 " + text[:60]}}],
+                  by="author", desc=f"тестовая фраза «{text[:40]}» на {float(body.get('t') or 0):.2f} с")
+        h._json({"sid": sid, "rev": r["rev"], "src": "file:" + rel}); return True
     if p == "/api/scene/op":
         if LOCKS.get(skey(key, el)) and body.get("by", "author") == "author":
             h._json({"error": "Claude работает над сценой — подожди или отмени задачу", "locked": True}, 409); return True
@@ -856,7 +913,7 @@ def cli(A, argv):
         last = next((h_ for h_ in reversed(H) if h_.get("undo") and h_.get("kind") not in ("undo", "version") and h_.get("batch") not in gone), None)
         if not last:
             sys.exit("нечего отменять")
-        print(apply(A, key, el, last["undo"], by=last.get("by", "author"), desc="↺ отмена: " + last.get("desc", ""), kind="undo", undoes=last.get("batch")))
+        print(apply(A, key, el, last["undo"], by="author", desc="↺ отмена: " + last.get("desc", ""), kind="undo", undoes=last.get("batch")))
         return True
     if cmd == "validate":
         d = load_scene(A, key, el)

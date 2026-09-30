@@ -26,11 +26,12 @@ export function initTimeline(ED) {
   // which rows: markers, camera, animated or selected things, sounds
   function rows() {
     const d = ED.doc, out = [{ kind: 'markers', label: '⏷ маркеры' }, { kind: 'camera', label: '🎥 камера', id: 'camera' }];
-    const show = o => animated(o) || ED.sel.has(o.id);
+    const show = o => animated(o) || ED.sel.has(o.id) || (o.clips || []).length || (o.pose || []).length;
     for (const o of [...(d.objects || []), ...(d.lights || [])]) {
       if (!show(o)) continue;
       const kind = kindOf(d, o.id), open = T.open.has(o.id);
       out.push({ kind: 'thing', id: o.id, tkind: kind, label: o.name, open });
+      if (ED.isChar && ED.isChar(o.id)) { out.push({ kind: 'clips', id: o.id, tkind: kind, label: '🎞 клипы' }); out.push({ kind: 'poses', id: o.id, tkind: kind, label: '🦴 поза' }); }
       if (open) for (const p of kind === 'lights' ? ['pos', 'intensity'] : ['pos', 'rot', 'scale', 'hide']) out.push({ kind: 'prop', id: o.id, tkind: kind, prop: p, label: PN[p] });
     }
     out.push({ kind: 'sounds', label: '🔊 звуки' });
@@ -44,7 +45,7 @@ export function initTimeline(ED) {
     names.innerHTML = '';
     T.rows.forEach((r, i) => {
       const d = document.createElement('div');
-      d.className = 'tn' + (r.kind === 'prop' ? ' sub' : '') + (r.id && ED.sel.has(r.id) && r.kind !== 'prop' ? ' sel' : '');
+      d.className = 'tn' + (r.kind === 'prop' || r.kind === 'clips' || r.kind === 'poses' ? ' sub' : '') + (r.id && ED.sel.has(r.id) && r.kind === 'thing' ? ' sel' : '');
       d.style.top = RULER + i * ROWH - T.sy + 'px';
       d.setAttribute('role', 'listitem');
       if (r.kind === 'thing') {
@@ -56,6 +57,7 @@ export function initTimeline(ED) {
       if (r.kind === 'sounds') {
         const b = document.createElement('button'); b.textContent = '+ звук'; b.style.cssText = 'margin-left:auto;padding:0 6px;font-size:11px'; b.onclick = e => { e.stopPropagation(); addSound(); }; d.append(b);
       }
+      if (r.kind === 'clips') { const b = document.createElement('button'); b.textContent = '+ клип'; b.title = 'клип на курсоре (Tab)'; b.style.cssText = 'margin-left:auto;padding:0 6px;font-size:11px'; b.onclick = e => { e.stopPropagation(); ED.select([r.id]); ED.clipMenu(); }; d.append(b); }
       if (r.kind === 'markers') { const b = document.createElement('button'); b.textContent = '+ M'; b.title = 'маркер на курсоре (M)'; b.style.cssText = 'margin-left:auto;padding:0 6px;font-size:11px'; b.onclick = e => { e.stopPropagation(); addMarker(); }; d.append(b); }
       if (r.kind === 'camera') { const b = document.createElement('button'); b.textContent = '✂'; b.title = 'склейка на курсоре (C)'; b.style.cssText = 'margin-left:auto;padding:0 6px;font-size:11px'; b.onclick = e => { e.stopPropagation(); addCut(); }; d.append(b); }
       d.onclick = () => { if (r.id) ED.select([r.id]); };
@@ -107,9 +109,9 @@ export function initTimeline(ED) {
           const by = new Map();
           for (const { prop, key } of allKeys(o)) { const kt = +key.t.toFixed(4); if (!by.has(kt)) by.set(kt, []); by.get(kt).push({ prop, key }); }
           for (const [kt, list] of by) {
-            const x = X(kt), sel = list.every(({ key }) => isSel(r.tkind, r.id, null, key.id));
+            const x = X(kt), sel = list.every(({ prop, key }) => isSel(prop === '@pose' ? 'pose' : r.tkind, r.id, null, key.id));
             diamond(x, cy, 5.5, kt > L ? '#555' : sel ? '#ffffff' : '#ffcc33', sel ? '#4d9cff' : null);
-            hits.push({ x, y: cy, r: 7, ref: list.map(({ prop, key }) => ({ kind: r.tkind, id: r.id, prop, kid: key.id, t0: key.t })) });
+            hits.push({ x, y: cy, r: 7, ref: list.map(({ prop, key }) => (prop === '@pose' ? { kind: 'pose', id: r.id, kid: key.id, t0: key.t } : { kind: r.tkind, id: r.id, prop, kid: key.id, t0: key.t })) });
           }
           // ease between keys: a thin bar
         } else {
@@ -121,6 +123,26 @@ export function initTimeline(ED) {
             diamond(x, cy, 5, k.t > L ? '#555' : sel ? '#ffffff' : k.ease === 'hold' ? '#d9a441' : '#ffcc33', sel ? '#4d9cff' : null);
             hits.push({ x, y: cy, r: 7, ref: { kind: r.tkind, id: r.id, prop: r.prop, kid: k.id, t0: k.t } });
           }
+        }
+      } else if (r.kind === 'clips') {
+        const o = find(ED.doc, r.id); if (!o) return;
+        for (const c of o.clips || []) {
+          const a = (typeof RIG !== 'undefined' && RIG.anims[c.anim]) || {}, dur = c.dur || a.dur || 1, x = X(c.t), x2 = X(c.t + dur), sel = isSel('clips', r.id, null, c.id);
+          g.fillStyle = sel ? 'rgba(77,156,255,0.65)' : a.id ? 'rgba(180,140,255,0.45)' : 'rgba(255,90,95,0.35)'; g.fillRect(x, y + 3, Math.max(8, x2 - x), ROWH - 6);
+          g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillRect(x2 - 3, y + 3, 3, ROWH - 6);
+          g.fillStyle = '#e6e6e6'; g.font = '11px Inter, system-ui, sans-serif';
+          g.save(); g.beginPath(); g.rect(x, y, Math.max(8, x2 - x), ROWH); g.clip(); g.fillText((a.name || c.anim) + (c.loop ? ' ↻' : '') + (c.speed && c.speed !== 1 ? ` ×${c.speed}` : ''), x + 4, y + 14); g.restore();
+          hits.push({ x: x + 4, y: cy, r: 8, w: Math.max(8, x2 - x) - 8, ref: { kind: 'clips', id: r.id, kid: c.id, t0: c.t } });
+          hits.push({ x: x2 - 4, y: cy, r: 8, w: 8, edge: true, ref: { kind: 'clips', id: r.id, kid: c.id, t0: c.t, dur } });
+        }
+      } else if (r.kind === 'poses') {
+        const o = find(ED.doc, r.id); if (!o) return;
+        const K = (o.pose || []).slice().sort((a, b) => a.t - b.t);
+        for (const k of K) {
+          const x = X(k.t), sel = isSel('pose', r.id, null, k.id), rel = k.ik && Object.values(k.ik).some(v => v === null);
+          diamond(x, cy, 5.5, sel ? '#ffffff' : rel ? '#6b5a8f' : k.refine === 'open' ? '#ff9f43' : '#b48cff', sel ? '#4d9cff' : null);
+          if (k.note) { g.fillStyle = '#cfc9ff'; g.font = '10px Inter, system-ui, sans-serif'; g.fillText('💬', x + 6, cy + 4); }
+          hits.push({ x, y: cy, r: 7, ref: { kind: 'pose', id: r.id, kid: k.id, t0: k.t } });
         }
       } else if (r.kind === 'sounds') {
         const cues = ED.cues || [];
@@ -173,6 +195,10 @@ export function initTimeline(ED) {
     if (e.button === 2) return;
     if (p.y < RULER) { T.drag = { scrub: true }; cv.setPointerCapture(e.pointerId); ED.setT(snap(Tof(p.x), e)); return; }
     const hh = hitAt(p);
+    if (hh && hh.edge) {                                   // край клипа — длина
+      const c = ((find(ED.doc, hh.ref.id) || {}).clips || []).find(x => x.id === hh.ref.kid);
+      if (c) { T.drag = { resize: true, id: hh.ref.id, kid: c.id, t0: c.t, x0: p.x, dur0: hh.ref.dur }; cv.setPointerCapture(e.pointerId); return; }
+    }
     if (hh) {
       const rs = refs(hh);
       if (e.shiftKey || e.ctrlKey) { for (const r of rs) { if (selHas(r)) ED.keySel = ED.keySel.filter(s => !(s.kid === r.kid && s.kind === r.kind)); else ED.keySel.push(r); } }
@@ -195,12 +221,15 @@ export function initTimeline(ED) {
     if (s.kind === 'camera') return ((d.camera.keys || []).find(k => k.id === s.kid) || {}).t;
     if (s.kind === 'cuts') return ((d.camera.cuts || []).find(k => k.id === s.kid) || {}).t;
     if (s.kind === 'markers' || s.kind === 'sounds') return ((d[s.kind] || []).find(k => k.id === s.kid) || {}).t;
+    if (s.kind === 'clips' || s.kind === 'pose') return (((find(d, s.id) || {})[s.kind] || []).find(k => k.id === s.kid) || {}).t;
     const o = find(d, s.id); return (((o && o.keys && o.keys[s.prop]) || []).find(k => k.id === s.kid) || {}).t;
   };
   cv.addEventListener('pointermove', e => {
     const D = T.drag; if (!D) return;
     const p = at(e);
     if (D.scrub) { ED.setT(snap(Tof(p.x), e)); return; }
+    if (D.resize) { const dur = Math.max(0.2, +(snap(D.t0 + D.dur0 + (p.x - D.x0) / T.pps, e) - D.t0).toFixed(3));
+      ED.live('clipdur', () => [{ op: 'set', path: ['objects', D.id, 'clips', D.kid, 'dur'], value: dur }], `клип: длина ${dur.toFixed(2)} с`, 0); return; }
     if (D.box) { D.box.x1 = p.x; D.box.y1 = p.y; ED.tlDirty = true; return; }
     if (D.move) {
       const lead = D.sel[0]; if (!lead) return;
@@ -214,6 +243,7 @@ export function initTimeline(ED) {
     const D = T.drag; T.drag = null;
     if (!D) return;
     if (D.move && D.moved) ED.liveEnd('tlmove');
+    if (D.resize) ED.liveEnd('clipdur');
     if (D.box) {
       const b = { x0: Math.min(D.box.x0, D.box.x1), x1: Math.max(D.box.x0, D.box.x1), y0: Math.min(D.box.y0, D.box.y1), y1: Math.max(D.box.y0, D.box.y1) };
       if (b.x1 - b.x0 > 3 || b.y1 - b.y0 > 3) for (const hh of T.hits) if (hh.x >= b.x0 && hh.x <= b.x1 && hh.y >= b.y0 && hh.y <= b.y1) for (const r of refs(hh)) if (!selHas(r)) ED.keySel.push(r);
@@ -224,6 +254,8 @@ export function initTimeline(ED) {
     const hh = hitAt(at(e)); if (!hh) return;
     const r = refs(hh)[0];
     if (r.kind === 'markers') { const m = (ED.doc.markers || []).find(x => x.id === r.kid); ED.ask('Имя маркера', m.name || '').then(n => { if (n != null) ED.commit([{ op: 'set', path: ['markers', m.id, 'name'], value: n.trim() }], `маркер «${n.trim()}»`); }); return; }
+    if (r.kind === 'clips') { ED.clipProps(r.id, r.kid); return; }
+    if (r.kind === 'pose') { ED.poseProps(r.id, r.kid); return; }
     ED.setT(r.t0);
   });
   cv.addEventListener('wheel', e => {
@@ -240,7 +272,7 @@ export function initTimeline(ED) {
     if (hh && !refs(hh).every(selHas)) ED.keySel = refs(hh).slice();
     const S = ED.keySel;
     const items = [];
-    const keysOnly = S.filter(s => !['markers', 'cuts', 'sounds'].includes(s.kind));
+    const keysOnly = S.filter(s => !['markers', 'cuts', 'sounds', 'clips', 'pose'].includes(s.kind));
     if (keysOnly.length) for (const [k, label] of EASES) items.push([`кривая: ${label}`, () => setEase(keysOnly, k, label)]);
     if (S.length) items.push(['копировать (Ctrl+C)', copy], ['удалить (Delete)', delKeys]);
     if (T.clip) items.push([`вставить на курсор (${T.clip.length})`, paste]);
@@ -262,13 +294,14 @@ export function initTimeline(ED) {
   function delKeys() {
     const S = ED.keySel; if (!S.length) { ED.msg('Выдели ключи на таймлайне'); return; }
     const ops = S.map(s => s.kind === 'camera' ? { op: 'del', path: ['camera', 'keys'], id: s.kid } : s.kind === 'cuts' ? { op: 'del', path: ['camera', 'cuts'], id: s.kid }
-      : s.kind === 'markers' || s.kind === 'sounds' ? { op: 'del', path: [s.kind], id: s.kid } : { op: 'del', path: [s.kind, s.id, 'keys', s.prop], id: s.kid });
+      : s.kind === 'markers' || s.kind === 'sounds' ? { op: 'del', path: [s.kind], id: s.kid } : s.kind === 'clips' || s.kind === 'pose' ? { op: 'del', path: ['objects', s.id, s.kind], id: s.kid }
+      : { op: 'del', path: [s.kind, s.id, 'keys', s.prop], id: s.kid });
     ED.commit(ops, `удалено на таймлайне: ${S.length}`);
     ED.keySel = [];
     if (S.some(s => s.kind === 'sounds')) ED.refreshCues();
   }
   function copy() {
-    const S = ED.keySel.filter(s => !['markers', 'cuts', 'sounds'].includes(s.kind)); if (!S.length) return;
+    const S = ED.keySel.filter(s => !['markers', 'cuts', 'sounds', 'clips', 'pose'].includes(s.kind)); if (!S.length) return;
     const t0 = Math.min(...S.map(tNow));
     T.clip = S.map(s => {
       const k = s.kind === 'camera' ? (ED.doc.camera.keys || []).find(x => x.id === s.kid) : ((find(ED.doc, s.id).keys || {})[s.prop] || []).find(x => x.id === s.kid);

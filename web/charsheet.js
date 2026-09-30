@@ -43,7 +43,7 @@ const CharSheet = {
         h('div.cs-tabs',
           h('div.tabs', tabs.map(([k, l]) => h('a', { class: CS.tab === k ? 'on' : '', href: 'javascript:void 0', onclick: () => { CS.tab = k; App.render(); } }, l))),
           CS.tab === 'costumes' ? CharSheet.costumes(I) : CS.tab === 'emotions' ? CharSheet.emotions(I) : CS.tab === 'versions' ? CharSheet.versions(I)
-            : h('p.dim', 'Анимации по типу скелета, клипы, «+ научить», ходьба, поза с IK — этап S5. Сейчас поза задаётся ключами в редакторе сцены (pose.*, face.*, эмоция).'))));
+            : CharSheet.anims(I))));
   },
   costumes(I) {
     const base = {};
@@ -81,6 +81,37 @@ const CharSheet = {
       h('div.row', draftInput('cswant|' + I.slug, { class: 'box grow', placeholder: 'какие ещё? «хитрый, растерянный» — или пусто: недостающие базовые', oninput: e => { CS.want = e.target.value; } }),
         h('button.primary', { disabled: !!running, onclick: ask }, running ? '…Claude думает' : '✨ Предложить эмоции')),
       h('p.dim.small', 'Claude (Sonnet) подбирает параметры лица (брови, рот, веко, взгляд); ты утверждаешь ✓ по одной. Утверждённые видны в редакторе сцены в списке эмоций.'));
+  },
+  // 🎞 движения типа скелета (S5): общие для всех персонажей на нём; ▶ — на этом персонаже, «+ научить» — Claude (Opus)
+  anims(I) {
+    if (!CS.anims || CS.animsFor !== I.skeleton) {
+      CS.animsFor = I.skeleton; CS.anims = null;
+      api('GET', `/api/anims?type=${encodeURIComponent(I.skeleton)}`).then(j => { CS.anims = j.items; App.render(); }).catch(() => { CS.anims = []; App.render(); });
+      return h('p.dim', 'Загружаю движения…');
+    }
+    const running = Object.values(Claude.jobs).find(j => j.status === 'running' && j.scope === 'teach:' + I.skeleton);
+    const play = a => UI.modal(`🎞 ${a.name} · ${I.card.name}`, h('div.view3d', h('iframe', { src: `/render/char.html?char=${encodeURIComponent(I.url)}&anim=${encodeURIComponent(`/api/lib/file/${I.channel}/anims/${a.id}.json`)}&size=900x1000`, title: a.name, style: { height: '70vh' } })), { wide: true });
+    const teach = async () => {
+      const ask = (CS.teach || '').trim(); if (!ask) { UI.toast('Опиши движение словами', 'err'); return; }
+      try {
+        const r = await api('POST', '/api/char/teach', { type: I.skeleton, ask, char: I.url });
+        Claude.jobs[r.job.id] = r.job; CS.teach = ''; App.render(); UI.toast('✨ Claude учит движение — 1–10 минут');
+        const poll = async () => { const j = await api('GET', '/api/job?id=' + r.job.id); Claude.jobs[j.id] = j;
+          if (j.status === 'running') return setTimeout(poll, 2000);
+          UI.toast(j.status === 'done' ? j.summary : (j.error || j.status), j.status === 'done' ? 'ok' : 'err'); CS.anims = null; App.render(); };
+        poll();
+      } catch (e) { UI.toast(e.message, 'err'); }
+    };
+    return h('div',
+      h('p.dim.small', `Движения скелета «${I.skeleton}» — общие для всех персонажей на нём${I.same.length ? ' (' + I.same.map(x => x.name).join(', ') + ')' : ''}. В сцене — Tab на персонаже.`),
+      h('div.cs-list', (CS.anims || []).map(a => h('div.row',
+        a.preview ? h('img.cs-strip', { src: a.preview, alt: '', onclick: () => play(a), title: 'Лента кадров — клик: посмотреть на этом персонаже' }) : h('button.small', { onclick: () => play(a) }, '▶'),
+        h('div', h('b', a.name + (a.by === 'claude' ? ' ✨' : '')), h('div.dim.small', `${a.id} · ${a.dur} с${a.loop ? ' · петля' : ''}${a.proc ? ' · от пройденного пути' : ''}`), a.prompt && h('div.dim.small', a.prompt)),
+        h('span.sp'), h('button.small', { onclick: () => play(a), title: 'Посмотреть на этом персонаже' }, '▶')))),
+      h('div.row', draftInput('csteach|' + I.slug, { class: 'box grow', placeholder: '«чешет затылок левой лапой», «топает от злости», «кланяется»', oninput: e => { CS.teach = e.target.value; },
+        onkeydown: e => { if (e.key === 'Enter' && !e.isComposing) teach(); } }),
+        h('button.primary', { disabled: !!running, onclick: teach }, running ? '…Claude учит' : '+ научить')),
+      h('p.dim.small', 'Claude (Opus) пишет движение данными (кости, лицо, IK), снимает ленту кадров на персонаже, проверяет и кладёт в библиотеку типа скелета.'));
   },
   versions(I) {
     return h('div.cs-list', I.card.versions.slice().reverse().map(v => h('div.row',

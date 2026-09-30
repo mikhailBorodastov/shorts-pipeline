@@ -191,6 +191,29 @@ export function initPanels(ED) {
       row.append(check(cs.name, !!worn[k], v => ED.commit(setOps(d, o.id, 'wear.' + k, v, t, true, true), `${o.name}: ${v ? 'надеть' : 'снять'} «${cs.name}» на ${t.toFixed(2)} с`)));
     }
     if (ids.length) { box.append(Object.assign(document.createElement('span'), { className: 'hint', textContent: 'Костюмы — ключом на этом моменте:' }), row); }
+    const wk = document.createElement('select');                // S5: ходьба сама при движении по ключам позиции
+    wk.append(new Option('🚶 ходьба — сама, когда едет', 'auto'), new Option('ходьба выключена', 'off'));
+    wk.value = o.walk === 'off' ? 'off' : 'auto';
+    wk.onchange = () => ED.commit([{ op: 'set', path: ['objects', o.id, 'walk'], value: wk.value }], `${o.name}: ходьба ${wk.value === 'off' ? 'выключена' : 'сама'}`);
+    box.append(wk);
+    const lip = document.createElement('select');              // S5: липсинк — рот открывается по громкости звука сцены
+    lip.append(new Option('👄 липсинк — нет', ''));
+    for (const s of ED.doc.sounds || []) lip.append(new Option(`👄 по звуку: ${s.note || s.src} (${s.t.toFixed(1)} с)`, s.id));
+    lip.append(new Option('👄 + тестовая фраза голосом…', '+'));
+    lip.value = (o.lipsync && o.lipsync.sound) || '';
+    lip.onchange = async () => {
+      let sid = lip.value;
+      if (sid === '+') {
+        const text = await ED.ask(`Тестовая фраза для «${o.name}» с ${ED.t.toFixed(2)} с (до настоящего голоса)`, 'Привет! Сегодня занятий не будет.');
+        if (!text) { lip.value = (o.lipsync && o.lipsync.sound) || ''; return; }
+        ED.msg('🗣 озвучиваю фразу…');
+        const r = await ED.api('/api/scene/say', { key: ED.key, el: ED.el, text, t: ED.t, voice: /жен|ёжих|мам|девоч/i.test(o.name) ? 'ru-RU-SvetlanaNeural' : 'ru-RU-DmitryNeural' });
+        await ED.reloadDoc && ED.reloadDoc(); sid = r.sid; ED.refreshCues && ED.refreshCues();
+      }
+      await ED.commit([sid ? { op: 'set', path: ['objects', o.id, 'lipsync'], value: { sound: sid } } : { op: 'unset', path: ['objects', o.id, 'lipsync'] }], `${o.name}: липсинк ${sid ? 'по звуку ' + sid : 'выключен'}`);
+      await new Promise(r => setTimeout(r, 400)); await loadSceneEnvs(ED.doc, ED.key.slice(5), ED.el); ED.dirty = true;
+    };
+    box.append(lip);
     const em = Object.keys(ch.emotions || {});
     if (em.length) {
       const sel = document.createElement('select');

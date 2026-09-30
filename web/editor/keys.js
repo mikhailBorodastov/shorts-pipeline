@@ -85,6 +85,7 @@ export function camKeyOps(doc, t, pos, target, fov) {
 export function allKeys(o) {
   const out = [];
   if (!o) return out;
+  if (!Array.isArray(o.keys)) for (const k of o.pose || []) out.push({ prop: '@pose', key: k });   // ключи позы персонажа — тоже «ключи объекта» (↑ / ↓, свёрнутая строка)
   if (Array.isArray(o.keys)) { for (const k of o.keys) out.push({ prop: '*', key: k }); return out; }
   for (const [prop, list] of Object.entries(o.keys || {})) for (const k of list || []) out.push({ prop, key: k });
   return out;
@@ -95,7 +96,7 @@ export function moveKeysOps(sel, dt, len) {
   return sel.map(s => {
     const t = r4(Math.max(0, s.t0 + dt));
     const path = s.kind === 'camera' ? ['camera', 'keys', s.kid, 't'] : s.kind === 'cuts' ? ['camera', 'cuts', s.kid, 't'] : s.kind === 'markers' ? ['markers', s.kid, 't']
-      : s.kind === 'sounds' ? ['sounds', s.kid, 't'] : [s.kind, s.id, 'keys', s.prop, s.kid, 't'];
+      : s.kind === 'sounds' ? ['sounds', s.kid, 't'] : s.kind === 'clips' || s.kind === 'pose' ? ['objects', s.id, s.kind, s.kid, 't'] : [s.kind, s.id, 'keys', s.prop, s.kid, 't'];
     return { op: 'set', path, value: t };
   });
 }

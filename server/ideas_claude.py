@@ -376,6 +376,9 @@ name — коротко (2–5 слов); desc — как выглядит ил�
     elif action == "charparts":
         return charparts_spec(docs, params, sysp)
 
+    elif action == "animteach":
+        return animteach_spec(docs, params, sysp)
+
     elif action == "sound":
         return sound_spec(docs, params, sysp)
 
@@ -828,10 +831,13 @@ def charparts_spec(docs, params, sysp):
     os.makedirs(wd, exist_ok=True)
     base = next((r for r in renders if r.get("id") == params.get("base") and r.get("rigchar")), None)
     if base:
+        bd = P.resolve("render/" + base["dir"])
         for f in ("prefab.js", "rig.json"):
-            src = os.path.join(P.resolve("render/" + base["dir"]), f)
+            src = os.path.join(bd, f)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(wd, f))
+        if os.path.isdir(os.path.join(bd, "costumes")):
+            shutil.copytree(os.path.join(bd, "costumes"), os.path.join(wd, "costumes"), dirs_exist_ok=True)
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
     slug = re.sub(r"[^a-z0-9-]+", "-", (e.get("slug") or e["id"]).lower()).strip("-") or e["id"]
     rc = _fwd(os.path.join(P.STANDS, "render_char.js"))
@@ -876,7 +882,12 @@ def charparts_spec(docs, params, sysp):
 
 Типы скелетов, что уже есть в библиотеке канала (если персонаж подходит под тип — возьми ТЕ ЖЕ id костей, тогда анимации типа будут общими):
 {chr(10).join(types) or '- hog: наш бумажный ёжик (риг по параметрам drawHog, частей не нужно)'}
-Если это ёжик (похож на нашего бумажного ёжика) — НЕ рисуй части: ответь fn = hog, в note — почему; автор соберёт его на скелете ёжика.
+ЕСЛИ ЭТО ЁЖИК (наш бумажный ёжик в одежде, с аксессуарами, взрослый, ребёнок, ёжиха) — НЕ режь на части, собери его на скелете ёжика (риг по параметрам drawHog):
+   prefab.js: character({{ id: '{slug}', name: '…', skeleton: 'hog', rig: 'param', h: <рост, м; ребёнок ≈ 0.74, взрослый ≈ 0.95>, base: {{ kind: 'adult' | 'kid' | 'friend', legs: 'short' | 'feet', seed: 1 }},
+     wear: {{ '<костюм>': true }}, costumes: ['costumes/<костюм>.js'], pose: {{ face: {{ mouth, lid, look }} }}, emotions: {{ 'спокойный': {{ mouth, lid, ok: true }}, … }} }});
+   костюм costumes/<костюм>.js: costume({{ id, name, skeleton: 'hog', slot: 'body', layers: {{ body(ctx, st) {{ … в системе тела drawHog: st.S = HOG_PX, ноги в 0, вверх — минус … }}, over(ctx, st) {{ … поверх лап (st.paws) … }}, head(ctx, st) {{ … шляпа, причёска … }} }} }});
+   Одежда, причёска, бусы, фартук — слоями костюма; тело, лицо и лапы рисует drawHog (параметры base). Образец — «Ёжик в пижаме»: D:/work/Animations/Доедать будешь/library/characters/ejik-v-pijame/v2/prefab.js и costumes/pijama-mishki.js, kepka.js.
+   rig.json не нужен. Кадры — той же командой (ниже); в ответе fn = hog.
 
 Как устроено (прочитай шапку и раздел «риг 'parts'» в {rig}; образец формата — {sample}/prefab.js и rig.json, «гусеница» с гнущимся телом, рукой на булавке и двумя лицами):
 1. prefab.js в текущей папке:
@@ -898,6 +909,61 @@ def charparts_spec(docs, params, sysp):
     return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 2400,
             "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"], "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {rc}:*)"],
             "dirs": [wd, P.files(plan["id"]), P.STANDS, P.ENGINE, P.render(plan["id"])], "schema": S({"summary": STR, "fn": STR, "note": STR})}
+
+
+def animteach_spec(docs, params, sysp):
+    """«+ научить» (S5): Claude (Opus) пишет клип анимации типа скелета по просьбе автора, снимает ленту кадров на персонаже, смотрит, правит.
+    Черновик — library/anims/_draft/<job>/anim.json (отдаётся /api/lib/file/…), готовый — library/anims/<type>/<slug>.json (apply)."""
+    ch = docs.get("channel") or {}
+    lib = os.path.join(ch.get("dir") or "", "library")
+    typ = re.sub(r"[^a-z0-9-]", "", params.get("type") or "hog") or "hog"
+    wd = os.path.join(lib, "anims", "_draft", params.setdefault("_id", time.strftime("%y%m%d-%H%M%S")))
+    os.makedirs(wd, exist_ok=True)
+    params["_wd"], params["_type"] = wd, typ
+    rel = f"/api/lib/file/{ch.get('id')}/anims/_draft/{params['_id']}"
+    char = params.get("char") or ""
+    if not char:                                              # персонаж для ленты: первый в библиотеке на этом скелете
+        for slug in sorted(os.listdir(os.path.join(lib, "characters"))) if os.path.isdir(os.path.join(lib, "characters")) else []:
+            try:
+                card = json.load(open(os.path.join(lib, "characters", slug, "character.json"), encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            vs = [v for v in card.get("versions") or [] if v.get("skeleton") == typ]
+            if vs:
+                char = f"/api/lib/file/{ch.get('id')}/characters/{slug}/v{vs[-1]['v']}/prefab.js"
+                break
+    ra = _fwd(os.path.join(P.STANDS, "render_anim.js"))
+    cmd = f"node {ra} {char} {rel}/anim.json {_fwd(wd)} --port {docs['port']}"
+    skp = os.path.join(lib, "skeletons", typ + ".json")
+    sk = _fwd(skp) if os.path.isfile(skp) else "(нет файла — тип описан в rig.json персонажа)"
+    ex = [f for f in sorted(os.listdir(os.path.join(lib, "anims", typ)))] if os.path.isdir(os.path.join(lib, "anims", typ)) else []
+    ex_lines = "\n".join(f"- {_fwd(os.path.join(lib, 'anims', typ, f))}" for f in ex if f.endswith(".json")) or "(клипов этого типа пока нет)"
+    hog = typ == "hog"
+    bones = ("Кости ёжика (риг по параметрам drawHog): armL / armR — rot (0 = лапа вниз вдоль тела, + = к центру и вверх, − = наружу и вверх; −2.9 — над головой), "
+             "len (множитель длины лапы, 0.6…1.6); body — rot (наклон всего тела вокруг таза, ±0.25), sq (сжатие, −0.1…0.12); legL / legR — rot (0…1 — подъём ступни стоя, "
+             "сидя — качание ноги ±0.3); sit — сидит (true / false). Лицо face: mouth o | flat | smile | sad | open, lid 0…0.8 (0 — распахнуты), brows none | up | angry | sad | worried, "
+             "look [x, y] −1…1 (y > 0 — вниз), blink 0…1, tired. IK лапы: ik.armL / ik.armR = [x, y] — цель кончика лапы в долях роста от ног, y вверх "
+             "(глаза ≈ [±0.09, 0.6], макушка ≈ [0, 0.95], затылок и темя ≈ [±0.2, 0.85…0.9], нос ≈ [0, 0.54], живот ≈ [0, 0.3]). "
+             "Карточка card: y (подскок, м), rz (качнуться, рад), ry (поворот, рад), sy (сплющиться).") if hog else \
+            f"Кости и позы типа — в {sk}; значения rot — радианы от покоя (+ по часовой), IK лапы — ik.<кость-плечо> = [x, y] в долях роста от ног, y вверх."
+    prompt = f"""Задача: выучить движение для персонажей типа скелета «{typ}» по просьбе автора: «{params.get('ask', '')}».
+Клип потом ставят на любого персонажа этого типа (наследование), поэтому только кости, лицо, IK и карточка — без рисунков.
+
+Формат клипа (JSON, запиши в текущую папку anim.json):
+{{ "schema": 1, "id": "{typ}/<slug латиницей>", "name": "<по-русски, 1–3 слова>", "type": "{typ}", "dur": <секунды, 0.8–4>, "loop": false (true — только для циклов: ходьба, дыхание),
+  "tracks": {{ "<кость>.<rot|len|sq>": [[t, значение, "ease к следующему: io|linear|in|out|hold"], …], "face.<поле>": [[t, значение]], "ik.<лапа>": [[t, [x, y]]], "card.<y|rz|ry|sy>": …, "sit": [[t, true]] }} }}
+Ключ — [время от начала клипа, значение, ease]. Значения костей — от позы покоя. Начало и конец — близко к покою (клип плавно входит и выходит, 0.2 с кроссфейд), кроме сознательно другого финала.
+{bones}
+Ещё раз: движение должно читаться на маленьком бумажном персонаже в кадре 9:16 — крупно, с подготовкой и отыгрышем (замах перед действием, чуть перелёт и возврат), лицо помогает.
+Готовые клипы этого типа — образцы формата и стиля (Read):
+{ex_lines}
+
+Сними ленту кадров (ровно так): {cmd}
+Получишь strip.png — 8 моментов клипа на персонаже. Посмотри через Read: читается ли «{params.get('ask', '')}», нет ли вывернутых лап и дёрганий, хватает ли амплитуды. Исправь anim.json и сними снова — 2–4 прохода.
+В ответе: name, slug (латиницей, коротко, через дефис), summary — что делает клип (1–2 предложения), note — что автору проверить."""
+    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 1500,
+            "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"], "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {ra}:*)"],
+            "dirs": [wd, lib, P.STANDS, P.ENGINE], "schema": S({"name": STR, "slug": STR, "summary": STR, "note": STR})}
 
 
 def element_spec(docs, params, sysp, genre):
@@ -1365,16 +1431,38 @@ def apply(action, docs, params, res):
         many = {"scene": "сцены", "char": "персонажи", "prop": "пропсы", "sound": "звуки"}
         return [(key, ops)], "Claude: " + (", ".join(f"{many[k]} +{n}" for k, n in by.items()) or "новых элементов нет")
 
+    if action == "animteach":
+        wd, typ = params["_wd"], params["_type"]
+        src = os.path.join(wd, "anim.json")
+        if not os.path.isfile(src):
+            raise RuntimeError("Claude не записал anim.json — попробуй ещё раз")
+        a = json.load(open(src, encoding="utf-8"))
+        slug = re.sub(r"[^a-z0-9-]+", "-", (res.get("slug") or a.get("id", "").split("/")[-1] or "move").lower()).strip("-")[:40] or "move"
+        dst_dir = os.path.join(os.path.dirname(os.path.dirname(wd)), typ)
+        os.makedirs(dst_dir, exist_ok=True)
+        base, k = slug, 2
+        while os.path.isfile(os.path.join(dst_dir, slug + ".json")):
+            slug, k = f"{base}-{k}", k + 1
+        a.update({"schema": 1, "id": f"{typ}/{slug}", "type": typ, "name": res.get("name") or a.get("name") or slug, "prompt": params.get("ask", ""),
+                  "by": "claude", "summary": res.get("summary", ""), "created": time.strftime("%Y-%m-%d")})
+        open(os.path.join(dst_dir, slug + ".json"), "w", encoding="utf-8").write(json.dumps(a, ensure_ascii=False, indent=1))
+        if os.path.isfile(os.path.join(wd, "strip.png")):
+            shutil.copy2(os.path.join(wd, "strip.png"), os.path.join(dst_dir, slug + ".png"))
+        res.update({"id": a["id"], "name": a["name"], "dur": a.get("dur"), "loop": a.get("loop", False)})
+        return [], f"Claude выучил «{a['name']}» ({a['id']}, {a.get('dur')} с) — в библиотеке анимаций типа {typ}"
+
     if action == "charparts":
         wd, rel, v = params["_wd"], params["_rel"], params["_v"]
         eid = params["el"]
         e = next((x for x in plan.get("elements") or [] if x["id"] == eid), None)
         if not e:
             return [], "Элемент уже удалён"
-        if (res.get("fn") or "").strip().lower() == "hog":
-            return [], "Claude: это ёжик — собирай на скелете ёжика (библиотека: персонаж со скелетом hog). " + (res.get("note") or "")
         main = os.path.join(wd, "element.png")
-        if not os.path.isfile(main) or not os.path.isfile(os.path.join(wd, "rig.json")):
+        hogish = (res.get("fn") or "").strip().lower() == "hog"          # ёжик: риг по параметрам + костюмы, без rig.json
+        if not os.path.isfile(main) and os.path.isfile(os.path.join(wd, "prefab.js")):   # Claude не снял кадры (команда не прошла) — снимаем сами
+            subprocess.run(["node", os.path.join(P.STANDS, "render_char.js"), f"/rscene/{rel}/prefab.js", wd, "--port", str(docs["port"])],
+                           capture_output=True, timeout=300)
+        if not os.path.isfile(main) or not (hogish or os.path.isfile(os.path.join(wd, "rig.json"))):
             raise RuntimeError("Claude не довёл персонажа до кадров (element.png, rig.json) — попробуй ещё раз")
         img = docs["save"](plan["id"], open(main, "rb").read())
         extra = [docs["save"](plan["id"], open(os.path.join(wd, f), "rb").read()) for f in ("rest.png", "clean.png", "emotions.png") if os.path.isfile(os.path.join(wd, f))]
@@ -1500,6 +1588,12 @@ SCENE_RULES = """Сцена — документ scene.json (формат — _p
 - camera: {fov, handheld, focus, keys: [{id, t, pos, target, fov, ease}], cuts: [{id, t, name}]} — склейка: ключи по разные стороны не перетекают.
 - markers [{id, t, name}], sounds [{id, t, src: 'el:<id>'|'lib:<id>', gain, note}].
 - params предмета читает его префаб (prefabs.js): P_(o, 'имя', по_умолчанию). Меняй их операцией set по пути ["objects", id, "params", "имя"].
+- Персонаж (src.prefab = "lib:characters/<slug>@N", S5, docs/studio/stage5-animations.md): clips [{id, t, dur, anim: "<тип>/<slug>", speed, loop}] — движения из библиотеки типа скелета;
+  pose [{id, t, bones: {armL: {rot, len}, body: {rot, sq}, legL: {rot}}, ik: {armR: [x, y] — цель кончика лапы в долях роста от ног, y вверх | null — отпустить}, face: {mouth, lid, brows, look},
+  sit, facing, note, refine: "open"|"done"}] — ключи позы поверх клипов, интерполируются по каналам между ключами; walk: auto (ходьба сама при движении по keys.pos) | off;
+  keys.emotion (эмоция из листа персонажа, держится до следующего ключа), keys["wear.<костюм>"] (true / false). Ёжик: armL / armR rot 0 — вниз, + к центру и вверх, − наружу; −2.9 — над головой.
+  «Доведи» позу: подход (ключ позы за 0.3–0.6 с до — лапа отведена, тело чуть назад), сам ключ, отход (ключ с ik: {лапа: null} через 0.4–0.8 с; в нём же верни к 0 все кости и наклон, которые трогал в подходе, — ключи позы держатся до следующего), наклон тела к цели (body.rot ±0.1–0.2), лицо под момент.
+  Цель лапы, которую поставил автор, не меняй. Добавить клип: {"op": "add", "path": ["objects", id, "clips"], "item": {…}}; ключ позы: {"op": "add", "path": ["objects", id, "pose"], "item": {…}}.
 
 Операции (в списках путь идёт через id элемента):
   {"op": "set", "path": ["objects", "o16", "pos"], "value": [1.0, 0.78, 0.1]}
@@ -1531,7 +1625,10 @@ def _scene_summary(doc, info, limit=160):
         rows.append("  " * depth + f"- {o['id']} «{o.get('name')}»" + (" [группа]" if o.get("type") == "group" else f" префаб {pf}")
                     + f" pos {o.get('pos')} rotY {round((o.get('rot') or [0, 0, 0])[1], 3)} scale {o.get('scale', 1)}"
                     + (f" params {json.dumps(o['params'], ensure_ascii=False)}" if o.get("params") else "")
-                    + (f" ключи {ks}" if ks else "") + (" скрыт" if o.get("hide") else "") + (" 🔒" if o.get("locked") else ""))
+                    + (f" ключи {ks}" if ks else "") + (" скрыт" if o.get("hide") else "") + (" 🔒" if o.get("locked") else "")
+                    + (f"\n    клипы {json.dumps(o['clips'], ensure_ascii=False)}" if o.get("clips") else "")
+                    + (f"\n    поза {json.dumps(o['pose'], ensure_ascii=False)}" if o.get("pose") else "")
+                    + (f" walk {o['walk']}" if o.get("walk") else ""))
     if len(doc.get("objects") or []) > limit:
         rows.append(f"… и ещё {len(doc['objects']) - limit} (полностью — в scene.json)")
     lights = [f"- {l['id']} «{l.get('name')}» {l.get('type')} pos {l.get('pos')} {l.get('color') or l.get('sky')} яркость {l.get('intensity')}" for l in doc.get("lights") or []]

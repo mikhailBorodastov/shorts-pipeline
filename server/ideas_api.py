@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 8
+API_VERSION = 9
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -46,7 +46,7 @@ EFFORT = os.environ.get("IDEAS_EFFORT", "")
 # модели кнопок ✨: текст (вопросы, биты, названия, список элементов, подбор звука) — Sonnet, визуал (черновики элементов, обложка и первый кадр) — Opus
 TEXT_MODEL = os.environ.get("IDEAS_TEXT_MODEL", "sonnet")           # алиас: самый новый Sonnet, который знает установленный Claude Code
 VISUAL_MODEL = os.environ.get("IDEAS_VISUAL_MODEL", "claude-opus-5-5")
-VISUAL_ACTIONS = ("element", "render", "charparts")
+VISUAL_ACTIONS = ("element", "render", "charparts", "animteach")
 TEXT_EFFORT = {"elements": "medium", "sound": "medium", "assets": "medium"}              # усилие для текстовых кнопок препродакшена; остальные — по умолчанию Claude Code
 VISUAL_EFFORT = os.environ.get("IDEAS_VISUAL_EFFORT", "")           # пусто — по умолчанию Claude Code
 MAX_JOBS = 3
@@ -1185,7 +1185,7 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
-    if p == "/api/char" or p == "/api/chars":
+    if p in ("/api/char", "/api/chars", "/api/anims"):
         try:
             if chapi().handle_get(sys.modules[__name__], h, p, q):
                 return True

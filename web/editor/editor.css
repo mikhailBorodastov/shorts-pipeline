@@ -118,3 +118,9 @@ input[type=number] { width: 64px; }
 .swap .menu { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; max-height: 320px; overflow: auto; background: var(--panel, #262629); border: 1px solid var(--line, #3a3a3e); border-radius: 6px; padding: 4px; }
 .swap .menu .mi { display: flex; align-items: center; gap: 8px; text-align: left; }
 .swap .menu .mi img { width: 44px; height: 44px; object-fit: cover; border-radius: 4px; flex: none; }
+
+/* S5: список движений (Tab), свойства клипа */
+.cl-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow: auto; margin: 6px 0; }
+.cl-list .mi { text-align: left; border: 0; background: none; padding: 4px 10px; border-radius: 4px; color: inherit; }
+.cl-list .mi.on, .cl-list .mi:hover { background: #23405f; }
+.grid2 { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; align-items: center; }

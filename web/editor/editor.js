@@ -1,6 +1,7 @@
 // Редактор сцены (S1 Claude Studio) — оболочка: загрузка сцены, операции и отмена, синхронизация с локальным скриптом,
 // время и воспроизведение (Premiere), звуки дорожки, хоткеи (keymap.json), версии, клип, меню, блокировка на время работы агента.
 // ТЗ: _pipeline/docs/studio/stage1-editor.md. Модули: viewport.js (3D), panels.js (дерево и свойства), timeline.js, agent.js, ops.js, keys.js.
+import { initAnim } from './anim.js';
 import { applyBatch, structural, clone, newId } from './ops.js';
 import { find, kindOf, keyAllOps, delKeysAtOps, allKeys, setOps, valueAt, EPS } from './keys.js';
 import { initViewport } from './viewport.js';
@@ -204,10 +205,12 @@ const audio = {
   },
 };
 ED.audio = audio;
+ED.reloadDoc = () => reload('звук добавлен на сервере');
 ED.refreshCues = async () => { try { ED.cues = (await api(`/api/scene/cues?key=${encodeURIComponent(ED.key)}&el=${ED.el}`)).cues; ED.tlDirty = true; } catch {} };
 
 // ---------------------------------------------------------------- actions (keymap names)
 const ACT = {
+  clip_add: () => ED.clipMenu && ED.clipMenu(),
   select_all: () => ED.select((ED.doc.objects || []).filter(o => !o.locked && !o.parent).map(o => o.id)),
   deselect_all: () => ED.select([]),
   grab: () => ED.vp.startModal('translate'), rotate: () => ED.vp.startModal('rotate'), scale: () => ED.vp.startModal('scale'),
@@ -577,10 +580,12 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     if (j.style3d) PROP_STYLE = j.style3d;
     ED.lib = await loadSceneProps(scenePropRefs(ED.doc), ED.key.slice(5), load, {}, ED.doc);          // 3D-пропсы lib: / el: (S3)
     ED.loadProp = async ref => { await loadSceneProps([ref], ED.key.slice(5), load, ED.lib); return !!ED.lib[ref]; };
+    await loadSceneEnvs(ED.doc, ED.key.slice(5), ED.el);                                    // липсинк (S5)
     ED.w = sceneWorld(ED.doc, typeof PREFABS !== 'undefined' ? PREFABS : {}, ED.lib);
     await stage3dInit();
     ED.S = ED.w.S;
     initViewport(ED);
+    ED.anim = initAnim(ED);                                      // S5: клипы, ключи позы, ручки IK, «+ научить»
     ED.panels = initPanels(ED);
     ED.tl = initTimeline(ED);
     ED.agent = initAgent(ED);

@@ -305,7 +305,29 @@ def run_job(A, job):
     return False
 
 
+def anims(A, typ, cid=None):
+    """Клипы типа скелета (library/anims/<type>/*.json): [{id, name, dur, loop, proc, by, prompt, preview}] — S5."""
+    c, ld = lib(A, cid)
+    d = os.path.join(ld, "anims", typ)
+    out = []
+    for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if not f.endswith(".json"):
+            continue
+        try:
+            a = json.load(open(os.path.join(d, f), encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        pv = os.path.join(d, f[:-5] + ".png")
+        out.append({k: a.get(k) for k in ("id", "name", "dur", "loop", "proc", "by", "prompt")} | {
+            "preview": f"/api/lib/file/{c['id']}/anims/{typ}/{f[:-5]}.png" if os.path.isfile(pv) else "", "channel": c["id"]})
+    return sorted(out, key=lambda x: (x.get("by") != "base", x.get("name") or ""))
+
+
 def handle_get(A, h, p, q):
+    if p == "/api/anims":                                   # клипы типа скелета; video=<id> — канал этого видео
+        vid = (q.get("video") or [""])[0]
+        cid = P.index()["videos"].get(vid, {}).get("channel") if vid else None
+        h._json({"items": anims(A, (q.get("type") or ["hog"])[0], cid)}); return True
     if p == "/api/char":
         h._json(sheet_info(A, (q.get("slug") or [""])[0])); return True
     if p == "/api/chars":
@@ -326,6 +348,11 @@ def handle_post(A, h, p, body):
                 em[name]["by"] = em[name].get("by") or "author"
         save_emotions(A, ld, slug, em)
         h._json({"ok": True, "emotions": em}); return True
+    if p == "/api/char/teach":                               # «+ научить» (S5): Claude (Opus) выучивает клип типа скелета
+        vid = body.get("video") or ""
+        key = ("plan:" + vid) if vid else ("channel:" + ((P.channel() or {}).get("id") or ""))   # из листа персонажа видео нет — канал
+        j = A.start_job("animteach", key, "teach:" + (body.get("type") or "hog"), {"type": body.get("type") or "hog", "ask": body.get("ask", ""), "char": body.get("char") or ""})
+        h._json({"job": j.info()}); return True
     if p == "/api/char/rig":                                 # 🦴 редактор скелета: сохранить суставы новой версией (без Claude)
         j = A.start_job("charrig", body["key"], "charrig:" + body["el"], {"el": body["el"], "base": body.get("base"), "rig": body["rig"]})
         h._json({"job": j.info()}); return True
