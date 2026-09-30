@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem Пересобрать окно Claude Studio (нужны Rust и VS Build Tools с C++, см. docs/studio/stage2-studio.md §5)
 cd /d "%~dp0"
 set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
