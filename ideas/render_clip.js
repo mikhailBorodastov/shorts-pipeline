@@ -35,9 +35,18 @@ const BROWSERS = [
     try {
       const page = await br.newPage();
       await page.setViewport({ width: 1080, height: 1920 });
+      await page.setCacheEnabled(false);                       // the stand and the engine change while we work: never an old copy
+      let pageErr = [];
+      page.on('pageerror', e => pageErr.push('[pageerror] ' + e.message));
+      // several browsers start at once and the local script may drop a request now and then: load again (up to 3 times)
+      for (let a = 1; ; a++) {
+        pageErr = [];
+        try { await page.goto(url, { waitUntil: 'load', timeout: 60000 }); await page.evaluate(() => window.READY); if (!pageErr.length) break; }
+        catch (e) { pageErr.push(e.message.split(String.fromCharCode(10))[0]); }
+        if (a >= 3) { errors.push(...pageErr); throw new Error(pageErr.join(' | ')); }
+        await new Promise(r => setTimeout(r, 400 * a));
+      }
       page.on('pageerror', e => errors.push('[pageerror] ' + e.message));
-      await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-      await page.evaluate(() => window.READY);
       while (next < N) {
         const a = next, b = Math.min(N, a + 30); next = b;
         for (let i = a; i < b; i++) {
@@ -49,7 +58,7 @@ const BROWSERS = [
       }
     } finally { await Promise.race([br.close().catch(() => {}), new Promise(r => setTimeout(r, 3000))]); }
   };
-  await Promise.all(Array.from({ length: WORKERS }, (_, i) => worker(i)));
+  await Promise.all(Array.from({ length: WORKERS }, (_, i) => new Promise(r => setTimeout(r, i * 350)).then(() => worker(i))));
   if (errors.length) console.log(errors.slice(0, 5).join('\n'));
   console.log('encode');
   const args = ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', path.join(tmp, 'f%05d.jpg')];

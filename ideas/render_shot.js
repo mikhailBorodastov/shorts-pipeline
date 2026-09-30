@@ -27,6 +27,7 @@ const BROWSERS = [
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1080, height: 1920 });
+    await page.setCacheEnabled(false);                       // the stand and the engine change while we work: never an old copy
     page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('[console] ' + m.text()); });
     page.on('response', r => { if (r.status() >= 400) errors.push(`[${r.status()}] ${r.url()}`); });
     page.on('pageerror', e => errors.push('[pageerror] ' + e.message));

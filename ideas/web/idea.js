@@ -377,11 +377,17 @@ Object.assign(Plan, {
         rs.length > 1 && h('span.row', rs.map(r => h('button.small', { class: r === cur ? 'sel' : '', title: r.feedback ? 'правка: ' + r.feedback : 'первая версия',
           onclick: () => Store.set(key, ['elements', e.id, 'render'], r.id, true) }, 'v' + r.v))),
         h('span.sp'),
-        cur && cur.three && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
-        cur && cur.three && h('button.primary', { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
+        e.kind === 'scene' && e.stage && e.stage.work && h('button.primary', { onclick: () => go(`#/p/${d.id}/pre/${e.id}/stage`), title: 'Редактор сцены: расстановка, камера и планы, ключи движения, звуки, маркеры, отмена, версии, клип, просьбы Claude' }, '🎬 Оформить сцену'),
+        e.kind === 'scene' && !(e.stage && e.stage.work) && cur && cur.three && !cur.stage && Claude.btn({ label: 'Перевести в редактор', icon: '🎬', action: 'sceneconvert', key, scope: 'sceneconvert:' + e.id,
+          params: { el: e.id, base: cur.id }, confirm: `Claude (Opus) переведёт «${e.name}» v${cur.v} в редактор сцены: код предметов отдельно, расстановка и движение — данными. Картинка не должна измениться — он сам сравнит кадры «было / стало». 5–10 минут.`,
+          title: 'Перевести сцену в формат редактора (🎬 Оформить сцену)' }),
+        cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
+        cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         !cur && Claude.btn({ label: 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
           title: 'Claude нарисует элемент нашим тулкитом по описанию и референсам, сам посмотрит и поправит. 3–10 минут.' })),
       running && h('p.dim', 'Claude рисует: пишет код, рендерит, смотрит на картинку и правит — обычно 3–10 минут. Можно заниматься другими элементами.'),
+      Claude.running(key, 'sceneconvert:' + e.id) && h('p.dim', h('span.spin'), ' 🎬 Claude переводит сцену в редактор и сравнивает кадры «было / стало» — 5–10 минут…'),
+      e.stage && e.stage.work && Plan.stageInfo(d, e),
       Claude.running(key, 'layout3d:' + e.id) && h('p.dim', h('span.spin'), ' ✋ снимаю новую расстановку — полминуты…'),
       !cur && !running && h('p.dim', three ? 'Сцена будет 3D-диорамой (stage3d, как в «Не жми эту кнопку»). Переключатель 2D / 3D — на странице препродакшена.'
         : 'Добавь референсы слева (необязательно) и нажми ✨ — получишь черновик, который правится пинами, как в ревью.'),
@@ -407,6 +413,17 @@ Object.assign(Plan, {
       cur && cur.note && h('p.clamp.elnote', '💬 ' + cur.note),
       cur && h('div.code.dim.small', 'код: ', h('code', `_ideas/render/${cur.dir}/element.js`), cur.fn && [' · функция ', h('code', cur.fn)]),
     ];
+  },
+
+  // a scene in the editor: how the conversion went (frames «было / стало»), the last clip
+  stageInfo(d, e) {
+    const st = e.stage, df = st.diff || {};
+    const bad = df.frames && !df.ok;
+    return h('div.stageinfo', { class: bad ? 'warn' : '' },
+      h('span', '🎬 в редакторе'), st.fromV && h('span.dim.small', ` · из v${st.fromV}`),
+      df.frames && h('span.small', { title: (df.frames || []).map(f => `t=${f.t}: средняя ${f.mean}, 95% ${f.p95}`).join('\n') }, bad ? ' · ⚠ кадры отличаются' : ' · кадры «было / стало» совпадают ✓'),
+      st.compare && h('button.small', { onclick: () => UI.lightbox('/' + st.compare) }, 'было / стало'),
+      st.clip && h('a.btn.small', { href: '/' + st.clip.file.replace(/^render\//, 'rscene/'), target: '_blank', rel: 'noopener' }, '🎞 клип'));
   },
 
   // 🧊 a 3D draft live: the stand in view mode (web/render/stand3d.html?view=1) — plays the scene, the camera orbits with the mouse.

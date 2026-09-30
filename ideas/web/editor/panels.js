@@ -239,13 +239,15 @@ export function initPanels(ED) {
     if (prop === 'pos' && p && (Math.abs(p[0]) > 12 || Math.abs(p[2]) > 12 || p[1] < -2 || p[1] > 6)) ED.msg(`⚠ «${o.name}» далеко от комнаты — так и задумано?`, 'warn');
   }
   function params(o) {
-    const pf = ((window.PREFABS || (typeof PREFABS !== 'undefined' ? PREFABS : {}))[(o.src || {}).prefab]) || {};
-    const pr = o.params || {};
+    const info = ((ED.info.prefabInfo || {})[(o.src || {}).prefab]) || {};
+    const pr = Object.assign({}, info.params || {}, o.params || {});
     const keys = Object.keys(pr);
+    if (info.note) props.append(Object.assign(div('hint'), { textContent: info.note }));
     if (!keys.length) return;
     const g = div('grp'); g.append(Object.assign(document.createElement('b'), { textContent: 'Параметры предмета' })); props.append(g);
     for (const k of keys) {
       const v = pr[k], row = div('prop'), lab = document.createElement('label'); lab.textContent = k; lab.style.cursor = 'default';
+      if (!(o.params && k in o.params)) lab.title = 'по умолчанию из префаба';
       const box = div('vals');
       let inp;
       if (typeof v === 'boolean') { inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = v; inp.onchange = () => set(inp.checked); }

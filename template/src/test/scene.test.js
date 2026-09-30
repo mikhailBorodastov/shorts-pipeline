@@ -84,32 +84,32 @@ test('камера: ключи внутри плана, склейка — бе�
     { t: 5, pos: [5, 1, 2], target: [1, 1, 1], fov: 20, ease: 'linear' },
     { t: 7, pos: [5, 1, 0], target: [1, 1, 1], fov: 20 },
   ], cuts: [{ t: 5 }] };
-  near(S.camAt(cam, 2).pos, [0, 0, 8]);
-  near(S.camAt(cam, 4.99).pos, [0, 0, 6]);            // до склейки — крайний ключ своего плана
-  near(S.camAt(cam, 5).pos, [5, 1, 2]);               // сразу после — новый план
-  near(S.camAt(cam, 6).pos, [5, 1, 1]);
-  near(S.camAt(cam, 2).fov, 30);
-  near(S.camAt(cam, 6).fov, 20);
+  near(S.sceneCamAt(cam, 2).pos, [0, 0, 8]);
+  near(S.sceneCamAt(cam, 4.99).pos, [0, 0, 6]);            // до склейки — крайний ключ своего плана
+  near(S.sceneCamAt(cam, 5).pos, [5, 1, 2]);               // сразу после — новый план
+  near(S.sceneCamAt(cam, 6).pos, [5, 1, 1]);
+  near(S.sceneCamAt(cam, 2).fov, 30);
+  near(S.sceneCamAt(cam, 6).fov, 20);
 });
 
 test('камера: план без ключей держит последний ключ до него', () => {
   const cam = { keys: [{ t: 0, pos: [1, 1, 1], target: [0, 0, 0] }, { t: 2, pos: [2, 2, 2], target: [0, 0, 0] }], cuts: [{ t: 3 }, { t: 6 }] };
-  near(S.camAt(cam, 4).pos, [2, 2, 2]);
-  near(S.camAt(cam, 7).pos, [2, 2, 2]);
+  near(S.sceneCamAt(cam, 4).pos, [2, 2, 2]);
+  near(S.sceneCamAt(cam, 7).pos, [2, 2, 2]);
 });
 
-test('shotOf — границы плана', () => {
-  assert.deepStrictEqual(S.shotOf([{ t: 2 }, { t: 5 }], 3), [2, 5]);
-  assert.deepStrictEqual(S.shotOf([{ t: 2 }, { t: 5 }], 1), [-Infinity, 2]);
-  assert.deepStrictEqual(S.shotOf([], 1), [-Infinity, Infinity]);
+test('sceneShotOf — границы плана', () => {
+  assert.deepStrictEqual(S.sceneShotOf([{ t: 2 }, { t: 5 }], 3), [2, 5]);
+  assert.deepStrictEqual(S.sceneShotOf([{ t: 2 }, { t: 5 }], 1), [-Infinity, 2]);
+  assert.deepStrictEqual(S.sceneShotOf([], 1), [-Infinity, Infinity]);
 });
 
-test('objectAt: статичное, ключи, масштаб числом, скрытие', () => {
+test('sceneObjectAt: статичное, ключи, масштаб числом, скрытие', () => {
   const o = { pos: [1, 0, 0], rot: [0, 0.5, 0], scale: 2, keys: { pos: [{ t: 0, v: [0, 0, 0], ease: 'linear' }, { t: 2, v: [2, 0, 0] }], hide: [{ t: 1.5, v: true }] } };
-  const a = S.objectAt(o, 1);
+  const a = S.sceneObjectAt(o, 1);
   near(a.pos, [1, 0, 0]); near(a.rot, [0, 0.5, 0]); near(a.scale, [2, 2, 2]);
   assert.strictEqual(a.hide, false);
-  assert.strictEqual(S.objectAt(o, 1.6).hide, true);
+  assert.strictEqual(S.sceneObjectAt(o, 1.6).hide, true);
 });
 
 test('группы: родитель раньше детей, цикл не вешает', () => {
@@ -119,14 +119,14 @@ test('группы: родитель раньше детей, цикл не ве
 });
 
 test('keyTimes — все моменты ключей объекта и камеры', () => {
-  assert.deepStrictEqual(S.keyTimes({ keys: { pos: [{ t: 2 }, { t: 1 }], rot: [{ t: 2 }] } }), [1, 2]);
-  assert.deepStrictEqual(S.keyTimes({ keys: [{ t: 3 }, { t: 0 }] }), [0, 3]);
+  assert.deepStrictEqual(S.sceneKeyTimes({ keys: { pos: [{ t: 2 }, { t: 1 }], rot: [{ t: 2 }] } }), [1, 2]);
+  assert.deepStrictEqual(S.sceneKeyTimes({ keys: [{ t: 3 }, { t: 0 }] }), [0, 3]);
 });
 
 test('handheld — детерминирован от t', () => {
   const noise = (x, s) => Math.sin(x * 12.9898 + s);
-  assert.deepStrictEqual(S.handheldAt(1.5, 0.02, noise), S.handheldAt(1.5, 0.02, noise));
-  near(S.handheldAt(1, 0, noise).p, [0, 0, 0]);
+  assert.deepStrictEqual(S.sceneHandheld(1.5, 0.02, noise), S.sceneHandheld(1.5, 0.02, noise));
+  near(S.sceneHandheld(1, 0, noise).p, [0, 0, 0]);
 });
 
 console.log(`\n${n - failed} / ${n} тестов прошли`);

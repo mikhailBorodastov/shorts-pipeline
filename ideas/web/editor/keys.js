@@ -69,7 +69,7 @@ export function delKeysAtOps(doc, id, t) {
 
 // ---- camera
 export function camShotKeys(cam, t) {
-  const [s, e] = shotOf(cam.cuts, t);
+  const [s, e] = sceneShotOf(cam.cuts, t);
   return (cam.keys || []).filter(k => k.t >= s && k.t < e);
 }
 export function camKeyOps(doc, t, pos, target, fov) {

@@ -48,6 +48,7 @@ const App = {
       UI.toast(e.message, 'err');
     }
     this.render({ top: true });
+    StageEditor.follow(r);
   },
 
   banner(msg) { const b = $('#banner'); b.textContent = msg; b.classList.toggle('show', !!msg); },
@@ -96,5 +97,29 @@ const App = {
     return Pages.home();
   },
 };
+
+// 🎬 the scene editor (S1 Claude Studio) — full screen over the page at #/p/<plan>/pre/<element>/stage.
+// It lives in an iframe outside #main (page re-renders must not reload it); Esc / «← Препродакшен» inside it come back here.
+const StageEditor = {
+  el: null, frame: null,
+  follow(r) {
+    const want = r.page === 'p' && r.tab === 'pre' && r.sub && r.sub2 === 'stage' ? `${r.id}/${r.sub}` : null;
+    if (want === this.el) return;
+    this.close();
+    if (!want) return;
+    this.el = want;
+    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + r.id)}&el=${encodeURIComponent(r.sub)}`;
+    this.frame = h('div.stage-editor', h('iframe', { src, title: 'Оформление сцены', allow: 'fullscreen' }));
+    document.body.append(this.frame);
+    requestAnimationFrame(() => { const f = this.frame && this.frame.querySelector('iframe'); if (f) f.focus(); });
+  },
+  close() { if (this.frame) this.frame.remove(); this.frame = null; this.el = null; },
+};
+addEventListener('message', ev => {
+  if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'editor-close') return;
+  const r = App.route;
+  go(`#/p/${r.id}/pre/${r.sub}`);
+  Store.load('plan:' + r.id).then(() => App.render()).catch(() => {});
+});
 
 App.boot();

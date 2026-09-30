@@ -383,6 +383,38 @@ def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edi
         return {"rev": work["rev"], "prev": prev, "undo": undo, "ops": done, "batch": batch, "warn": limits(work)}
 
 
+# ---------------------------------------------------------------- prefabs.js: what things there are and their parameters
+def prefab_info(path):
+    """{key: {kind, note, params: {name: default}}} from prefabs.js: entries «  key: { kind: '…'» of PREFABS, the comment lines above
+    an entry are its note, P_(o, 'name', default) / o.params.name inside it are its parameters."""
+    try:
+        src = open(path, encoding="utf-8").read()
+    except OSError:
+        return {}
+    i = src.find("const PREFABS")
+    if i < 0:
+        return {}
+    lines, out, cur, note = src[i:].splitlines(), {}, None, []
+    for ln in lines[1:]:
+        m = re.match(r"^  (\w+):\s*\{\s*kind:\s*'(\w+)'", ln)
+        if m:
+            cur = out[m.group(1)] = {"kind": m.group(2), "note": " ".join(note)[:240], "params": {}}
+            note = []
+        elif re.match(r"^  //", ln):
+            note.append(ln.strip()[2:].strip().lstrip("-").strip())
+        elif re.match(r"^};", ln):
+            break
+        if cur is not None:
+            for pm in re.finditer(r"P_\(o,\s*'(\w+)',\s*([^)]+?)\)", ln):
+                d = pm.group(2).strip()
+                try:
+                    d = json.loads(d.replace("'", '"'))
+                except ValueError:
+                    pass
+                cur["params"].setdefault(pm.group(1), d)
+    return out
+
+
 # ---------------------------------------------------------------- element links, versions
 def element(A, key, el):
     e = A._by_id(A.load(key).get("elements"), el)
@@ -562,7 +594,14 @@ def finish_convert(A, key, el, base, cmp_dir, ts, port, by="claude"):
     return diff
 
 
-AGENT_FIELDS = ("reply", "desc", "ops")
+def card_edit_params(e):
+    """«Поправить» in the preproduction card for a scene in the editor: pins and notes -> one request to the scene agent (Opus)."""
+    fx = (e.get("fx") or {}).get("main") or {}
+    parts = [(fx.get("text") or "").strip()] + [(n.get("text") or "").strip() for n in fx.get("notes") or []]
+    for i, p in enumerate(fx.get("pins") or [], 1):
+        parts.append(f"пин {i} в кадре (x≈{round(float(p.get('x') or 0) * 1080)}, y≈{round(float(p.get('y') or 0) * 1920)} из 1080×1920 на моменте 0.6 с): {(p.get('text') or '').strip() or 'автор отметил это место'}")
+    ask = "; ".join(x for x in parts if x)
+    return {"el": e["id"], "ask": ask or "посмотри сцену и поправь, что выглядит не так", "t": 0.6, "sel": [], "model": "opus", "fromCard": True}
 
 
 def agent(A, job):
@@ -591,13 +630,22 @@ def agent(A, job):
         job.summary = "Claude думает над сценой…"
         res = A.run_claude(job, spec)
         ops = [o for o in (res.get("ops") or []) if isinstance(o, dict)]
-        allow = res.get("allow") or []
-        ask = (job.params.get("ask") or "").lower()
-        allow = [a for a in allow if isinstance(a, str)] if any(w in ask for w in ("перестав", "сдвин", "поменя", "измени", "убер", "передел")) else []
+        # Claude may touch the author's own edits only for things the author picked or named in this very request
+        ask = (job.params.get("ask") or "").lower().replace("ё", "е")
+        names = {o["id"]: (o.get("name") or "").lower().replace("ё", "е") for o in (doc.get("objects") or []) + (doc.get("lights") or [])}
+        sel = set(job.params.get("sel") or [])
+        named = lambda i: i in sel or ("камер" in ask and i == "camera") or any(len(w) > 3 and w[:5] in ask for w in names.get(i, "").split())
+        allow = [a for a in res.get("allow") or [] if isinstance(a, str) and named(a.split(".")[0])]
         out = {"reply": res.get("reply") or "", "desc": res.get("desc") or "", "rev": doc.get("rev", 0), "applied": False}
         if ops:
             r = apply(A, key, el, ops, by="claude", desc="💬 " + (res.get("desc") or job.params.get("ask") or "правка агента"), allow=allow, kind="agent")
             out.update(applied=True, rev=r["rev"], batch=r["batch"], undo=r["undo"], ops=r["ops"], warn=r.get("warn"))
+        if job.params.get("fromCard"):                           # from the card: the sent edits are done, and the result is a new version with frames
+            A.apply_ops(key, [{"op": "set", "path": ["elements", el, "fx", "main"], "value": {}}])
+            if out["applied"]:
+                job.summary = "снимаю новую версию…"
+                vj = A.Job("scenever", key, "scenever", {"el": el, "note": "💬 " + (out["desc"] or job.params.get("ask", ""))[:200], "by": "claude"})
+                version(A, vj)
         chat = {"id": A.new_id("c"), "ask": job.params.get("ask") or "", "reply": out["reply"], "desc": out["desc"], "batch": out.get("batch"),
                 "n": len(out.get("ops") or []), "ts": now_ms(), "model": model or "sonnet"}
         A.apply_ops(key, [{"op": "add", "path": ["elements", el, "stage", "chat"], "item": chat}])
@@ -637,6 +685,7 @@ def handle_get(A, h, p, q):
                  "element": {"id": el, "name": e.get("name", ""), "stage": e.get("stage") or {}, "plan": plan.get("name", ""), "v": (e.get("stage") or {}).get("v"),
                              "versions": [{"v": r.get("v"), "id": r.get("id"), "feedback": r.get("feedback", ""), "img": r.get("img", "")} for r in e.get("renders") or [] if r.get("stage")]},
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
+                 "prefabInfo": prefab_info(os.path.join(A.RENDER, *rel.split("/"), "prefabs.js")),
                  "clip": f"/rscene/{rel}/clip.mp4" if os.path.isfile(os.path.join(work_dir(A, _pid(key), el), "clip.mp4")) else ""})
         return True
     if p == "/api/scene/rev":

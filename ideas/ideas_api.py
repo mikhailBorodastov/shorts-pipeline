@@ -38,7 +38,7 @@ POST-запросы принимаются только со страницы с
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 3
+API_VERSION = 4
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # _pipeline/ideas
 PIPE = os.path.dirname(HERE)                                # _pipeline
@@ -1334,7 +1334,14 @@ def handle_post(h):
         if p.startswith("/api/scene/") and scapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p == "/api/claude":
-            j = start_job(body.get("action", ""), body.get("key", ""), body.get("scope", ""), body.get("params") or {})
+            prm = body.get("params") or {}
+            if body.get("action") == "element" and prm.get("base"):         # «Поправить» a scene that lives in the editor: the edits go to the scene agent
+                e = _by_id(load(body.get("key", "")).get("elements"), prm.get("el")) or {}
+                if e.get("kind") == "scene" and (e.get("stage") or {}).get("work"):
+                    j = start_job("sceneagent", body.get("key", ""), body.get("scope", ""), scapi().card_edit_params(e))
+                    scapi().LOCKS[scapi().skey(body.get("key", ""), e["id"])] = j.id
+                    h._json({"job": j.info()}); return True
+            j = start_job(body.get("action", ""), body.get("key", ""), body.get("scope", ""), prm)
             h._json({"job": j.info()}); return True
         if p == "/api/job/cancel":
             j = JOBS.get(q.get("id", [""])[0])

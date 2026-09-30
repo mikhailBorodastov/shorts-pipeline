@@ -1254,3 +1254,158 @@ def apply(action, docs, params, res):
         return [(key, ops)], f"Claude: +{n} звуков для «{e.get('name', '')}»" + (f" (не скачались: {len(bad)} — {'; '.join(bad)[:200]})" if bad else "")
 
     raise ValueError(f"неизвестное действие: {action}")
+
+
+# ---------------- редактор сцены (S1 Claude Studio): агент и перевод старых сцен ----------------
+ANY = {}
+OP_SCHEMA = {"type": "object", "properties": {
+    "op": {"type": "string", "enum": ["set", "unset", "add", "del", "move"]},
+    "path": {"type": "array", "items": {"type": "string"}},
+    "value": ANY, "item": {"type": "object"}, "id": STR, "to": {"type": "integer"}, "at": {"type": "integer"}}, "required": ["op", "path"]}
+
+SCENE_RULES = """Сцена — документ scene.json (формат — _pipeline/docs/studio/architecture.md §3.3). Единицы — метры, y вверх, камера смотрит вдоль −z.
+- objects[]: {id, name, src: {prefab, el}, params, pos [x,y,z], rot [x,y,z] (радианы, порядок YXZ; обычно меняется только rot[1] — поворот по Y), scale (число), hide, locked, parent (id группы или null), keys}.
+  Группа — объект с type: "group"; координаты детей — относительно группы. Предметы стоят нижней точкой: pos.y = 0 — на полу.
+- keys.<pos|rot|scale|hide>[] = {id, t, v, ease}; ease у ЛЕВОГО ключа — кривая до следующего: linear | io (плавно, по умолчанию) | in | out | hold.
+  Нет ключей — работает статичное значение (pos / rot / scale). Есть ключи — статичное значение не работает, меняй ключи.
+- lights[]: {id, name, type: lamp|point|ambient|sun, pos, color, intensity, dist, keys: {intensity, pos}}. Свет внутри предмета (лампа на столе) — в его префабе, управляется его params.
+- camera: {fov, handheld, focus, keys: [{id, t, pos, target, fov, ease}], cuts: [{id, t, name}]} — склейка: ключи по разные стороны не перетекают.
+- markers [{id, t, name}], sounds [{id, t, src: 'el:<id>'|'lib:<id>', gain, note}].
+- params предмета читает его префаб (prefabs.js): P_(o, 'имя', по_умолчанию). Меняй их операцией set по пути ["objects", id, "params", "имя"].
+
+Операции (в списках путь идёт через id элемента):
+  {"op": "set", "path": ["objects", "o16", "pos"], "value": [1.0, 0.78, 0.1]}
+  {"op": "set", "path": ["objects", "o16", "params", "color"], "value": "#ff9a3c"}
+  {"op": "add", "path": ["objects", "o18", "keys", "pos"], "item": {"id": "k<6 символов>", "t": 2.0, "v": [0.3, 0, 0.2], "ease": "io"}}
+  {"op": "set", "path": ["objects", "o18", "keys", "pos", "<id ключа>", "v"], "value": [0.3, 0, 0.2]}
+  {"op": "add", "path": ["camera", "keys"], "item": {"id": "c…", "t": 4.0, "pos": [0, 1, 2], "target": [0, 1, 0], "ease": "io"}}
+  {"op": "add", "path": ["objects"], "item": {"id": "o…", "name": "…", "src": {"prefab": "…"}, "pos": [0, 0, 0], "rot": [0, 0, 0], "scale": 1}}   (только из существующих префабов)
+  {"op": "del", "path": ["objects"], "id": "o9"}    {"op": "unset", "path": ["objects", "o16", "params", "color"]}
+Новые id придумывай сам: буква типа + 6 символов (o…, k…, c…, m…, s…, g…)."""
+
+
+def _scene_summary(doc, info, limit=160):
+    by = {o["id"]: o for o in doc.get("objects") or []}
+    rows = []
+    for o in (doc.get("objects") or [])[:limit]:
+        depth, p = 0, o.get("parent")
+        while p and depth < 8:
+            depth, p = depth + 1, (by.get(p) or {}).get("parent")
+        ks = {k: [round(x["t"], 2) for x in v] for k, v in (o.get("keys") or {}).items() if v}
+        pf = (o.get("src") or {}).get("prefab")
+        rows.append("  " * depth + f"- {o['id']} «{o.get('name')}»" + (" [группа]" if o.get("type") == "group" else f" префаб {pf}")
+                    + f" pos {o.get('pos')} rotY {round((o.get('rot') or [0, 0, 0])[1], 3)} scale {o.get('scale', 1)}"
+                    + (f" params {json.dumps(o['params'], ensure_ascii=False)}" if o.get("params") else "")
+                    + (f" ключи {ks}" if ks else "") + (" скрыт" if o.get("hide") else "") + (" 🔒" if o.get("locked") else ""))
+    if len(doc.get("objects") or []) > limit:
+        rows.append(f"… и ещё {len(doc['objects']) - limit} (полностью — в scene.json)")
+    lights = [f"- {l['id']} «{l.get('name')}» {l.get('type')} pos {l.get('pos')} {l.get('color') or l.get('sky')} яркость {l.get('intensity')}" for l in doc.get("lights") or []]
+    c = doc.get("camera") or {}
+    cam = [f"- ключ {k['id']} t={k['t']} pos {k.get('pos')} target {k.get('target')}" + (f" fov {k['fov']}" if k.get("fov") else "") + f" ease {k.get('ease', 'io')}" for k in c.get("keys") or []]
+    pf = [f"- {k} ({v['kind']})" + (f": {v['note']}" if v.get("note") else "") + (f" · params {json.dumps(v['params'], ensure_ascii=False)}" if v.get("params") else "") for k, v in info.items()]
+    return (f"Сцена «{doc.get('name')}», длина {doc.get('len')} с, {doc.get('fps', 30)} к/с.\nОбъекты:\n" + "\n".join(rows)
+            + "\nСвет:\n" + ("\n".join(lights) or "—")
+            + f"\nКамера: fov {c.get('fov')}, дрожь {c.get('handheld')}, фокус {c.get('focus')}\n" + ("\n".join(cam) or "—")
+            + f"\nСклейки: {[(x['t'], x.get('name')) for x in c.get('cuts') or []]}\nМаркеры: {[(m['t'], m.get('name')) for m in doc.get('markers') or []]}"
+            + f"\nЗвуки: {[(s['t'], s.get('src'), s.get('note')) for s in doc.get('sounds') or []]}"
+            + "\nПрефабы (prefabs.js):\n" + "\n".join(pf))
+
+
+def sceneagent_spec(docs, e, doc, c):
+    """💬 одна просьба автора в редакторе сцены -> одна пачка операций над scene.json."""
+    import scene_api
+    work = c["work"]
+    info = scene_api.prefab_info(os.path.join(work, "prefabs.js"))
+    names = {o["id"]: o.get("name") for o in (doc.get("objects") or []) + (doc.get("lights") or [])}
+    sel = [f"{i} «{names.get(i, 'камера' if i.startswith('camera') else i)}»" for i in c.get("sel") or []]
+    au = doc.get("authored") or {}
+    aut = "\n".join(f"- {names.get(k, k)} ({k}): {', '.join(v)}" for k, v in au.items()) or "—"
+    hist = "\n".join(f"- {'автор' if h.get('by') == 'author' else 'Claude'}: {h.get('desc')}" for h in c.get("history") or [] if h.get("desc")) or "—"
+    frame = c.get("frame")
+    prompt = f"""Просьба автора: «{c['ask']}»
+
+Время курсора: {c['t']:.2f} с. Выбрано: {', '.join(sel) or 'ничего'}.
+{('Кадр сцены в этот момент (так её видит зритель): ' + _fwd(frame) + ' — посмотри через Read.') if frame else ''}
+Полный документ: {_fwd(os.path.join(work, 'scene.json'))}; код предметов (только читать): {_fwd(os.path.join(work, 'prefabs.js'))}.
+
+{_scene_summary(doc, info)}
+
+Что автор делал руками (authored) — это его решения, НЕ меняй эти пути, если он прямо не просит об этом в просьбе выше:
+{aut}
+Если просьба прямо касается такого пути (например, «переставь кресло, которое я повернул»), перечисли его в allow как «<id>.<подпуть>» (например «o17.rot»).
+
+Последние правки:
+{hist}
+
+{SCENE_RULES}
+
+Как ответить:
+- ops — ОДНА пачка операций, которая выполняет просьбу целиком (её отменят одним Ctrl+Z). Меняй только то, о чём просят. Координаты считай по pos других объектов (стол, пол) — не на глаз.
+  «Поставь на стол» — y = высота столешницы (смотри pos предметов, которые уже стоят на столе); «включи / потеплее / ярче» — params предмета (color, intensity) или яркость света.
+  Время ключей — от курсора, если автор не назвал другое. Не трогай ключи, которых просьба не касается.
+- Если для просьбы нужен новый вид предмета (другой рисунок, новая деталь), а не расстановка — сделай, что можешь операциями, и в reply скажи, что вид меняется кнопкой «Поправить» в карточке элемента.
+- Если просьба непонятна или противоречит authored — ops пустой, в reply — короткий вопрос.
+- reply — 1–2 фразы автору по-русски, что сделано; desc — короткое описание пачки для истории («лампа: на стол, тёплый свет»).
+- Ничего не выдумывай про объекты: только id и префабы из списка выше."""
+    sysp = ("Ты — помощник автора в редакторе 3D-сцены бумажной анимации (Claude Studio). Ты правишь сцену операциями над её JSON-документом: "
+            "точно, минимально, по просьбе. Ручные правки автора священны. Отвечай строго JSON по схеме.")
+    dirs = [work] + ([os.path.dirname(frame)] if frame else [])
+    return {"system": sysp, "prompt": prompt, "cwd": work, "timeout": 600, "tools": ["Read", "Grep"], "allowed": ["Read", "Grep"], "dirs": dirs,
+            "schema": S({"reply": STR, "desc": STR, "ops": ARR(OP_SCHEMA), "allow": ARR(STR)}, ["reply", "desc", "ops"])}
+
+
+def sceneconvert_spec(docs, e, base, c):
+    """Перевод старой 3D-сцены (element.js + блок расстановки автора) в формат редактора: prefabs.js + scene.json, с проверкой кадров «было / стало»."""
+    src, work, cmp_dir = c["src"], c["work"], c["cmp"]
+    shot = _fwd(os.path.join(c["here"], "render_shot.js"))
+    diff = _fwd(os.path.join(c["here"], "scene_diff.py"))
+    srv = _fwd(os.path.join(c["here"], "ideas_server.py"))
+    url = f"http://127.0.0.1:{c['port']}/tpl/stand3d.html?stage=/rscene/{c['rel']}/scene.json&parts=element"
+    new = _fwd(os.path.join(cmp_dir, "new"))
+    plan = docs["plan"]
+    cast = {x["id"]: x.get("name") for x, _ in preprod.cast_of(e, plan)} if e.get("kind") == "scene" else {}
+    els = "\n".join(f"   - {i}: «{n}»" for i, n in cast.items()) or "   —"
+    ex_dir = os.path.join(docs["data"], "render", "260930-08d8", "e6640ce01", "work")
+    example = (f"Образец готового перевода (сцена «Комната зимним утром»): {_fwd(os.path.join(ex_dir, 'scene.json'))} и хвост {_fwd(os.path.join(ex_dir, 'prefabs.js'))} "
+               "(раздел «префабы сцены» в конце файла) — посмотри, как там устроены home, группы, ключи ёжика и параметры.") if os.path.isfile(os.path.join(ex_dir, "scene.json")) and ex_dir != work else ""
+    prompt = f"""Задача: перевести 3D-сцену препродакшена «{e.get('name')}» из старого формата (один element.js с кодом world3d) в формат редактора сцены:
+prefabs.js (как выглядит каждый предмет — код) + scene.json (где он стоит, как движется, как снята камера — данные).
+
+Исходник: {_fwd(os.path.join(src, 'element.js'))} (версия v{base.get('v')}). В конце может быть блок «// ==== расстановка автора» (w.groups / w.layout) — это ручная расстановка автора.
+Запиши ровно два файла в {_fwd(work)}: prefabs.js и scene.json.
+
+Прочитай сначала:
+- формат: {_fwd(os.path.join(docs['pipe'], 'docs', 'studio', 'architecture.md'))} §3.3–3.5;
+- движок: шапку {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'scene.js'))} (kind префабов, home, tick, overlay) и API мира в шапке {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'stage3d.js'))};
+- схему: {_fwd(os.path.join(docs['pipe'], 'template', 'src', 'scene.schema.json'))}.
+{example}
+
+Как переводить:
+1. prefabs.js = весь код рисования из element.js как есть (функции, константы, PICS / MODELS) + в конце объект const PREFABS = {{ ключ: {{ kind, … }} }}.
+   Каждый предмет — свой префаб с человеческим ключом. Повторяющиеся (ели, книги, стулья) — один префаб, много объектов.
+   Чтобы не пересчитывать координаты, префаб может строить предмет «по месту», как в старом коде, и указать home: {{ pos, rotY }} — где он стоит;
+   тогда у объекта в scene.json pos = home.pos, rot = [0, home.rotY, 0]. Перед префабами можно завести константы размеров (как RK в образце).
+   Окружение (стены, пол, потолок, небо) — kind: 'env', подключается через world.env. 2D-надписи поверх кадра — kind: 'overlay'.
+   Анимация внутри предмета (метель, стрелки, мигание экрана, позы героя по времени) — от T внутри префаба (draw(g, cw, ch, T, o) у card или tick в group).
+   Времена этих внутренних событий, которые автор может захотеть сдвинуть, вынеси в params (P_(o, 'имя', по_умолчанию), как в образце).
+2. scene.json (schema 1): id «{e['id']}», name, len (из ELEMENT.len), fps 30, world {{ fx, bg, fog, env }}, camera {{ fov, handheld, focus, keys, cuts: [] }} из w.camKeys,
+   lights[] — свет комнаты (ambient, отдельные лампы), objects[] — предметы с человеческими именами по-русски, sounds [], markers [], comments [], authored {{}}.
+   Элементам препродакшена из состава сцены дай их имена и src.el:
+{els}
+   Составные вещи (мебель, компьютер) — группами: объект type: "group" + parent у частей.
+   Движение предметов по сцене (из update: переезды, прыжки, выдвижения) — ключами keys.pos / rot (если кривая сложная — несколько ключей linear, снятых с траектории).
+3. Расстановку автора (w.layout / w.groups) впиши в позиции и группы и отметь в authored: {{ "<id>": ["pos", "rot", …] }} — это его решения.
+4. Проверь:
+   python {srv} scene validate {plan['id']} {e['id']}      — схема и ссылки (должно быть ok)
+   node {shot} "{url}" {new} {c['ts']}                        — кадры новой сцены
+   python {diff} {_fwd(os.path.join(cmp_dir, 'old'))} {new} --out {_fwd(os.path.join(cmp_dir, 'compare.png'))}   — сравнение с кадрами старой (порог: средняя < 4, 95% < 24)
+   Посмотри compare.png через Read. Если не похоже — найди, что съехало, поправь и сними снова (до 3 проходов).
+
+В ответе: summary — сколько объектов, что группами, что стало ключами, что осталось внутри префабов (2–4 предложения); diff — итог последнего сравнения; note — что автору проверить."""
+    sysp = ("Ты — технический художник Claude Studio: переводишь сцены бумажной 3D-анимации из кода в данные редактора, не меняя картинку. "
+            "Работаешь аккуратно и проверяешь себя кадрами. Отвечай строго JSON по схеме.")
+    dirs = [work, src, cmp_dir, os.path.join(docs["pipe"], "template", "src"), os.path.join(docs["pipe"], "docs", "studio"), os.path.join(docs["here"], "web", "render"), ex_dir]
+    return {"system": sysp, "prompt": prompt, "cwd": work, "timeout": 1800,
+            "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
+            "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {shot}:*)", f"Bash(python {diff}:*)", f"Bash(python {srv} scene validate:*)"],
+            "dirs": [d for d in dirs if os.path.isdir(d)], "schema": S({"summary": STR, "diff": STR, "note": STR})}

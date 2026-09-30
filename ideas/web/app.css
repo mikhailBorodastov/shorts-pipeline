@@ -509,3 +509,9 @@ p.warnline { font-size: 12px; color: var(--acc); margin: 0 0 8px; }
 .acard.pick { border-color: #6b58ff; }
 .athumb .adrop { position: absolute; right: 2px; top: 2px; background: #000a; }
 .awhy { font-size: 12px; color: var(--text); line-height: 1.35; }
+
+/* 🎬 the scene editor over the whole window (web/editor, S1 Claude Studio) */
+.stage-editor { position: fixed; inset: 0; z-index: 900; background: #1d1d1f; }
+.stage-editor iframe { width: 100%; height: 100%; border: 0; display: block; }
+.stageinfo { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: rgba(111,224,255,0.08); }
+.stageinfo.warn { background: rgba(255,210,63,0.12); }

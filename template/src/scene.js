@@ -78,25 +78,25 @@ function unwrapAngle(prev, a) {
 }
 
 // [start, end) of the camera shot (between cuts) that holds t
-function shotOf(cuts, t) {
+function sceneShotOf(cuts, t) {
   let s = -Infinity, e = Infinity;
   for (const c of cuts || []) { if (c.t <= t && c.t > s) s = c.t; if (c.t > t && c.t < e) e = c.t; }
   return [s, e];
 }
 
 // camera at t: { pos, target, fov } from keys inside the current shot; no keys in the shot — the last key before it holds
-function camAt(cam, t) {
+function sceneCamAt(cam, t) {
   const fov0 = cam.fov || 30;
   const K = scnSorted(cam.keys);
   if (!K.length) return { pos: cam.pos || [0, 1.5, 6], target: cam.target || [0, 1, 0], fov: fov0 };
-  const [s, e] = shotOf(cam.cuts, t);
+  const [s, e] = sceneShotOf(cam.cuts, t);
   let inShot = K.filter(k => k.t >= s && k.t < e);
   if (!inShot.length) { const before = K.filter(k => k.t < s); inShot = [before.length ? before[before.length - 1] : K[0]]; }
   return { pos: evalKeys(inShot, t, cam.pos, 'pos'), target: evalKeys(inShot, t, cam.target, 'target'), fov: evalKeys(inShot, t, fov0, 'fov') };
 }
 
 // handheld drift of the camera, the same formula as w.camKeys (stage3d.js)
-function handheldAt(t, hh, noise) {
+function sceneHandheld(t, hh, noise) {
   if (!hh || !noise) return { p: [0, 0, 0], q: [0, 0, 0] };
   return { p: [noise(t * 0.35, 3) * hh, noise(t * 0.3, 5) * hh * 0.6, 0], q: [noise(t * 0.3, 9) * hh * 0.5, noise(t * 0.27, 11) * hh * 0.4, 0] };
 }
@@ -104,7 +104,7 @@ function handheldAt(t, hh, noise) {
 const scnVec3 = (v, d) => (Array.isArray(v) ? [v[0] ?? d, v[1] ?? d, v[2] ?? d] : typeof v === 'number' ? [v, v, v] : [d, d, d]);
 
 // transform of one object at t (local to its parent): { pos, rot, scale [x,y,z], hide }
-function objectAt(o, t) {
+function sceneObjectAt(o, t) {
   const k = o.keys || {};
   return {
     pos: scnVec3(evalKeys(k.pos, t, o.pos || [0, 0, 0]), 0),
@@ -130,7 +130,7 @@ function sceneOrder(objects) {
 }
 
 // all times with a key of an object / the camera / a light — for the timeline and for ↑ / ↓
-function keyTimes(item) {
+function sceneKeyTimes(item) {
   const ts = new Set(), K0 = (item && item.keys) || {};
   for (const K of Array.isArray(K0) ? [K0] : Object.values(K0)) for (const k of K || []) if (k && typeof k.t === 'number') ts.add(+k.t.toFixed(4));
   return [...ts].sort((a, b) => a - b);
@@ -260,7 +260,7 @@ function applyScene(S, t) {
   for (const [id, rec] of S.objects) {
     const o = byId.get(id);
     if (!o) continue;
-    const st = objectAt(o, t), h = rec.holder;
+    const st = sceneObjectAt(o, t), h = rec.holder;
     if (!(S.hold && S.hold.has(id))) {                     // the editor is dragging it: the pointer owns the transform until release
       h.position.set(st.pos[0], st.pos[1], st.pos[2]);
       h.rotation.set(st.rot[0], st.rot[1], st.rot[2], 'YXZ');
@@ -289,7 +289,7 @@ function applyScene(S, t) {
     }
   }
   const cam = scene.camera || {};
-  const c = camAt(cam, t), hh = handheldAt(t, cam.handheld, typeof noise1 === 'function' ? noise1 : null);
+  const c = sceneCamAt(cam, t), hh = sceneHandheld(t, cam.handheld, typeof noise1 === 'function' ? noise1 : null);
   w.cam.position.set(c.pos[0] + hh.p[0], c.pos[1] + hh.p[1], c.pos[2] + hh.p[2]);
   w.target.set(c.target[0] + hh.q[0], c.target[1] + hh.q[1], c.target[2] + hh.q[2]);
   w.cam.fov = c.fov;
@@ -319,5 +319,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { SCN_EASE, evalKeys, unwrapAngle, shotOf, camAt, handheldAt, objectAt, sceneOrder, keyTimes, scnLerpV };
+  module.exports = { SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

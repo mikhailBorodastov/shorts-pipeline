@@ -1,6 +1,6 @@
 // «Штурм идей» — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
 'use strict';
-const API = 3;                      // must match ideas_api.API_VERSION
+const API = 4;                      // must match ideas_api.API_VERSION
 const REF = {};                     // web/ref.json, loaded at boot
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -544,7 +544,7 @@ function mentionsIn(text, d) {
 // ---------- routing ----------
 function route() {
   const p = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  return { page: p[0] || 'home', id: p[1] || '', tab: p[2] || '', sub: p[3] || '' };
+  return { page: p[0] || 'home', id: p[1] || '', tab: p[2] || '', sub: p[3] || '', sub2: p[4] || '' };
 }
 const defTab = flow => (flow === 'idea' ? 'idea' : 'ideas');       // first tab of a plan: «Идея» in the new path, «Идеи» in the brainstorm
 const go = hash => { location.hash = hash; };
