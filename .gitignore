@@ -13,3 +13,8 @@ animalese_cache/
 .render_profile/
 *.log
 .clip_profile_*/
+app/src-tauri/target/
+app/src-tauri/gen/
+app/src-tauri/icons/android/
+app/src-tauri/icons/ios/
+app/*.exe

@@ -1,0 +1,13 @@
+{
+  "name": "claude-studio-app",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "icon": "tauri icon icon.png",
+    "build": "tauri build",
+    "dev": "tauri dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

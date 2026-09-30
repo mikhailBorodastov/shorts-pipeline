@@ -135,7 +135,7 @@ def serve(open_browser):
     with open(os.path.join(ideas_api.DATA, ".port"), "w") as f:
         f.write(str(p))
     url = f"http://localhost:{p}/"
-    print(f"Штурм идей: {url}\nДанные: {ideas_api.DATA}\nClaude: {ideas_api.claude_bin() or 'не найден — кнопки ✨ выключены'}")
+    print(f"Claude Studio: {url}\nДанные: {ideas_api.DATA}\nClaude: {ideas_api.claude_bin() or 'не найден — кнопки ✨ выключены'}")
     if open_browser:
         webbrowser.open(url)
     threading.Thread(target=ticker, daemon=True).start()

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Claude Studio</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1c20; color: #d8d4cc; font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; }
+  .box { text-align: center; max-width: 640px; padding: 24px; }
+  h1 { font-weight: 600; font-size: 22px; margin: 0 0 8px; }
+  .dim { color: #8b8880; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #d97757; margin: 0 3px; animation: b 1.2s infinite ease-in-out; }
+  .dot:nth-child(2) { animation-delay: .2s } .dot:nth-child(3) { animation-delay: .4s }
+  @keyframes b { 0%, 80%, 100% { opacity: .2 } 40% { opacity: 1 } }
+  pre { text-align: left; white-space: pre-wrap; background: #25262c; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 50vh; overflow: auto; }
+  .err h1 { color: #e0876a; }
+</style>
+</head>
+<body>
+<div class="box" id="box">
+  <h1>Claude Studio</h1>
+  <p class="dim" id="msg">Запускаю локальный скрипт приложения…</p>
+  <p><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
+</div>
+<script>
+  // Окно само переходит на http://localhost:<порт>/, когда приложение ответит (main.rs).
+  // Если не вышло — main.rs вызывает showError(текст).
+  function showError(text) {
+    const b = document.getElementById('box');
+    b.className = 'box err';
+    b.innerHTML = '<h1>Не запустилось</h1><p class="dim">Что сказал локальный скрипт:</p><pre></pre>' +
+      '<p class="dim">Проверь, что установлен Python, и попробуй «Claude Studio.bat» в рабочей папке — там видно всё, что он пишет.</p>';
+    b.querySelector('pre').textContent = text;
+  }
+  function status(text) { document.getElementById('msg').textContent = text; }
+</script>
+</body>
+</html>
