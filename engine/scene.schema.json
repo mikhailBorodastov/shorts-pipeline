@@ -2,92 +2,379 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "scene.json — сцена редактора (architecture.md §3.3)",
   "type": "object",
-  "required": ["schema", "id", "len", "objects", "camera"],
+  "required": [
+    "schema",
+    "id",
+    "len",
+    "objects",
+    "camera"
+  ],
   "definitions": {
-    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
-    "ease": { "enum": ["linear", "io", "in", "out", "hold"] },
-    "key": {
-      "type": "object", "required": ["id", "t"],
-      "properties": { "id": { "type": "string" }, "t": { "type": "number", "minimum": 0 }, "ease": { "$ref": "#/definitions/ease" } }
+    "vec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
     },
-    "track": { "type": "array", "items": { "$ref": "#/definitions/key" } },
+    "ease": {
+      "enum": [
+        "linear",
+        "io",
+        "in",
+        "out",
+        "hold"
+      ]
+    },
+    "key": {
+      "type": "object",
+      "required": [
+        "id",
+        "t"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "t": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ease": {
+          "$ref": "#/definitions/ease"
+        }
+      }
+    },
+    "track": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/key"
+      }
+    },
     "keys": {
       "type": "object",
       "properties": {
-        "pos": { "$ref": "#/definitions/track" }, "rot": { "$ref": "#/definitions/track" }, "scale": { "$ref": "#/definitions/track" },
-        "hide": { "$ref": "#/definitions/track" }, "intensity": { "$ref": "#/definitions/track" }, "color": { "$ref": "#/definitions/track" }
+        "pos": {
+          "$ref": "#/definitions/track"
+        },
+        "rot": {
+          "$ref": "#/definitions/track"
+        },
+        "scale": {
+          "$ref": "#/definitions/track"
+        },
+        "hide": {
+          "$ref": "#/definitions/track"
+        },
+        "intensity": {
+          "$ref": "#/definitions/track"
+        },
+        "color": {
+          "$ref": "#/definitions/track"
+        }
       }
     },
     "object": {
-      "type": "object", "required": ["id", "name"],
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
       "properties": {
-        "id": { "type": "string" }, "name": { "type": "string" },
-        "type": { "enum": ["object", "group"] },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "object",
+            "group"
+          ]
+        },
         "src": {
           "type": "object",
-          "properties": { "prefab": { "type": "string" }, "el": { "type": "string" }, "lib": { "type": "string" }, "character": { "type": "string" } }
+          "properties": {
+            "prefab": {
+              "type": "string"
+            },
+            "el": {
+              "type": "string"
+            },
+            "lib": {
+              "type": "string"
+            },
+            "character": {
+              "type": "string"
+            }
+          }
         },
-        "params": { "type": "object" },
-        "pos": { "$ref": "#/definitions/vec3" }, "rot": { "$ref": "#/definitions/vec3" },
-        "scale": { "type": ["number", "array"] },
-        "hide": { "type": "boolean" }, "locked": { "type": "boolean" },
-        "parent": { "type": ["string", "null"] },
-        "keys": { "$ref": "#/definitions/keys" },
-        "note": { "type": "string" }
+        "params": {
+          "type": "object"
+        },
+        "pos": {
+          "$ref": "#/definitions/vec3"
+        },
+        "rot": {
+          "$ref": "#/definitions/vec3"
+        },
+        "scale": {
+          "type": [
+            "number",
+            "array"
+          ]
+        },
+        "hide": {
+          "type": "boolean"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keys": {
+          "$ref": "#/definitions/keys"
+        },
+        "note": {
+          "type": "string"
+        }
       }
     },
     "light": {
-      "type": "object", "required": ["id", "type"],
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
       "properties": {
-        "id": { "type": "string" }, "name": { "type": "string" },
-        "type": { "enum": ["lamp", "point", "ambient", "sun"] },
-        "pos": { "$ref": "#/definitions/vec3" }, "color": { "type": "string" }, "intensity": { "type": "number", "minimum": 0 },
-        "keys": { "$ref": "#/definitions/keys" }
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "lamp",
+            "point",
+            "ambient",
+            "sun"
+          ]
+        },
+        "pos": {
+          "$ref": "#/definitions/vec3"
+        },
+        "color": {
+          "type": "string"
+        },
+        "intensity": {
+          "type": "number",
+          "minimum": 0
+        },
+        "keys": {
+          "$ref": "#/definitions/keys"
+        }
       }
     }
   },
   "properties": {
-    "schema": { "const": 1 },
-    "id": { "type": "string" },
-    "name": { "type": "string" },
-    "rev": { "type": "integer" },
-    "len": { "type": "number", "minimum": 0.1, "maximum": 3600 },
-    "fps": { "type": "number", "minimum": 1, "maximum": 120 },
+    "schema": {
+      "const": 1
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "rev": {
+      "type": "integer"
+    },
+    "len": {
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": 3600
+    },
+    "fps": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 120
+    },
     "world": {
       "type": "object",
-      "properties": { "fx": { "type": ["string", "object"] }, "bg": { "type": "string" }, "env": { "type": ["string", "array", "null"] } }
+      "properties": {
+        "fx": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "bg": {
+          "type": "string"
+        },
+        "env": {
+          "type": [
+            "string",
+            "array",
+            "null"
+          ]
+        }
+      }
     },
     "camera": {
       "type": "object",
       "properties": {
-        "fov": { "type": "number", "minimum": 5, "maximum": 150 },
-        "handheld": { "type": "number", "minimum": 0 },
-        "focus": { "type": ["array", "null"] },
+        "fov": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 150
+        },
+        "handheld": {
+          "type": "number",
+          "minimum": 0
+        },
+        "focus": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "keys": {
           "type": "array",
           "items": {
-            "type": "object", "required": ["id", "t"],
+            "type": "object",
+            "required": [
+              "id",
+              "t"
+            ],
             "properties": {
-              "id": { "type": "string" }, "t": { "type": "number", "minimum": 0 },
-              "pos": { "$ref": "#/definitions/vec3" }, "target": { "$ref": "#/definitions/vec3" },
-              "fov": { "type": "number", "minimum": 5, "maximum": 150 }, "ease": { "$ref": "#/definitions/ease" }
+              "id": {
+                "type": "string"
+              },
+              "t": {
+                "type": "number",
+                "minimum": 0
+              },
+              "pos": {
+                "$ref": "#/definitions/vec3"
+              },
+              "target": {
+                "$ref": "#/definitions/vec3"
+              },
+              "fov": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 150
+              },
+              "ease": {
+                "$ref": "#/definitions/ease"
+              }
             }
           }
         },
-        "cuts": { "type": "array", "items": { "type": "object", "required": ["id", "t"], "properties": { "id": { "type": "string" }, "t": { "type": "number" }, "name": { "type": "string" } } } }
+        "cuts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "t"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "t": {
+                "type": "number"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     },
-    "lights": { "type": "array", "items": { "$ref": "#/definitions/light" } },
-    "objects": { "type": "array", "items": { "$ref": "#/definitions/object" } },
+    "lights": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/light"
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/object"
+      }
+    },
     "sounds": {
       "type": "array",
-      "items": { "type": "object", "required": ["id", "t", "src"], "properties": { "id": { "type": "string" }, "t": { "type": "number" }, "src": { "type": "string" }, "gain": { "type": "number", "minimum": 0 }, "note": { "type": "string" } } }
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "t",
+          "src"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "t": {
+            "type": "number"
+          },
+          "src": {
+            "type": "string"
+          },
+          "gain": {
+            "type": "number",
+            "minimum": 0
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
     },
     "markers": {
       "type": "array",
-      "items": { "type": "object", "required": ["id", "t"], "properties": { "id": { "type": "string" }, "t": { "type": "number" }, "name": { "type": "string" } } }
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "t"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "t": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
     },
-    "comments": { "type": "array" },
-    "authored": { "type": "object" }
+    "comments": {
+      "type": "array"
+    },
+    "authored": {
+      "type": "object"
+    },
+    "libs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "ссылки lib: / el:, которые нужны коду prefabs.js до сборки (персонаж для поведения предмета)"
+    }
   }
 }

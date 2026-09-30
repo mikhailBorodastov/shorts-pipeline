@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Риг ёжика в пижаме против drawHogPajama</title>
+<style>@font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf"); font-weight: 300 900; } body { background: #222; color: #ddd; font: 14px Rubik, sans-serif; } canvas { background: #ece6da; margin: 4px; }</style>
+</head>
+<body>
+<!-- S4: проверка «было / стало» — состояния ёжика из «Комнаты зимним утром» (тик hogPajama) рисуются старым drawHogPajama (prefabs.js сцены)
+     и ригом персонажа библиотеки (lib:characters/ejik-v-pijame@2 + pajamaPose). window.RESULT — [{T, diff (доля отличающихся пикселей), maxd}].
+     /render/samples/rig_pajama_test.html?plan=260930-08d8&channel=doedat -->
+<div id="out"></div>
+<script src="/tpl/lib.js"></script>
+<script>const IMG = {}, SEQ = {}; const seqFrame = () => null;</script>
+<script src="/render/paper.js"></script>
+<script src="/tpl/scene.js"></script>
+<script src="/tpl/rig.js"></script>
+<script>
+  const q = new URLSearchParams(location.search), plan = q.get('plan') || '260930-08d8', ch = q.get('channel') || 'doedat';
+  const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + '?v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error(src)); document.head.append(s); });
+  // состояние тика hogPajama (prefabs.js «Комнаты») в момент T — копия его логики
+  function stateAt(T) {
+    const S = {};
+    const jig = T > 6.0 && T < 6.9 ? Math.sin((T - 6.0) * 22) : 0;
+    if (T < 1.9) Object.assign(S, { pose: 'stand', mood: 'sleepy', look: -0.4, lean: 0, rub: T < 0.7 ? 0 : T < 1.5 ? 1 : clamp((1.8 - T) / 0.3), reach: 0, jig: 0, dangle: false });
+    else if (T < 2.6) { const p = clamp((T - 1.9) / 0.6); Object.assign(S, { pose: p < 0.55 ? 'stand' : 'sit', mood: 'calm', look: 0.7, rub: 0, reach: 0, jig: 0, dangle: false }); }
+    else {
+      const reach = T < 4.7 ? 0 : T < 5.2 ? 0.7 * E.io((T - 4.7) / 0.5) : T < 7.4 ? lerp(0.7, 1, clamp((T - 5.2) / 0.5)) : lerp(1, 0, clamp((T - 7.4) / 0.5));
+      const late = T > 7.6;
+      Object.assign(S, { pose: 'sit', mood: late ? 'joy' : 'calm', look: late ? 0.35 : 0.8, rub: 0, reach: Math.round(reach * 20) / 20, jig: Math.round(jig * 4) / 4,
+        dangle: T < 3.6 || T > 8.2, lean: late ? clamp((T - 7.6) / 0.6) : 0 });
+    }
+    return Object.assign({ q: 0 }, S);
+  }
+  window.READY = (async () => {
+    await load(`/rscene/${plan}/e6640ce01/work/prefabs.js`);
+    await load(`/api/lib/file/${ch}/characters/ejik-v-pijame/v2/prefab.js`);
+    const CH = CHAR_LAST; for (const u of CH.needs) await load(u);
+    await load('/render/samples/pajama_pose.js');
+    await document.fonts.load('900 40px Rubik').catch(() => {});
+    const out = [], box = document.getElementById('out');
+    for (let T = 0; T <= 10.001; T += 0.5) {
+      const o = Object.assign({ t: T, noChair: true }, stateAt(T));
+      const a = document.createElement('canvas'), b = document.createElement('canvas'); a.width = b.width = 800; a.height = b.height = 900;
+      drawHogPajama(a.getContext('2d'), 400, 890, 600, o);
+      rigDraw(b.getContext('2d'), CH, pajamaPose(CH, o), 400, 890, 600, T);
+      const A = a.getContext('2d').getImageData(0, 0, 800, 900).data, B = b.getContext('2d').getImageData(0, 0, 800, 900).data;
+      let n = 0, mx = 0;
+      for (let i = 0; i < A.length; i += 4) { const d = Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2]), Math.abs(A[i + 3] - B[i + 3])); if (d > 8) n++; if (d > mx) mx = d; }
+      out.push({ T: +T.toFixed(2), pose: o.pose, diff: +(n / (800 * 900)).toFixed(5), maxd: mx });
+      if (T % 2 < 0.01) { a.style.width = b.style.width = '200px'; box.append(document.createTextNode(`T=${T}`), a, b); }
+    }
+    window.RESULT = out;
+    box.prepend(Object.assign(document.createElement('pre'), { textContent: out.map(r => `T=${r.T} ${r.pose}: ${(r.diff * 100).toFixed(3)}% (max ${r.maxd})`).join('\n') }));
+  })();
+  window.shot = () => document.createElement('canvas').toDataURL();
+</script>
+</body>
+</html>

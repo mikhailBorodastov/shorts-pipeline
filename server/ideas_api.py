@@ -64,6 +64,7 @@ import refvideo  # noqa: E402  разбор видео-референсов
 import preprod  # noqa: E402  модель элементов препродакшена и экспорт в проект
 import assets  # noqa: E402  поиск и скачивание бесплатных 3D / 2D ассетов
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
+import char_api  # noqa: E402  персонажи со скелетом (S4): библиотека, позы, версии
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
@@ -107,6 +108,10 @@ def pr():
 
 def aapi():
     return _fresh(assets, "ast")
+
+
+def chapi():
+    return _fresh(char_api, "chr")
 
 
 def scapi():
@@ -1336,6 +1341,7 @@ def cli(argv):
     | op KEY '<JSON: операция или список операций set/add/del/move>'
     | produce ID  (🚀 проект ролика в папке видео)
     | scene show|ops|history|undo|version|clip|validate|finish ID EL …  (сцены редактора, scene_api.cli)
+    | char list|show|pose|skeleton|version …  (персонажи со скелетом, char_api.cli)
     | lib list|show|publish …  (библиотека канала, studio_api.cli)"""
     cmd, a = argv[0], argv[1:]
     by = "claude"
@@ -1402,6 +1408,8 @@ def cli(argv):
         return True
     if cmd == "scene":
         return scapi().cli(sys.modules[__name__], a)
+    if cmd == "char":
+        return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":
         return stapi().cli(sys.modules[__name__], a)
     if cmd == "produce":

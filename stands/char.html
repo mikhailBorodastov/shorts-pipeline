@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Персонаж — Claude Studio</title>
+<link rel="icon" href="data:,">
+<style>
+  @font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf"); font-weight: 300 900; }
+  @font-face { font-family: "Caveat"; src: url("/fonts/Caveat.ttf"); font-weight: 400 700; }
+  html, body { margin: 0; background: #ece6da; }
+  canvas { display: block; max-width: 100vw; max-height: 100vh; margin: 0 auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1080"></canvas>
+<!-- Стенд персонажа со скелетом (S4, engine/rig.js).
+     ?char=<url prefab.js персонажа>  &pose=<JSON позы>  &emotion=<имя>  &wear=<JSON {костюм: true|false}>  &skel=1 — кости поверх
+     &poses=1 — лист проверочных поз типа скелета (skeleton.poses)  &bg=<цвет>  &size=<W>x<H>
+     window.shot(kind, t) -> PNG (render_shot.js …&parts=element кладёт element.png) -->
+<script src="/tpl/lib.js"></script>
+<script>const IMG = {}, SEQ = {}; const seqFrame = () => null;</script>
+<script src="/render/paper.js"></script>
+<script src="/tpl/scene.js"></script>
+<script src="/tpl/rig.js"></script>
+<script>
+  const q = new URLSearchParams(location.search), cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const js = (k, d) => { try { return JSON.parse(q.get(k) || '') ; } catch (e) { return d; } };
+  if (q.get('size')) { const [a, b] = q.get('size').split('x').map(Number); cv.width = a; cv.height = b; }
+  const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + (src.includes('?') ? '&' : '?') + 'v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error('не загрузилось: ' + src)); document.head.append(s); });
+  let CH = null;
+  window.READY = (async () => {
+    await load(q.get('char'));
+    CH = CHAR_LAST;
+    for (const u of CH.needs || []) await load(u);
+    await Promise.all(['900 40px Rubik', '700 40px Caveat'].map(f => document.fonts.load(f).catch(() => {})));
+  })();
+
+  // кости поверх: суставы скелета типа (pos в долях роста) — для param это схема, для parts — реальные суставы
+  function drawSkeleton(g, sk, x, y, h) {
+    if (!sk) return;
+    const P = {}; for (const b of sk.bones) P[b.id] = [x + b.pos[0] * h, y - b.pos[1] * h];
+    g.save(); g.lineCap = 'round';
+    for (const b of sk.bones) {
+      const a = P[b.id], p = b.parent && P[b.parent];
+      if (p) { g.strokeStyle = 'rgba(77,156,255,0.85)'; g.lineWidth = 6; g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(a[0], a[1]); g.stroke(); }
+    }
+    for (const b of sk.bones) { const a = P[b.id]; circle(g, a[0], a[1], 11, '#4d9cff'); circle(g, a[0], a[1], 5, '#fff');
+      g.font = '600 22px Rubik'; g.fillStyle = '#1d3b66'; g.textAlign = 'left'; g.fillText(b.id, a[0] + 14, a[1] - 10); }
+    g.restore();
+  }
+  // суставы после позы (риг отдаёт st.joints) — кости идут от родителя к суставу, у лап ещё до кончика
+  function drawJoints(g, sk, J) {
+    g.save(); g.lineCap = 'round';
+    const line = (a, b) => { if (!a || !b) return; g.strokeStyle = 'rgba(77,156,255,0.85)'; g.lineWidth = 6; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); };
+    for (const b of sk.bones) { if (b.parent) line(J[b.parent], J[b.id]); line(J[b.id], J[b.id + '.end']); }
+    for (const b of sk.bones) { const a = J[b.id]; if (!a) continue; circle(g, a[0], a[1], 11, '#4d9cff'); circle(g, a[0], a[1], 5, '#fff');
+      g.font = '600 22px Rubik'; g.fillStyle = '#1d3b66'; g.textAlign = 'left'; g.fillText(b.id, a[0] + 14, a[1] - 10); }
+    g.restore();
+  }
+  function paintOne(g, pose, x, y, h, T, label) {
+    const st = rigDraw(g, CH, pose, x, y, h, T);
+    if (q.get('skel') === '1') { if (st && st.joints) drawJoints(g, CH.skel, st.joints); else drawSkeleton(g, CH.skel, x, y, h); }
+    if (label) { g.font = '600 30px Rubik'; g.fillStyle = '#6b6456'; g.textAlign = 'center'; g.fillText(label, x, y + 44); }
+  }
+  function paint(T = 0) {
+    const W2 = cv.width, H2 = cv.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = q.get('bg') || '#ece6da'; ctx.fillRect(0, 0, W2, H2);
+    const base = rigPose(CH.pose, q.get('emotion') ? rigEmotion(CH, q.get('emotion')) : null, { wear: js('wear', {}) }, js('pose', {}));
+    if (q.get('poses') === '1') {                         // пять проверочных поз типа
+      const P = Object.entries((CH.skel && CH.skel.poses) || {}), n = P.length || 1, cols = Math.min(n, 3), rows = Math.ceil(n / cols);
+      const cwid = W2 / cols, rh = H2 / rows, h = Math.min(cwid * 0.8, rh * 0.62);
+      P.forEach(([name, p], i) => paintOne(ctx, rigPose(base, p), cwid * (i % cols + 0.5), rh * (Math.floor(i / cols) + 1) - 70, h, T, name));
+      return;
+    }
+    paintOne(ctx, base, W2 / 2, H2 * 0.88, H2 * 0.62, T);
+  }
+  window.shot = (kind, t) => { paint(t || 0); return cv.toDataURL('image/png'); };
+  READY.then(() => { if (!navigator.webdriver) { const f = now => { paint(now / 1000); requestAnimationFrame(f); }; requestAnimationFrame(f); } }).catch(e => { ctx.fillStyle = '#a33'; ctx.font = '28px Rubik'; ctx.fillText(e.message, 20, 50); });
+</script>
+</body>
+</html>

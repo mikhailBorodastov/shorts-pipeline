@@ -109,7 +109,7 @@
      Сцена: ?scene=/rscene/<plan>/<element>/v<N>/element.js&parts=element   (&view=1 — живой просмотр со свободной камерой)
             &edit=1&key=plan:<id>&el=<element>&base=<render id> — ещё и «✋ Двигать»: расстановка сохраняется новой версией (POST /api/layout3d)
      Сцена из данных (редактор, S1): ?stage=/rscene/<plan>/<element>/work/scene.json[&prefabs=…/prefabs.js]&parts=element
-            prefabs.js рядом со scene.json по умолчанию; кадр = WORLD из scene.world + 2D-накладки (kind: 'overlay')
+            prefabs.js рядом со scene.json по умолчанию; кадр = WORLD из scene.world + 2D-накладки (kind: 'overlay'); &orbit=x,y,z,r[,a0,a1] — камера облетает точку по дуге a0…a1° за длину сцены (проверки)
      Модель: ?model=/files/<plan>/assets/<id>/model.glb&view=1 — посмотреть glTF-ассет на полу со светом
      3D-пропс (S3): ?prop=/rscene/<plan>/<el>/v<N>/prefab.js[&style=paper|toy][&hog=1][&params={…}] — поворотный стол: время = угол,
             за 8 с оборот, кадры 1,3,5,7 — четыре ракурса по ¾ (render_shot.js); формат prefab.js — props3d.js / docs/studio/stage3-props.md
@@ -130,6 +130,7 @@
 <script src="/tpl/stage3d.js"></script>
 <script src="/tpl/moves3d.js"></script>
 <script src="/tpl/props3d.js"></script>
+<script src="/tpl/rig.js"></script>
 <script src="/tpl/scene.js"></script>
 <script>
   const q = new URLSearchParams(location.search), VIEW = q.get('view') === '1', EDIT = VIEW && q.get('edit') === '1' && q.get('key') && q.get('el');
@@ -241,6 +242,10 @@
     const plan = (url.match(/\/rscene\/([^/]+)\//) || [])[1];      // 3D-пропсы библиотеки и препродакшена (lib: / el:) — до сборки мира
     const LIB = await loadSceneProps(scenePropRefs(SCENE), plan, load);
     window.WORLD = sceneWorld(SCENE, typeof PREFABS !== 'undefined' ? PREFABS : {}, LIB);
+    if (q.get('orbit')) {                           // &orbit=x,y,z,r[,a0,a1] — проверка: камера облетает точку по дуге (градусы, 0 — со стороны +z) за длину сцены (Paper Mario, S4)
+      const [ox, oy, oz, orr, a0 = 0, a1 = 360] = q.get('orbit').split(',').map(Number), u0 = WORLD.o.update;
+      WORLD.o.update = (w, lt, ...rest) => { u0(w, lt, ...rest); const a = (a0 + (a1 - a0) * lt / (SCENE.len || 6)) * Math.PI / 180; w.cam.position.set(ox + Math.sin(a) * orr, oy + 0.5, oz + Math.cos(a) * orr); w.target.set(ox, oy, oz); w.focus = w.target; w.cam.fov = 40; };
+    }
     window.ELEMENT = { t: SCENE.t0 != null ? SCENE.t0 : 0.6, len: SCENE.len || 6,
       draw(ctx, T) { WORLD.draw(ctx, T, 4, T); if (WORLD.S) drawSceneOverlays(WORLD.S, ctx, T); } };
   }

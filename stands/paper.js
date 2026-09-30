@@ -379,8 +379,9 @@ function hogBody(kind, back = false) {
     g.globalCompositeOperation = 'source-atop'; g.globalAlpha = 0.35; g.fillStyle = grainPat(g); g.fillRect(-w, -h, w * 2, h * 2);
   });
 }
-// o: kind, t, look, blink, wink, lid, tired, mouth 'o'|'smile'|'flat'|'sad', armL/armR (0 = down, + = inward/up, - = outward),
-//    lenL/lenR (arm length multipliers), badge 'L5', sq, rot. Returns world positions of paws.
+// o: kind, t, look, blink, wink, lid, tired, mouth 'o'|'smile'|'flat'|'sad'|'open', brows 'up'|'angry'|'sad'|'worried', armL/armR (0 = down, + = inward/up, - = outward),
+//    lenL/lenR (arm length multipliers), liftL/liftR (0..1 — a foot up), badge 'L5', sq, rot. Returns world positions of paws.
+//    Персонаж со скелетом (S4): engine/rig.js — поза костей и лица -> эти параметры.
 function drawHog(ctx, x, y, size, o = {}) {
   if (size <= 1) return {};
   const kind = o.kind || 'adult', K = HOG_KINDS[kind], S = HOG_PX, k = size / S;
@@ -390,7 +391,7 @@ function drawHog(ctx, x, y, size, o = {}) {
   const paws = {}, base = ctx.getTransform().inverse();
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k * (1 + sq * 0.5), k * breath * (1 - sq));
   for (const sx of [-1, 1]) {        // feet; o.walk = step phase lifts them in turn
-    const lift = o.walk != null ? Math.max(0, Math.sin(o.walk) * sx) * 0.07 * S : 0;
+    const lift = o.walk != null ? Math.max(0, Math.sin(o.walk) * sx) * 0.07 * S : ((sx < 0 ? o.liftL : o.liftR) || 0) * 0.07 * S;
     cut(ctx, inf => ellP(sx * 0.1 * S, -0.02 * S - lift, 0.06 * S, 0.035 * S, inf), K.mask, { seed: 30 + sx, edge: 0, amp: 3 });
   }
   const arm = (side, ang, len) => {
@@ -441,6 +442,15 @@ function drawHog(ctx, x, y, size, o = {}) {
       ctx.beginPath(); ctx.arc(ex, ey + er * 0.2, er * 1.05, 0.25 * Math.PI, 0.75 * Math.PI); ctx.stroke(); ctx.restore();
     }
   }
+  if (o.brows && o.brows !== 'none') {   // brows (S4): up | angry | sad | worried — light torn strips on the mask
+    const bw = 0.075 * S, bh = 0.02 * S, raise = o.brows === 'up' || o.brows === 'worried' ? 0.35 : 0;
+    for (const sx of [-1, 1]) {
+      const a = o.brows === 'angry' ? -sx * 0.38 : o.brows === 'sad' || o.brows === 'worried' ? sx * 0.36 : sx * 0.08;
+      ctx.save(); ctx.translate(sx * 0.085 * S, -0.625 * S - er * (1.45 + raise)); ctx.rotate(a);
+      cut(ctx, inf => [[-bw / 2 - inf, -bh / 2 - inf], [bw / 2 + inf, -bh / 2 - inf * 0.5], [bw / 2 + inf, bh / 2 + inf * 0.5], [-bw / 2 - inf, bh / 2 + inf]], mix(K.face, '#ffffff', 0.15), { seed: 180 + sx, edge: 0, amp: 1.2, shadow: false });
+      ctx.restore();
+    }
+  }
   if (o.beard) {           // scruffy light beard under the muzzle
     for (let i = 0; i < 9; i++) { const a = Math.PI * (0.15 + i / 8 * 0.7);
       cut(ctx, inf => [[Math.cos(a) * 0.09 * S - 0.012 * S, -0.47 * S + Math.sin(a) * 0.05 * S], [Math.cos(a) * 0.14 * S, -0.47 * S + Math.sin(a) * 0.15 * S + inf], [Math.cos(a) * 0.09 * S + 0.012 * S, -0.47 * S + Math.sin(a) * 0.05 * S]], o.beard, { seed: 150 + i, edge: 0, amp: 1.5, shadow: false }); }
@@ -450,6 +460,7 @@ function drawHog(ctx, x, y, size, o = {}) {
   ctx.save(); ctx.fillStyle = '#1c1c1f'; ctx.strokeStyle = '#1c1c1f'; ctx.lineWidth = 0.012 * S; ctx.lineCap = 'round';
   if (mouth === 'o') { ellipse(ctx, 0, -0.495 * S, 0.018 * S, 0.024 * S, 0, '#1c1c1f'); }
   else if (mouth === 'smile') { ctx.beginPath(); ctx.arc(0, -0.52 * S, 0.04 * S, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke(); }
+  else if (mouth === 'open') { ellipse(ctx, 0, -0.49 * S, 0.034 * S, 0.03 * S, 0, '#1c1c1f'); ellipse(ctx, 0, -0.475 * S, 0.02 * S, 0.012 * S, 0, '#c8646a'); }
   else if (mouth === 'sad') { ctx.beginPath(); ctx.arc(0, -0.46 * S, 0.035 * S, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke(); }
   else { ctx.beginPath(); ctx.moveTo(-0.03 * S, -0.49 * S); ctx.lineTo(0.03 * S, -0.49 * S); ctx.stroke(); }
   ctx.restore();

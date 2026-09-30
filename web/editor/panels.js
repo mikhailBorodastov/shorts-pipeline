@@ -166,8 +166,41 @@ export function initPanels(ED) {
       `источник: ${src.el ? `элемент «${els[src.el] || src.el}» (${src.el})` : '—'} · префаб ${src.prefab || '—'}${src.lib ? ' · ' + src.lib : ''}`;
     props.append(s);
     if (o.type !== 'group') props.append(swapBtn(o));
+    const cc = charOf(id);
+    if (cc) props.append(charBox(o, cc));
     const au = (d.authored || {})[id];
     if (au && au.length) props.append(Object.assign(div('hint'), { textContent: '✋ правил руками: ' + au.join(', ') + ' — Claude не трогает без просьбы' }));
+  }
+
+  // персонаж со скелетом (S4, engine/rig.js): карточка charCard внутри объекта
+  function charOf(id) {
+    const rec = ED.S && ED.S.objects.get(id);
+    let c = null;
+    if (rec) rec.holder.traverse(x => { if (!c && x.char) c = x; });
+    return c;
+  }
+  // 🦴 костюмы (надеть / снять — логический ключ wear.<костюм> в этот момент) и эмоция (ключ emotion, держится до следующего)
+  function charBox(o, c) {
+    const ch = c.char, box = div('grp charbox'), t = ED.t, d = ED.doc;
+    box.append(Object.assign(document.createElement('b'), { textContent: `🦴 ${ch.name} · скелет ${ch.skeleton}` }));
+    const worn = Object.assign({}, ch.wear || {}, (c.pose && c.pose.wear) || {});
+    const ids = Object.values(RIG.costumes).filter(k => (ch.needs || []).includes(k.url)).map(k => k.id);
+    const row = div('prop');
+    for (const k of ids) {
+      const cs = RIG.costumes[k];
+      row.append(check(cs.name, !!worn[k], v => ED.commit(setOps(d, o.id, 'wear.' + k, v, t, true, true), `${o.name}: ${v ? 'надеть' : 'снять'} «${cs.name}» на ${t.toFixed(2)} с`)));
+    }
+    if (ids.length) { box.append(Object.assign(document.createElement('span'), { className: 'hint', textContent: 'Костюмы — ключом на этом моменте:' }), row); }
+    const em = Object.keys(ch.emotions || {});
+    if (em.length) {
+      const sel = document.createElement('select');
+      sel.append(new Option('эмоция — как в поведении', ''));
+      for (const e of em) sel.append(new Option(e + ((ch.emotions[e] || {}).ok ? ' ✓' : ''), e));
+      sel.value = valueAt(o, 'emotion', t) || '';
+      sel.onchange = () => ED.commit(setOps(d, o.id, 'emotion', sel.value || null, t, true, true), `${o.name}: эмоция «${sel.value || 'как в поведении'}» с ${t.toFixed(2)} с`);
+      box.append(Object.assign(div('prop'), {}), sel);
+    }
+    return box;
   }
 
   // ↔ заменить предмет 3D-пропсом (S3): из препродакшена этого видео или из библиотеки канала; положение, ключи и параметры остаются

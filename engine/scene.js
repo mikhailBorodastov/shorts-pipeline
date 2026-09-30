@@ -148,7 +148,8 @@ function scnCapture(w, fn) {
 // 3D-пропсы из библиотеки канала и препродакшена (S3, props3d.js): src.prefab = 'lib:props/<slug>@<N>' | 'el:<элемент>@v<N>'.
 // Их prefab.js грузятся до сборки мира (loadSceneProps) и лежат в S.lib; prefabs.js сцены их не содержит.
 function scenePropRefs(scene) {
-  return [...new Set((scene.objects || []).map(o => (o.src || {}).prefab).filter(k => /^(lib|el):/.test(k || '')))];
+  const refs = (scene.objects || []).map(o => (o.src || {}).prefab).concat(scene.libs || []);   // libs — что нужно коду prefabs.js (персонаж для «поведения»)
+  return [...new Set(refs.filter(k => /^(lib|el):/.test(k || '')))];
 }
 function scenePropUrl(ref, plan) {
   let m = /^lib:([a-z]+)\/([a-z0-9-]+)@(\d+)$/.exec(ref || '');
@@ -163,7 +164,12 @@ async function loadSceneProps(refs, plan, load, into = {}) {
     if (into[ref]) continue;
     const u = scenePropUrl(ref, plan);
     if (!u) continue;
-    try { await load(u); into[ref] = (typeof PROPS3D !== 'undefined' && PROPS3D[u]) || PROP3D_LAST; }
+    try {
+      await load(u);
+      const def = (typeof PROPS3D !== 'undefined' && PROPS3D[u]) || (typeof CHAR_LAST !== 'undefined' && CHAR_LAST && CHAR_LAST.url === u ? CHAR_LAST : null) || PROP3D_LAST;
+      for (const n of (def && def.needs) || []) await load(n);         // персонаж: его костюмы (costumes/*.js рядом)
+      into[ref] = def;
+    }
     catch (e) { console.warn('scene: пропс не загрузился', ref, e.message); }
   }
   if (typeof X3 !== 'undefined' && X3.R && typeof loadModels3 === 'function') await loadModels3();
