@@ -80,6 +80,7 @@ import sounds  # noqa: E402  поиск и скачивание звуков п�
 import refvideo  # noqa: E402  разбор видео-референсов
 import preprod  # noqa: E402  модель элементов препродакшена и экспорт в проект
 import assets  # noqa: E402  поиск и скачивание бесплатных 3D / 2D ассетов
+import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -91,7 +92,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "ytlogin", "ytsync", "ytfresh", "sndfetch", "refparse", "assetfetch", "layout3d")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "ytlogin", "ytsync", "ytfresh", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -123,6 +124,10 @@ def pr():
 
 def aapi():
     return _fresh(assets, "ast")
+
+
+def scapi():
+    return _fresh(scene_api, "scn")
 
 
 def capi():
@@ -822,6 +827,8 @@ def _run_job(job):
             asset_fetch(job)
         elif job.kind == "layout3d":
             layout3d(job)
+        elif job.kind.startswith("scene"):
+            scapi().run_job(sys.modules[__name__], job)
         elif job.kind == "ytlogin":
             job.result = yapi().login(DATA)
             job.summary = f"Google: вход выполнен, канал «{job.result['channel']}»"
@@ -1208,6 +1215,12 @@ def handle_get(h):
         except ValueError as e:
             h._json({"error": str(e)}, 404)
         return True
+    if p.startswith("/api/scene"):
+        try:
+            if scapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p.startswith("/files/"):
         return _static(h, FILES, p[len("/files/"):])
     if p.startswith("/fonts/"):
@@ -1314,6 +1327,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p.startswith("/api/scene/") and scapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p == "/api/claude":
             j = start_job(body.get("action", ""), body.get("key", ""), body.get("scope", ""), body.get("params") or {})
             h._json({"job": j.info()}); return True
@@ -1357,7 +1372,8 @@ def cli(argv):
     | add-bank "Идея" [--desc …] [--cool 1-3] [--speed 1-3] [--mode short|long|any] [--fresh …] [--src …]
     | set KEY путь.через.точки значение  (KEY: plan:ID | bank | brand | stats; значение — JSON или текст)
     | op KEY '<JSON: операция или список операций set/add/del/move>'
-    | produce ID "Проект" [--attach]"""
+    | produce ID "Проект" [--attach]
+    | scene show|ops|history|undo|version|clip|validate|finish PLAN EL …  (сцены редактора, scene_api.cli)"""
     cmd, a = argv[0], argv[1:]
     by = "claude"
     if cmd == "list":
@@ -1431,6 +1447,8 @@ def cli(argv):
         ops = json.loads(a[1])
         print(apply_ops(key, ops if isinstance(ops, list) else [ops]))
         return True
+    if cmd == "scene":
+        return scapi().cli(sys.modules[__name__], a)
     if cmd == "yt-login":
         print(yapi().login(DATA))
         return True
