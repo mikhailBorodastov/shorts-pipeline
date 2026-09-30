@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Отрисовка — Штурм идей</title>
+<link rel="icon" href="data:,">
+<style>
+  @font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf"); font-weight: 300 900; }
+  @font-face { font-family: "Nunito"; src: url("/fonts/Nunito.ttf"); font-weight: 200 1000; }
+  @font-face { font-family: "Caveat"; src: url("/fonts/Caveat.ttf"); font-weight: 400 700; }
+  html, body { margin: 0; background: #222; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<!-- Стенд отрисовки обложки и первого кадра (render_shot.js). Сцена: ?scene=/rscene/<plan>/<concept>/v<N>/scene.js
+     Контракт сцены:  const PICS = { key: '/files/<plan>/7.png', … };      картинки -> IMG.key
+                      const COVER = { draw(ctx) { … } };                     обложка 1080×1920, статичная
+                      const FRAME = { t: 0.6, draw(ctx, T) { … } };          первый кадр, T — секунды от начала ролика
+     Элемент препродакшена (…&parts=element): const ELEMENT = { t: 0.6, draw(ctx, T) { … } }; — лист персонажа, пропса или кадр сцены -->
+<script src="/tpl/lib.js"></script>
+<script>
+  const IMG = {}, SEQ = {};
+  const seqFrame = () => null;
+</script>
+<script src="/render/paper.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + (src.includes('?') ? '&' : '?') + 'v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error('сцена не загрузилась: ' + src)); document.head.append(s); });
+  const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = () => { IMG[k] = im; ok(); }; im.onerror = () => { console.error('картинка не загрузилась: ' + src); ok(); }; im.src = src; });
+  window.READY = (async () => {
+    await load(q.get('scene'));
+    const P = typeof PICS !== 'undefined' ? PICS : {};
+    await Promise.all(Object.entries(P).map(([k, s]) => pic(k, s)));
+    await Promise.all(['900 40px Rubik', '800 40px Nunito', '700 40px Caveat'].map(f => document.fonts.load(f).catch(() => {})));
+  })();
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  window.shot = (kind, t) => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    if (kind === 'cover') COVER.draw(ctx);
+    else if (kind === 'element') ELEMENT.draw(ctx, t != null ? t : (ELEMENT.t != null ? ELEMENT.t : 0.6));
+    else FRAME.draw(ctx, t != null ? t : (FRAME.t != null ? FRAME.t : 0.6));
+    return cv.toDataURL('image/png');
+  };
+  if (!navigator.webdriver) READY.then(() => shot(q.get('kind') || (q.get('parts') === 'element' ? 'element' : 'cover'), q.get('t') != null ? +q.get('t') : null));   // open in a browser to look
+</script>
+</body>
+</html>

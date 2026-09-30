@@ -25,6 +25,11 @@ TOTAL = VO["total"]
 N = int(TOTAL * SR) + SR
 rng = np.random.default_rng(1)
 
+# animalese voices (the constructor page src/animalese.html has the same presets; paste the user's JSON here)
+TALK = {
+    "mom": {"voice": "ru-RU-SvetlanaNeural", "pitch": 1.6, "rate": 8.5, "clip": 170, "cclip": 60, "jitter": 6, "sing": 3, "question": 16, "exclaim": 8, "cons": 0.7, "space": 0.5, "comma": 1.6, "stop": 2.6, "tail": 35, "volume": 0.9},
+    "hog": {"voice": "ru-RU-DmitryNeural", "pitch": 2.05, "rate": 9.5, "clip": 150, "cclip": 55, "jitter": 8, "sing": 4, "question": 22, "exclaim": 10, "cons": 0.7, "space": 0.5, "comma": 1.6, "stop": 2.6, "tail": 30, "volume": 0.9},
+}
 MUSIC = {
     "bpm": 100,
     # аккорды: (бас, [ноты аккорда]) в MIDI; по 2 такта на аккорд. Am F C G
@@ -33,6 +38,7 @@ MUSIC = {
     "arp_from": 0.30,
     "drums": (0.60, 0.80),    # отрезок с битом (кульминация)
     "level": 0.5,             # громкость музыки под голосом
+    "mute": "silent",         # музыка обрывается на секциях-паузах без голоса; или список (от, до) в секундах
 }
 
 
@@ -192,6 +198,24 @@ def lib_sound(sid):
     return _lib_cache[sid]
 
 
+# Плавное затухание в конце КАЖДОГО звука (по умолчанию). Фейд начинается не раньше пика звука,
+# длина = доля от остатка после пика, в пределах [min, max] секунд. FADE = None — выключить.
+FADE = {"frac": 0.5, "min": 0.12, "max": 1.2}
+
+
+def fade_out(y):
+    if not FADE or y is None or len(y) < 8:
+        return y
+    pk = int(np.argmax(np.abs(y)))
+    rest = len(y) - pk
+    n = int(min(max(rest * FADE["frac"], FADE["min"] * SR), FADE["max"] * SR, rest))
+    if n < 4:
+        return y
+    y = y.copy()
+    y[len(y) - n:] *= 0.5 * (1 + np.cos(np.linspace(0, np.pi, n)))   # cosine fade to silence
+    return y
+
+
 def build_sfx():
     out = np.zeros(N)
     try:
@@ -206,6 +230,19 @@ def build_sfx():
         rec = {"i": i, "t": t, "type": typ, "gain": e.get("gain", 1), "align": e.get("align"), "scene": e.get("scene"), "origin": e.get("origin")}
         sid, peak_at = None, None
         cut = None
+        if typ.startswith("talk:"):
+            resolved.append({**rec, "src": "animalese", "start": round(t, 3), "dur": 2.0, "play_gain": round(gain, 3), "preview": None})
+            continue
+        if typ.startswith("file:"):              # 'file:<path in the project>' — own sound file (e.g. assets/*.wav)
+            path = typ[5:]
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"], capture_output=True).stdout
+            y = np.frombuffer(raw, dtype=np.float32).astype(float)
+            if not len(y): print("  ! нет файла:", path); continue
+            y = y / max(1e-9, np.abs(y).max()) * 0.9
+            start = t - (np.argmax(np.abs(y)) / SR if e.get("align") == "peak" else 0)
+            put(out, max(0, start), y * gain)
+            resolved.append({**rec, "src": typ, "start": round(start, 3), "dur": round(len(y) / SR, 3), "play_gain": round(gain, 3), "preview": "/" + path})
+            continue
         if typ.startswith("lib:"):
             sid = typ[4:]
             if "|" in sid:                        # 'lib:<id>|<offset>|<dur>' — a slice of a long sound
@@ -223,6 +260,7 @@ def build_sfx():
                 start = t + peak_at - pk if peak_at is not None else t
                 if start < 0:                         # peak-aligned sound that would start before 0: trim its head
                     y = y[int(-start * SR):]; start = 0
+                y = fade_out(y)
                 put(out, start, y * gain); used_lib += 1
                 resolved.append({**rec, "src": "lib:" + sid, "start": round(start, 3), "dur": round(len(y) / SR, 3),
                                  "play_gain": round(gain, 3), "preview": "/sfxlib/" + sid + ".wav", "slice": list(cut) if cut else None})
@@ -232,7 +270,7 @@ def build_sfx():
         fn = SFX.get(typ)
         if not fn:
             print("  ! неизвестный звук:", typ); continue
-        y = fn()
+        y = fade_out(fn())
         put(out, t, y * gain)
         prev = os.path.join("build", "sfx_preview", f"synth-{typ}.wav")
         if not os.path.exists(prev):
@@ -298,7 +336,31 @@ def build_music():
                 tt = t_arr(0.06)
                 put(out, ts + beat / 2, rng.standard_normal(len(tt)) * np.exp(-tt * 70) * 0.06)
     t_all = np.arange(N) / SR
-    return out * np.minimum(1, t_all / 1.0) * np.minimum(1, np.maximum(0, TOTAL + 0.3 - t_all) / 2.5)
+    mute = M.get("mute", [])
+    if mute == "silent":
+        mute = [(x["start"] - 0.2, x["start"] + x["dur"] + 0.1) for x in VO["sections"] if x.get("silent")]
+    gate = np.ones(N)
+    for a, b in mute:                         # hard cut into silence, soft return
+        gate *= 1 - np.clip((t_all - a) / 0.08, 0, 1) * np.clip((b - t_all) / 0.6, 0, 1)
+    return out * gate * np.minimum(1, t_all / 1.0) * np.minimum(1, np.maximum(0, TOTAL + 0.3 - t_all) / 2.5)
+
+
+def build_talk():
+    """animalese lines ('talk:<who>:<text>' cues from scenes.js) -> their own track, mixed like the voice"""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(".")), "_pipeline"))
+    from animalese import speak
+    out = np.zeros(N)
+    try:
+        events = json.load(open("build/sfx.json"))
+    except FileNotFoundError:
+        return out
+    for e in events:
+        if not e["type"].startswith("talk:"): continue
+        _, who, text = e["type"].split(":", 2)
+        P = dict(TALK.get(who, TALK["mom"])); voice = P.pop("voice")
+        put(out, e["t"], speak(text, voice, **P).astype(float) * e.get("gain", 1))
+    return out
 
 
 def load_vo():
@@ -331,7 +393,8 @@ if __name__ == "__main__":
     music = build_music(); print("music ok")
     sfx = build_sfx(); print("sfx ok")
     vo = load_vo(); print("vo ok")
-    write("build/mix_no_vo.wav", music * 0.55 + sfx * 0.45)
+    talk = build_talk(); print("talk ok")
+    write("build/mix_no_vo.wav", music * 0.55 + sfx * 0.45 + talk * 0.5)
     write("build/vo.wav", vo)
-    write("build/mix.wav", duck(music * MUSIC["level"], vo) + sfx * 0.4 + vo)
+    write("build/mix.wav", duck(music * MUSIC["level"], vo + talk) + sfx * 0.4 + vo + talk * 0.8)
     print("done")

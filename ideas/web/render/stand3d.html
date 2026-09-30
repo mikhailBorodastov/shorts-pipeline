@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>3D-сцена — Штурм идей</title>
+<link rel="icon" href="data:,">
+<style>
+  @font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf"); font-weight: 300 900; }
+  @font-face { font-family: "Nunito"; src: url("/fonts/Nunito.ttf"); font-weight: 200 1000; }
+  @font-face { font-family: "Caveat"; src: url("/fonts/Caveat.ttf"); font-weight: 400 700; }
+  html, body { margin: 0; background: #222; }
+  canvas { display: block; }
+  /* ?view=1 — просмотр: сцена играет, камеру можно крутить мышью; &edit=1 — ещё и расстановка объектов */
+  #vui, #vpanel { display: none; }
+  body.view { background: #0b0a1f; height: 100vh; overflow: hidden; display: flex; flex-direction: column; align-items: center; color: #ece9ff; font: 13px "Rubik", system-ui, sans-serif; }
+  body.view #vmain { display: flex; gap: 10px; min-height: 0; flex: 1; max-width: 100%; }
+  body.view canvas { height: calc(100vh - 82px); width: auto; max-width: 100%; object-fit: contain; cursor: grab; touch-action: none; border-radius: 8px; }
+  body.view canvas.drag { cursor: grabbing; }
+  body.view.move canvas { cursor: crosshair; }
+  body.view.move canvas.drag { cursor: move; }
+  body.view #vui { display: flex; flex-direction: column; gap: 4px; width: min(100%, 760px); padding: 6px 10px 4px; box-sizing: border-box; }
+  body.view.move #vpanel { display: flex; }
+  #vui .row { display: flex; gap: 8px; align-items: center; }
+  button { background: #2b2670; color: #ece9ff; border: 1px solid #2e2a6e; border-radius: 8px; padding: 4px 10px; font: inherit; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #3a3490; }
+  button:focus-visible { outline: 2px solid #ffd23f; outline-offset: 1px; }
+  button.on, button[aria-pressed=true] { background: #ffd23f; color: #000; border-color: #ffd23f; }
+  button.save { background: #2d9d5a; border-color: #2d9d5a; }
+  button.save:disabled { background: #2b2670; opacity: 0.55; cursor: default; }
+  #vui input[type=range] { flex: 1; accent-color: #ffd23f; }
+  #vui .t { font-variant-numeric: tabular-nums; min-width: 88px; text-align: right; color: #9a93d6; }
+  .hint { color: #9a93d6; font-size: 12px; text-align: center; }
+  #vpanel { flex-direction: column; gap: 6px; width: 250px; flex: none; height: calc(100vh - 82px); box-sizing: border-box; padding: 8px; background: #15123a; border: 1px solid #2e2a6e; border-radius: 8px; overflow: auto; }
+  #vpanel h4 { margin: 2px 0; font-size: 13px; color: #ffd23f; }
+  #vlist { display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; min-height: 140px; overflow: auto; padding-right: 2px; }   /* the list scrolls, save stays in view */
+  #vlist .col { display: flex; flex-direction: column; gap: 3px; }
+  #vlist details > summary { cursor: pointer; color: #9a93d6; font-size: 12px; margin: 4px 0; }
+  #vlist details details { margin-left: 8px; }
+  #vlist .grp { display: flex; gap: 3px; }
+  #vlist .grp > .tw { flex: none; width: 26px; padding: 3px 0; }
+  #vlist .grp > button:last-child { flex: 1; min-width: 0; }
+  #vlist .mem { margin-left: 28px; }
+  #vlist .auto { opacity: 0.8; font-style: italic; }
+  #vlist button.multi { outline: 2px dashed #ffd23f; outline-offset: -2px; }
+  #vmulti { display: none; flex-direction: column; gap: 4px; border-top: 1px solid #2e2a6e; padding-top: 6px; }
+  #vmulti.on { display: flex; }
+  #vmulti input, #vgrp input { background: #0b0a1f; color: #ece9ff; border: 1px solid #2e2a6e; border-radius: 8px; padding: 4px 8px; font: inherit; min-width: 0; }
+  #vgrp { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  #vlist button { text-align: left; overflow: hidden; text-overflow: ellipsis; padding: 3px 8px; }
+  #vpanel button.moved::after { content: " •"; color: #ffd23f; }
+  #vpanel button[aria-pressed=true].moved::after { color: #000; }
+  #vsel { display: none; flex-direction: column; gap: 5px; border-top: 1px solid #2e2a6e; padding-top: 6px; }
+  #vsel.on { display: flex; }
+  #vsel .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  #vsel .grid button { padding: 4px 0; }
+  #vread { font-variant-numeric: tabular-nums; color: #cfc9ff; font-size: 12px; line-height: 1.5; }
+  #vmsg { color: #9a93d6; font-size: 12px; min-height: 16px; }
+  #vload { position: fixed; inset: 0; display: none; place-items: center; color: #9a93d6; font: 15px "Rubik", sans-serif; text-align: center; padding: 20px; }
+  body.view.loading #vload { display: grid; }
+  @media (max-width: 700px) { body.view #vmain { flex-direction: column; } #vpanel { width: auto; height: auto; max-height: 40vh; } }
+</style>
+</head>
+<body>
+<div id="vmain">
+  <canvas id="c" width="1080" height="1920" tabindex="0" aria-label="3D-сцена"></canvas>
+  <aside id="vpanel" aria-label="Расстановка объектов">
+    <h4>✋ Объекты сцены</h4>
+    <div class="hint" style="text-align:left">Клик по объекту в кадре или в списке, Ctrl+клик — выбрать несколько. Тяни — двигать по полу, с Shift — вверх / вниз. Клик по части группы берёт всю группу, Alt+клик — только эту часть.</div>
+    <div id="vmulti" aria-live="polite">
+      <b id="vmn"></b>
+      <div class="hint" style="text-align:left">Стрелки и кнопки ниже двигают все выбранные сразу.</div>
+      <input id="vgname" placeholder="имя группы: «Ели слева»" aria-label="Имя новой группы">
+      <button id="vgroup" title="Ctrl+G">🔗 Сгруппировать</button>
+    </div>
+    <div id="vsel" aria-live="polite">
+      <b id="vname"></b>
+      <div id="vread"></div>
+      <div id="vgrp"></div>
+      <div class="grid" role="group" aria-label="Сдвиг">
+        <button data-k="up" title="Выше (PageUp)">⤒ выше</button><button data-k="fwd" title="Дальше от камеры (↑)">↑ дальше</button><button data-k="down" title="Ниже (PageDown)">⤓ ниже</button>
+        <button data-k="left" title="Влево (←)">← влево</button><button data-k="near" title="Ближе к камере (↓)">↓ ближе</button><button data-k="right" title="Вправо (→)">вправо →</button>
+        <button data-k="rl" title="Повернуть (Q)">⟲ 15°</button><button data-k="hide" title="Скрыть / показать (H)">👁 скрыть</button><button data-k="rr" title="Повернуть (E)">15° ⟳</button>
+        <button data-k="smaller" title="Меньше (−)">− меньше</button><button data-k="reset" title="Вернуть как в коде (Delete)">↺ как было</button><button data-k="bigger" title="Больше (+)">+ больше</button>
+      </div>
+    </div>
+    <div id="vlist" role="group" aria-label="Объекты сцены"></div>
+    <details class="hint" style="text-align:left"><summary style="cursor:pointer">⌨ Клавиши</summary>Стрелки — по полу относительно камеры (Shift — шаг крупнее, Alt — мельче), PageUp / PageDown — высота, Q / E — поворот, + / − — размер, H — скрыть, Delete — вернуть, Ctrl+G — сгруппировать, Ctrl+Shift+G — разгруппировать, Esc — снять выбор.</details>
+    <button id="vundo" title="Вернуть расстановку, с которой открыли">↺ Всё как было</button>
+    <button id="vsave" class="save" disabled>💾 Сохранить расстановку</button>
+    <div id="vmsg" aria-live="polite"></div>
+  </aside>
+</div>
+<div id="vui">
+  <div class="row">
+    <button id="vplay" title="Пробел">⏸</button>
+    <input id="vtime" type="range" min="0" max="6" step="0.01" value="0" aria-label="Время сцены">
+    <span class="t" id="vt">0.0 / 6.0 с</span>
+    <button id="vcam" title="Двойной клик по пустому месту — тоже вернуть камеру сценария">🎬 Камера сценария</button>
+    <button id="vmove" aria-pressed="false" title="Переставлять объекты сцены (M)" hidden>✋ Двигать</button>
+  </div>
+  <div class="hint" id="vhint">Тяни мышью — вращать · колесо — ближе / дальше · правая кнопка или Shift — сдвиг · двойной клик — камера сценария</div>
+</div>
+<div id="vload">Собираю 3D-сцену…</div>
+<!-- 3D-стенд препродакшена (сцена-диорама на stage3d.js шаблона). Отдаётся как /tpl/stand3d.html, чтобы vendor/… шаблона находились.
+     Сцена: ?scene=/rscene/<plan>/<element>/v<N>/element.js&parts=element   (&view=1 — живой просмотр со свободной камерой)
+            &edit=1&key=plan:<id>&el=<element>&base=<render id> — ещё и «✋ Двигать»: расстановка сохраняется новой версией (POST /api/layout3d)
+     Модель: ?model=/files/<plan>/assets/<id>/model.glb&view=1 — посмотреть glTF-ассет на полу со светом
+     Контракт:  const PICS = { key: '/files/<plan>/7.png' };                картинки -> IMG.key (для spriteCard и вырезок)
+                const MODELS = { key: '/files/<plan>/assets/<id>/model.glb' };   glTF -> w.model(key, {h, pos, name})
+                const WORLD = world3d({ fx: 'night', build(w) { … }, update(w, lt, D, T) { … } });
+                const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); /* 2D поверх */ } };   len — длина петли просмотра, с
+                WORLD.layout = { 'Имя': { p: [dx, dy, dz], r, s, hide } }   расстановка автора поверх кода (stage3d.js, шапка)
+     stage3dInit() вызывается здесь, после загрузки сцены и картинок. -->
+<script>window.THREE_READY = new Promise(r => (window.__3dok = r));</script>
+<script type="module" src="vendor/boot3d.js"></script>
+<script src="/tpl/lib.js"></script>
+<script>
+  const IMG = {}, SEQ = {};
+  const seqFrame = () => null;
+</script>
+<script src="/render/paper.js"></script>
+<script src="/tpl/stage3d.js"></script>
+<script src="/tpl/moves3d.js"></script>
+<script>
+  const q = new URLSearchParams(location.search), VIEW = q.get('view') === '1', EDIT = VIEW && q.get('edit') === '1' && q.get('key') && q.get('el');
+  if (VIEW) document.body.classList.add('view', 'loading');
+  const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + (src.includes('?') ? '&' : '?') + 'v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error('сцена не загрузилась: ' + src)); document.head.append(s); });
+  const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = () => { IMG[k] = im; ok(); }; im.onerror = () => { console.error('картинка не загрузилась: ' + src); ok(); }; im.src = src; });
+
+  // ?model=… — a glTF asset on a floor with light, the camera circles it
+  function modelScene(url) {
+    window.MODELS = { m: url };
+    let fit = { d: 4, y: 0.7 };
+    const w = world3d({ fx: 'day', bg: '#d9dee6',
+      build(w) {
+        w.ambient('#ffffff', '#8a8070', 1.3); w.sun({ intensity: 2.4, area: 6, at: [0, 0, 0] });
+        w.plane({ size: [60, 60], flat: true, color: '#cdc6b8' });
+        const m = w.model('m', { h: 1.4, name: 'модель' });
+        const [sx, sy, sz] = m.size;
+        fit = { d: Math.max(2.5, Math.max(sx, sy, sz) * 2.6), y: sy * 0.5 };
+      },
+      update(w, lt) { const a = 0.6 + lt * 0.45; w.cam.position.set(Math.sin(a) * fit.d, fit.y + fit.d * 0.35, Math.cos(a) * fit.d); w.target.set(0, fit.y, 0); w.focus = w.target; } });
+    window.ELEMENT = { t: 0.6, len: 14, draw(ctx, T) { w.draw(ctx, T, 4, T); } };
+  }
+
+  window.READY = (async () => {
+    await window.THREE_READY;
+    if (q.get('model')) modelScene(q.get('model'));
+    else await load(q.get('scene'));
+    const P = typeof PICS !== 'undefined' ? PICS : {};   // pictures before the world is built: spriteCard reads IMG in build()
+    await Promise.all(Object.entries(P).map(([k, s]) => pic(k, s)));
+    await Promise.all(['900 40px Rubik', '800 40px Nunito', '700 40px Caveat'].map(f => document.fonts.load(f).catch(() => {})));
+    await stage3dInit();
+  })();
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const paint = t => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    ELEMENT.draw(ctx, t != null ? t : (ELEMENT.t != null ? ELEMENT.t : 0.6));
+  };
+  window.shot = (kind, t) => { paint(t); return cv.toDataURL('image/png'); };
+
+  // ---------------- живой просмотр: петля по времени + свободная камера поверх камеры сценария ----------------
+  const V = { free: false, playing: true, T: 0, len: 6, yaw: 0, pitch: 0.2, dist: 6, tgt: null, dirty: true, last: 0 };
+  const $ = id => document.getElementById(id);
+  function grab(w) {                                  // the free camera starts exactly where the scripted one is now
+    const p = w.cam.position.clone(), t = w.target.clone(), d = p.clone().sub(t);
+    V.dist = Math.max(0.5, d.length()); V.yaw = Math.atan2(d.x, d.z); V.pitch = Math.asin(Math.max(-1, Math.min(1, d.y / V.dist))); V.tgt = t;
+  }
+  function place(w) {
+    const cp = Math.cos(V.pitch);
+    w.target.copy(V.tgt);
+    w.cam.position.set(V.tgt.x + V.dist * cp * Math.sin(V.yaw), V.tgt.y + V.dist * Math.sin(V.pitch), V.tgt.z + V.dist * cp * Math.cos(V.yaw));
+  }
+  function setFree(on) {
+    const w = X3.worlds[0];
+    if (on && !V.free && w) grab(w);
+    V.free = on; V.dirty = true;
+    const b = $('vcam');
+    b.textContent = on ? '🖐 Свободная камера — вернуть сценарную' : '🎬 Камера сценария';
+    b.classList.toggle('on', on);
+  }
+
+  // ---------------- ✋ расстановка: w.layout поверх кода сцены (stage3d.js: items + _lay) ----------------
+  const M = { on: false, sel: null, multi: new Set(), open: new Set(), sig: '', drag: null, start: '{}', saving: false };
+  const LIM = { xz: 12, y0: -2, y1: 6, s0: 0.25, s1: 4 };      // «в пределах разумного»: не дальше 12 м, не ниже 2 м под полом, размер ×0.25…×4
+  const W0 = () => X3.worlds[0];
+  const lay = () => { const w = W0(); if (!w.layout) w.layout = {}; return w.layout; };
+  const r3 = v => Math.round(v * 1000) / 1000;
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function clean() {                                  // only what differs from the code, rounded
+    const out = {};
+    for (const [k, l] of Object.entries(lay())) {
+      const p = (l.p || [0, 0, 0]).map(r3), r = r3(l.r || 0), s = r3(l.s || 1);
+      const e = {};
+      if (p.some(v => Math.abs(v) > 0.0005)) e.p = p;
+      if (Math.abs(r) > 0.0005) e.r = r;
+      if (Math.abs(s - 1) > 0.0005) e.s = s;
+      if (l.hide) e.hide = true;
+      if (Object.keys(e).length && W0().items.some(i => i.name === k)) out[k] = e;
+    }
+    return out;
+  }
+  // groups: w.groups = { name: [member names] } (author) / { name: null } (a disbanded automatic group); stage3d.regroup builds 'set' items
+  const groups = () => { const w = W0(); if (!w.groups) w.groups = {}; return w.groups; };
+  function cleanGroups() { const out = {}; for (const [k, v] of Object.entries(W0().groups || {})) out[k] = Array.isArray(v) ? v.slice() : null; return out; }
+  const state = () => JSON.stringify({ l: clean(), g: cleanGroups() });
+  function prune() {                                  // after regroup the old 'set' objects are gone: keep only live selections
+    const live = new Set(W0().items);
+    M.multi = new Set([...M.multi].filter(i => live.has(i)));
+    if (M.sel && !live.has(M.sel)) M.sel = W0().items.find(i => i.name === M.sel.name) || null;
+  }
+  function regroup() { W0().regroup(); prune(); }
+  function restore(st) { const o = JSON.parse(st); W0().layout = o.l || {}; W0().groups = o.g || {}; regroup(); changed(); }
+  function dropGroup(g) { const G = groups(); if (g.auto) G[g.name] = null; else delete G[g.name]; delete lay()[g.name]; }
+  function detach(it) {                               // take one part out of its group
+    const g = it.group, G = groups(); if (!g) return;
+    if (g.auto) { G[g.name] = null; delete lay()[g.name]; }
+    else { G[g.name] = (G[g.name] || []).filter(n => n !== it.name); if (!G[g.name].length) { delete G[g.name]; delete lay()[g.name]; } }
+  }
+  function groupSel() {
+    const w = W0(), G = groups(), sel = [...M.multi];
+    if (sel.length < 2) return;
+    const members = [];
+    for (const it of sel) {
+      if (it.kind === 'set') { members.push(...it.members); dropGroup(it); }
+      else { if (it.group && !sel.includes(it.group)) detach(it); members.push(it); }
+    }
+    const names = [...new Set(members.map(m => m.name))];
+    let name = ($('vgname').value || '').trim().slice(0, 60) || 'группа';
+    const busy = n => w.items.some(i => i.name === n && !members.includes(i)) || n in G;
+    if (busy(name)) { let k = 2; while (busy(`${name} ${k}`)) k++; name = `${name} ${k}`; }
+    for (const [k, v] of Object.entries(G)) if (Array.isArray(v)) G[k] = v.filter(n => !names.includes(n));    // a part lives in one group
+    G[name] = names;
+    $('vgname').value = '';
+    regroup();
+    M.multi.clear(); M.sel = w.items.find(i => i.kind === 'set' && i.name === name) || null;
+    M.open.add(name); changed();
+  }
+  function ungroup(g) { if (!g || g.kind !== 'set') return; dropGroup(g); regroup(); M.multi = new Set(g.members.filter(m => W0().items.includes(m))); M.sel = null; changed(); }
+  function entry(it) { const L = lay(); return (L[it.name] = L[it.name] || { p: [0, 0, 0], r: 0, s: 1 }); }
+  function clampE(l) {
+    l.p = [Math.max(-LIM.xz, Math.min(LIM.xz, l.p[0])), Math.max(LIM.y0, Math.min(LIM.y1, l.p[1])), Math.max(-LIM.xz, Math.min(LIM.xz, l.p[2]))];
+    l.s = Math.max(LIM.s0, Math.min(LIM.s1, l.s || 1));
+    l.r = Math.atan2(Math.sin(l.r || 0), Math.cos(l.r || 0));
+  }
+  function changed() { V.dirty = true; panel(); }
+  // add (Ctrl / ⌘ / Shift): toggle the item in a multi-selection; the last one clicked is M.sel
+  function select(it, add) {
+    if (add && it) {
+      if (M.sel && !M.multi.size) M.multi.add(M.sel);
+      if (M.multi.has(it)) M.multi.delete(it); else M.multi.add(it);
+      M.sel = M.multi.has(it) ? it : [...M.multi].pop() || null;
+      if (M.multi.size < 2) { M.sel = [...M.multi][0] || null; M.multi.clear(); }
+    } else { M.multi.clear(); M.sel = it; }
+    V.dirty = true; panel();
+  }
+  const targets = () => (M.multi.size > 1 ? [...M.multi] : M.sel ? [M.sel] : []);
+  // camera-relative directions on the floor
+  function dirs() {
+    const w = W0(), f = w.target.clone().sub(w.cam.position); f.y = 0;
+    if (f.lengthSq() < 1e-8) f.set(0, 0, -1);
+    f.normalize();
+    return { fwd: f, right: new THREE.Vector3(-f.z, 0, f.x) };
+  }
+  // a world-space step -> the item's parent space (nested cards: hats on a hog…)
+  function toLocal(it, dw) {
+    const par = it.main.parent;
+    if (!par || par.isScene) return dw;
+    par.updateMatrixWorld(true);
+    const o = it.main.getWorldPosition(new THREE.Vector3());
+    return par.worldToLocal(o.clone().add(dw)).sub(par.worldToLocal(o.clone()));
+  }
+  // the selected item: its 3D box projected onto the frame, drawn in 2D over everything (so it never gets into bloom / DoF)
+  function outline(it, thin) {
+    const w = W0(), box = new THREE.Box3();
+    w.cam.updateMatrixWorld();
+    for (const o of it.objs) if (o.isMesh || o.isGroup || o.isSprite) box.expandByObject(o);
+    if (box.isEmpty()) box.setFromCenterAndSize(it.main.getWorldPosition(new THREE.Vector3()), new THREE.Vector3(0.3, 0.3, 0.3));
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, behind = 0;
+    for (let i = 0; i < 8; i++) {
+      const v = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(w.cam);
+      if (v.z > 1) behind++;
+      const x = (v.x + 1) / 2 * W, y = (1 - v.y) / 2 * H;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+    if (behind === 8) return;
+    x0 = Math.max(-20, x0); y0 = Math.max(-20, y0); x1 = Math.min(W + 20, x1); y1 = Math.min(H + 20, y1);
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.lineWidth = thin ? 3 : 5; ctx.setLineDash(thin ? [10, 10] : [22, 12]); ctx.strokeStyle = it.kind === 'set' ? '#7cf0ff' : '#ffd23f'; ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 8;
+    ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.setLineDash([]); ctx.font = '700 38px Rubik'; ctx.textBaseline = 'bottom';
+    const t = (it.kind === 'set' ? '🔗 ' : '') + it.name, tw = ctx.measureText(t).width, ty = y0 > 70 ? y0 - 8 : y1 + 50;
+    if (thin) { ctx.restore(); return; }
+    ctx.fillStyle = it.kind === 'set' ? '#7cf0ff' : '#ffd23f'; ctx.shadowBlur = 0; ctx.fillRect(x0 - 2, ty - 46, tw + 24, 50);
+    ctx.fillStyle = '#000'; ctx.fillText(t, x0 + 10, ty);
+    ctx.restore();
+  }
+  function nudge(k, ev) {
+    const ts = targets();
+    if (ts.length > 1) { for (const it of ts) nudge1(it, k, ev); changed(); return; }
+    if (ts.length) { nudge1(ts[0], k, ev); changed(); }
+  }
+  function nudge1(it, k, ev) {
+    const l = entry(it), st = ev && ev.shiftKey ? 0.5 : ev && ev.altKey ? 0.02 : 0.1, D = dirs();
+    const mv = v => { const d = toLocal(it, v.multiplyScalar(st)); l.p = [l.p[0] + d.x, l.p[1] + d.y, l.p[2] + d.z]; };
+    if (k === 'left') mv(D.right.clone().negate());
+    else if (k === 'right') mv(D.right.clone());
+    else if (k === 'fwd') mv(D.fwd.clone());
+    else if (k === 'near') mv(D.fwd.clone().negate());
+    else if (k === 'up') l.p[1] += st;
+    else if (k === 'down') l.p[1] -= st;
+    else if (k === 'rl') l.r += (ev && ev.shiftKey ? 5 : 15) * Math.PI / 180;
+    else if (k === 'rr') l.r -= (ev && ev.shiftKey ? 5 : 15) * Math.PI / 180;
+    else if (k === 'bigger') l.s *= 1.1;
+    else if (k === 'smaller') l.s /= 1.1;
+    else if (k === 'hide') l.hide = !l.hide;
+    else if (k === 'reset') { delete lay()[it.name]; return; }
+    clampE(l);
+  }
+  function btnFor(it, cls) {
+    const b = document.createElement('button');
+    b.textContent = (it.kind === 'set' ? '🔗 ' : '') + it.name + (it.kind === 'set' ? ` · ${it.members.length}` : '');
+    b.title = it.kind === 'set' ? (it.auto ? 'Группа собрана сама: части стоят на одном месте. Можно разгруппировать.' : 'Группа: ' + it.members.map(m => m.name).join(', '))
+      : it.auto ? 'У объекта нет name в коде — имя по порядку создания; Claude закрепит его, когда будет править сцену' : it.name;
+    if (cls) b.className = cls;
+    b.onclick = ev => { const add = ev.ctrlKey || ev.metaKey || ev.shiftKey; select(!add && M.sel === it && !M.multi.size ? null : it, add); };
+    b._it = it;
+    return b;
+  }
+  function groupRow(g, box) {
+    const row = document.createElement('div'), tw = document.createElement('button'), open = M.open.has(g.name);
+    row.className = 'grp'; tw.className = 'tw'; tw.textContent = open ? '▾' : '▸';
+    tw.title = open ? 'Свернуть части' : 'Показать части группы'; tw.setAttribute('aria-expanded', open ? 'true' : 'false');
+    tw.onclick = () => { if (M.open.has(g.name)) M.open.delete(g.name); else M.open.add(g.name); panel(); };
+    row.append(tw, btnFor(g, g.auto ? 'auto' : ''));
+    box.append(row);
+    if (open) for (const m of g.members) box.append(btnFor(m, 'mem' + (m.auto ? ' auto' : '')));
+  }
+  function buildList() {
+    const w = W0(), box = $('vlist');
+    box.textContent = '';
+    const top = w.items.filter(i => (i.kind === 'set' ? !i.auto : !i.auto && !i.group));
+    const rest = w.items.filter(i => (i.kind === 'set' ? i.auto : i.auto && !i.group));
+    const put = (it, into) => (it.kind === 'set' ? groupRow(it, into) : into.append(btnFor(it, it.auto ? 'auto' : '')));
+    for (const it of top) put(it, box);
+    if (!rest.length) return;
+    const d = document.createElement('details'), sm = document.createElement('summary'), col = document.createElement('div');
+    d.id = 'vauto'; col.className = 'col';
+    sm.textContent = `ещё ${rest.length} без имени (фон, деревья, мелочи)`;
+    d.open = !top.length || M.autoOpen; d.ontoggle = () => (M.autoOpen = d.open);
+    d.append(sm, col); box.append(d);
+    const base = n => n.replace(/\s*\d+$/, '');                 // «spruce 12», «карточка 40» -> fold the many of one kind
+    const by = new Map();
+    for (const it of rest) { const k = base(it.name); if (!by.has(k)) by.set(k, []); by.get(k).push(it); }
+    for (const [k, list] of by) {
+      if (list.length < 4) { for (const it of list) put(it, col); continue; }
+      const dd = document.createElement('details'), ss = document.createElement('summary'), cc = document.createElement('div');
+      cc.className = 'col'; ss.textContent = `${k} — ${list.length}`;
+      dd.open = M.fold && M.fold.has(k); dd.ontoggle = () => { M.fold = M.fold || new Set(); if (dd.open) M.fold.add(k); else M.fold.delete(k); };
+      dd.append(ss, cc); col.append(dd);
+      for (const it of list) put(it, cc);
+    }
+  }
+  function panel() {
+    if (!EDIT || !X3.ok) return;
+    const w = W0(), cur = clean(), n = Object.keys(cur).length, dirty = state() !== M.start;
+    // open the folds where the selection is, then rebuild the list if its shape changed
+    for (const it of [M.sel, ...M.multi].filter(Boolean)) {
+      if (it.group) M.open.add(it.group.name);
+      if (it.auto || (it.group && it.group.auto)) M.autoOpen = true;
+      const k = (it.group && it.group.auto ? it.group.name : it.name).replace(/\s*\d+$/, '');
+      M.fold = M.fold || new Set(); M.fold.add(k);
+    }
+    const sig = w.items.map(i => i.name + (i.group ? '<' + i.group.name : '')).join('|') + '#' + [...M.open].join('|') + '#' + M.autoOpen + '#' + [...(M.fold || [])].join('|');
+    if (sig !== M.sig) { M.sig = sig; buildList(); }
+    for (const b of $('vlist').querySelectorAll('button')) {
+      if (!b._it) continue;
+      b.setAttribute('aria-pressed', b._it === M.sel || M.multi.has(b._it) ? 'true' : 'false');
+      b.classList.toggle('multi', M.multi.has(b._it));
+      b.classList.toggle('moved', !!cur[b._it.name]);
+    }
+    const many = M.multi.size > 1;
+    $('vmulti').classList.toggle('on', many);
+    if (many) $('vmn').textContent = `Выбрано: ${M.multi.size}`;
+    $('vsel').classList.toggle('on', !!M.sel || many);
+    const g = $('vgrp'); g.textContent = '';
+    if (many) {
+      $('vname').textContent = 'Двигаются все выбранные';
+      $('vread').textContent = [...M.multi].map(i => i.name).join(', ');
+    } else if (M.sel) {
+      const l = cur[M.sel.name] || {}, p = l.p || [0, 0, 0], sg = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+      $('vname').textContent = (M.sel.kind === 'set' ? '🔗 ' : '') + M.sel.name;
+      $('vread').textContent = `сдвиг x ${sg(p[0])} · y ${sg(p[1])} · z ${sg(p[2])} м\nповорот ${Math.round((l.r || 0) * 180 / Math.PI)}° · размер ×${(l.s || 1).toFixed(2)}${l.hide ? ' · скрыт' : ''}`;
+      document.querySelector('#vsel [data-k=hide]').textContent = l.hide ? '👁 показать' : '👁 скрыть';
+      const mk = (t, title, fn) => { const b = document.createElement('button'); b.textContent = t; b.title = title; b.onclick = fn; g.append(b); return b; };
+      if (M.sel.kind === 'set') {
+        const s = document.createElement('span'); s.className = 'hint'; s.textContent = `${M.sel.auto ? 'собрана сама' : 'группа'} · частей: ${M.sel.members.length}`; g.append(s);
+        mk('⛓ Разгруппировать', 'Ctrl+Shift+G: части снова двигаются по отдельности', () => ungroup(M.sel));
+      } else if (M.sel.group) {
+        const gr = M.sel.group, s = document.createElement('span'); s.className = 'hint'; s.textContent = `в группе «${gr.name}»`; g.append(s);
+        mk('↑ Вся группа', 'Выбрать группу целиком', () => select(gr));
+        mk('✂ Вынуть', 'Вынуть эту часть из группы', () => { detach(M.sel); regroup(); changed(); });
+      }
+    }
+    $('vread').style.whiteSpace = 'pre-line';
+    $('vsave').disabled = !dirty || M.saving;
+    $('vsave').textContent = M.saving ? '⏳ сохраняю…' : `💾 Сохранить расстановку${n ? ` (${n})` : ''}`;
+    $('vundo').disabled = !dirty;
+  }
+  function setMove(on) {
+    M.on = on;
+    document.body.classList.toggle('move', on);
+    $('vmove').setAttribute('aria-pressed', on ? 'true' : 'false');
+    $('vhint').textContent = on ? 'Клик по объекту — выбрать, тянуть — двигать по полу (Shift — высота) · по пустому месту — крутить камеру · колесо — ближе / дальше'
+      : 'Тяни мышью — вращать · колесо — ближе / дальше · правая кнопка или Shift — сдвиг · двойной клик — камера сценария';
+    if (!on) select(null); else panel();
+    V.dirty = true;
+  }
+  // what is under the pointer: the first hit that belongs to an item (transparent parts of paper cards do not count)
+  let RC0 = null;
+  const rc = () => RC0 || (RC0 = new THREE.Raycaster());   // THREE is there only after boot3d.js
+  function ndc(e) { const b = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - b.left) / b.width * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1); }
+  function opaque(hit) {
+    const m = hit.object.material, img = m && !Array.isArray(m) && m.map && m.map.image;
+    if (!hit.uv || !img || !(img instanceof HTMLCanvasElement)) return true;
+    const x = Math.floor(hit.uv.x * img.width), y = Math.floor((1 - hit.uv.y) * img.height);
+    try { return img.getContext('2d').getImageData(Math.max(0, Math.min(img.width - 1, x)), Math.max(0, Math.min(img.height - 1, y)), 1, 1).data[3] > 100; } catch { return true; }
+  }
+  function pick(e) {
+    const w = W0();
+    w.scene.updateMatrixWorld(true); w.cam.updateMatrixWorld(); const RC = rc(); RC.setFromCamera(ndc(e), w.cam); RC.camera = w.cam; RC.params.Points.threshold = 0.02;
+    for (const hit of RC.intersectObjects(w.scene.children, true)) {
+      if (!hit.object.visible || hit.object.isPoints || hit.object.isLine || !opaque(hit)) continue;
+      let it = null, named = null;
+      for (let o = hit.object; o; o = o.parent) { const x = o.userData.item; if (x) { it = it || x; if (!x.auto) named = x; } }
+      if (!it) continue;
+      let res = named || it;
+      if (res.group && !e.altKey) res = res.group;              // a part of a group picks the whole group (Alt — just the part)
+      return { it: res, point: hit.point };
+    }
+    return null;
+  }
+  async function save() {
+    const L = clean(), G = cleanGroups(), w = W0();
+    const used = new Set([...Object.keys(L), ...Object.values(G).filter(Array.isArray).flat()]);
+    const auto = w.items.filter(i => i.auto && used.has(i.name)).map(i => i.name);
+    M.saving = true; panel(); $('vmsg').textContent = '';
+    try {
+      const r = await fetch('/api/layout3d', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Ideas': '1' },
+        body: JSON.stringify({ key: q.get('key'), el: q.get('el'), base: q.get('base'), layout: L, groups: G, auto }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) throw new Error(j.error || r.statusText);
+      M.start = state();
+      $('vmsg').textContent = '✓ Сохраняю новой версией черновика — картинка появится на странице через полминуты.';
+      if (window.parent !== window) parent.postMessage({ type: 'stand3d-layout', job: j.job }, location.origin);
+    } catch (err) { $('vmsg').textContent = '⚠ ' + err.message; }
+    M.saving = false; panel();
+  }
+
+  function startView() {
+    V.len = +ELEMENT.len || 6;
+    for (const w of X3.worlds) {                      // after the scene's own update (camKeys) put the free camera back
+      const u = w.o.update;
+      w.o.update = (ww, ...a) => { if (u) u(ww, ...a); if (V.free && V.tgt) place(ww); };
+    }
+    const tr = $('vtime'), tl = $('vt'), pb = $('vplay');
+    tr.max = V.len;
+    const ui = () => { tr.value = V.T; tl.textContent = `${V.T.toFixed(1)} / ${V.len.toFixed(1)} с`; pb.textContent = V.playing ? '⏸' : '▶'; };
+    const toggle = () => { V.playing = !V.playing; V.dirty = true; ui(); };
+    pb.onclick = toggle;
+    tr.oninput = () => { V.T = +tr.value; V.playing = false; V.dirty = true; ui(); };
+    $('vcam').onclick = () => setFree(!V.free);
+    if (EDIT && X3.worlds.length) {
+      M.start = state();
+      $('vmove').hidden = false;
+      $('vmove').onclick = () => setMove(!M.on);
+      $('vsave').onclick = save;
+      $('vundo').onclick = () => restore(M.start);
+      $('vgroup').onclick = groupSel;
+      $('vgname').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); groupSel(); } });
+      for (const b of document.querySelectorAll('#vsel [data-k]')) b.onclick = ev => nudge(b.dataset.k, ev);
+      if (q.get('move') === '1') setMove(true);
+    }
+    addEventListener('keydown', e => {
+      const tag = (e.target.tagName || '').toLowerCase(), onBtn = tag === 'button', onInp = tag === 'input';
+      if (e.code === 'Space' && !onBtn && !onInp) { e.preventDefault(); toggle(); return; }
+      if (!EDIT || onInp) return;
+      if (e.key === 'm' || e.key === 'M' || e.key === 'ь' || e.key === 'Ь') { if (!e.ctrlKey && !e.metaKey) { setMove(!M.on); return; } }
+      if (M.on && (e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G' || e.key === 'п' || e.key === 'П')) {
+        e.preventDefault();
+        if (e.shiftKey) ungroup(M.sel); else groupSel();
+        return;
+      }
+      if (!M.on || !(M.sel || M.multi.size)) return;
+      const K = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'fwd', ArrowDown: 'near', PageUp: 'up', PageDown: 'down', q: 'rl', Q: 'rl', 'й': 'rl', 'Й': 'rl', e: 'rr', E: 'rr', 'у': 'rr', 'У': 'rr',
+        '+': 'bigger', '=': 'bigger', '-': 'smaller', '_': 'smaller', h: 'hide', H: 'hide', 'р': 'hide', 'Р': 'hide', Delete: 'reset', Backspace: 'reset' }[e.key];
+      if (e.key === 'Escape') { select(null); return; }
+      if (onBtn && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); nudge('reset', e); return; }
+      if (K && !(onBtn && (e.key === 'Enter'))) { e.preventDefault(); nudge(K, e); }
+    });
+    let drag = null;
+    cv.addEventListener('contextmenu', e => e.preventDefault());
+    cv.addEventListener('pointerdown', e => {
+      cv.focus({ preventScroll: true });
+      const hit = M.on && e.button === 0 ? pick(e) : null;
+      if (hit && (e.ctrlKey || e.metaKey)) { select(hit.it, true); drag = null; return; }   // Ctrl+click: add to / remove from the selection
+      if (hit) {                                      // grab: move it (or all selected) on the horizontal plane through the grab point (Shift — vertical)
+        if (!M.multi.has(hit.it)) select(hit.it); else { M.sel = hit.it; panel(); }
+        const ts = targets();
+        drag = { obj: true, it: hit.it, ts: ts.map(t => [t, entry(t).p.slice()]), x: e.clientX, y: e.clientY, plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -hit.point.y), g0: hit.point.clone(), vert: e.shiftKey };
+      } else {
+        if (M.on && e.button === 0 && (M.sel || M.multi.size)) select(null);
+        drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || (e.shiftKey && !M.on) };
+        if (!V.free) setFree(true);
+      }
+      cv.setPointerCapture(e.pointerId); cv.classList.add('drag');
+    });
+    cv.addEventListener('pointermove', e => {
+      if (!drag) return;
+      if (drag.obj) {                                 // every selected thing gets the same step
+        let dw = null, dy = 0;
+        if (drag.vert || e.shiftKey) {
+          const w = W0(), k = w.cam.position.distanceTo(drag.g0) * 0.0022 * (1920 / cv.getBoundingClientRect().height);
+          dy = -(e.clientY - drag.y) * k * 0.5;
+        } else {
+          W0().cam.updateMatrixWorld(); const RC = rc(); RC.setFromCamera(ndc(e), W0().cam);
+          const at = RC.ray.intersectPlane(drag.plane, new THREE.Vector3());
+          if (at) dw = at.sub(drag.g0);
+        }
+        for (const [t, p0] of drag.ts) {
+          const l = entry(t);
+          if (dw) { const d = toLocal(t, dw.clone()); l.p = [p0[0] + d.x, p0[1], p0[2] + d.z]; }
+          else l.p = [p0[0], p0[1] + dy, p0[2]];
+          clampE(l);
+        }
+        changed(); return;
+      }
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+      if (drag.pan) {                                 // move the point we look at, along the screen
+        const k = V.dist * 0.0025, rx = Math.cos(V.yaw), rz = -Math.sin(V.yaw);
+        V.tgt.x -= dx * k * rx; V.tgt.z -= dx * k * rz; V.tgt.y += dy * k;
+      } else { V.yaw -= dx * 0.008; V.pitch = Math.max(-1.35, Math.min(1.35, V.pitch + dy * 0.006)); }
+      V.dirty = true;
+    });
+    const end = () => { drag = null; cv.classList.remove('drag'); };
+    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+    cv.addEventListener('wheel', e => { e.preventDefault(); if (!V.free) setFree(true); V.dist = Math.max(0.4, Math.min(120, V.dist * Math.exp(e.deltaY * 0.0012))); V.dirty = true; }, { passive: false });
+    cv.addEventListener('dblclick', e => { if (!(M.on && pick(e))) setFree(false); });
+    const frame = now => {
+      const dt = V.last ? Math.min(0.1, (now - V.last) / 1000) : 0; V.last = now;
+      if (V.playing) { V.T += dt; if (V.T > V.len) V.T = 0; V.dirty = true; }
+      if (V.dirty) {
+        V.dirty = false;
+        try { paint(V.T); if (M.on) { for (const it of M.multi) if (it !== M.sel) outline(it, true); if (M.sel) outline(M.sel); } } catch (e) { console.error(e); }
+        ui();
+      }
+      requestAnimationFrame(frame);
+    };
+    document.body.classList.remove('loading');
+    ui(); panel(); requestAnimationFrame(frame);
+  }
+
+  if (VIEW) READY.then(startView).catch(e => { $('vload').textContent = '⚠ ' + e.message; });
+  else if (!navigator.webdriver) READY.then(() => shot('element', q.get('t') != null ? +q.get('t') : null));
+</script>
+</body>
+</html>

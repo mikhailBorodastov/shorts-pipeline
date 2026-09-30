@@ -6,6 +6,9 @@
     python review_server.py port                  (порт уже запущенного сервера этого проекта)
     python review_server.py reply 3 "текст" --done   (ответ на правку #3 и отметка «сделано»)
     python review_server.py list                  (открытые правки в консоль)
+    python review_server.py script-list | script-reply N "текст" [--done] [--field VO --from "…" --to "…"]
+                                                  (правки сценария со страницы /src/script.html, см. script_api.py)
+    python review_server.py --open script         (открыть раскадровку сценария вместо ревью видео)
 
 GET  /api/notes        -> список заметок
 POST /api/notes        <- заметки из браузера; СЛИВАЮТСЯ с файлом по полю `updated`
@@ -94,12 +97,15 @@ def cli():
         if not a.reply(nid, text, "--done" in sys.argv):
             sys.exit(f"нет правки #{nid}")
         print("ok", nid)
+    elif not (hasattr(a, "cli") and a.cli(sys.argv[1:])):
+        sys.exit(f"неизвестная команда: {cmd}")
 
 
 class Server(ThreadingHTTPServer):
     # On Windows SO_REUSEADDR lets a second server silently share a busy port (and the old one keeps
     # answering). Bind exclusively instead, so a busy port fails loudly and we move to the next one.
     allow_reuse_address = False
+    request_queue_size = 128   # render workers fetch hundreds of assets at once; the default backlog of 5 refused connections
 
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -140,10 +146,10 @@ def running_port():
     return None
 
 
-def serve(open_browser):
+def serve(open_browser, page="review"):
     p = running_port()
     if p:                                    # this project is already being served
-        url = f"http://localhost:{p}/src/review.html"
+        url = f"http://localhost:{p}/src/{page}.html"
         print(f"Уже запущено: {url}")
         if open_browser:
             webbrowser.open(url)
@@ -161,7 +167,7 @@ def serve(open_browser):
     os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
     with open(os.path.join(ROOT, "build", ".review_port"), "w") as f:
         f.write(str(p))
-    url = f"http://localhost:{p}/src/review.html"
+    url = f"http://localhost:{p}/src/{page}.html"
     print(f"Ревью «{os.path.basename(ROOT)}»: {url}")
     if open_browser:
         webbrowser.open(url)
@@ -172,7 +178,7 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if args and args[0] == "port":           # port of this project's running server (empty if none)
         print(running_port() or "")
-    elif args and args[0] in ("list", "reply"):
+    elif args and not args[0].startswith("-") and args[0] != "script":
         cli()
     else:
-        serve("--open" in args)
+        serve("--open" in args, "script" if "script" in args else "review")

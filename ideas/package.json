@@ -1,0 +1,6 @@
+{
+  "name": "shturm-render",
+  "private": true,
+  "description": "Отрисовка обложек и первых кадров в «Штурме идей» (render_shot.js)",
+  "dependencies": { "puppeteer-core": "^25.11.0" }
+}

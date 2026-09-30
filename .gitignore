@@ -8,3 +8,7 @@ template/review/shots/*
 !template/review/shots/.gitkeep
 sfx_library/
 HANDOFF_*.md
+ideas/.render_profile/
+animalese_cache/
+.render_profile/
+*.log

@@ -25,6 +25,8 @@ const ASSETS = {
   },
 };
 // const CAPTION_STYLE = { size: 70, y: 0.765 };   // optional caption overrides; { off: true } hides them
+// const THUMBNAIL = { draw(ctx) { ... } };        // cover for the short (node render.js thumb); or { t: 3.2 } to reuse a frame
+// const THUMBNAILS = [{ draw }, { draw }, …];      // several cover variants -> out/thumbnail_1.png, _2, …
 // const TRANS_WHOOSH = 'lib:whoosh/15-quick-a';  // optional: library whoosh on every transition, peak on the cut
 
 // ---------------------------------------------------------------- 1

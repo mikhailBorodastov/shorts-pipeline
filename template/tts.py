@@ -10,7 +10,10 @@
     voice: ru-RU-DmitryNeural      (или ru-RU-SvetlanaNeural)
     rate: +25%
     произношение: Chrono Trigger = Кроно Триггер
-    вопрос: верим                  (слово, которому нужна вопросительная интонация)
+    вопрос: верим                  (слово с вопросительной интонацией; «вопрос: DLC @14» — только в сцене 14)
+    хвост: 0.1                     (секунд после последней фразы, по умолчанию 2; короткий хвост = резкий обрыв для лупа)
+Пауза внутри фразы: «в кусты, в подвал, [пауза 1.5] под машину» — фраза синтезируется целиком (интонация не рвётся),
+после слова перед меткой вставляется тишина, тайминги следующих слов сдвигаются.
 
 Пишет build/vo/sec{N}.mp3, build/vo_timing.json и src/vo_timing.js (window.VO).
 """
@@ -48,6 +51,38 @@ def _voice_of(block):
     return m.group(1) if m else None
 
 
+PAUSE = re.compile(r"\[\s*пауза\s+([\d.]+)\s*(?:с|сек)?\s*\]", re.I)
+
+
+def split_pauses(voice):
+    """'…в подвал, [пауза 1.5] под машину' -> clean text + [(display words before the pause, seconds)]"""
+    pauses, out, pos = [], [], 0
+    for m in PAUSE.finditer(voice):
+        out.append(voice[pos:m.start()]); pos = m.end()
+        pauses.append((len(_merge_dashes(" ".join(out).split())), float(m.group(1))))
+    out.append(voice[pos:])
+    return re.sub(r"\s+", " ", " ".join(out)).strip(), pauses
+
+
+def insert_pauses(path, words, pauses):
+    """Вставляет тишину после слова pauses[i][0]-1 (в середину паузы между словами), сдвигает тайминги."""
+    import numpy as np
+    SR = 24000
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(SR), "-"], capture_output=True).stdout
+    a = np.frombuffer(raw, dtype=np.int16)
+    words = [dict(w) for w in words]
+    for n, sec in sorted(pauses, key=lambda p: -p[0]):          # from the end, so earlier cut points stay valid
+        if n <= 0 or n > len(words): continue
+        end = words[n - 1]["t"] + words[n - 1]["d"]
+        at = (end + words[n]["t"]) / 2 if n < len(words) else end + 0.05
+        c = min(len(a), int(at * SR))
+        a = np.concatenate([a[:c], np.zeros(int(sec * SR), dtype=np.int16), a[c:]])
+        for w in words[n:]: w["t"] = round(w["t"] + sec, 3)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "s16le", "-ar", str(SR), "-ac", "1", "-i", "-", "-b:a", "96k", path],
+                   input=a.tobytes(), check=True)
+    return words
+
+
 def parse_script(path="script.md"):
     """Scenes = '## ' or '### ' headings that contain a voice-over; everything else (packaging, sources…) is ignored.
        Settings (voice, rate, произношение, вопрос) are read from the lines before the first scene."""
@@ -59,9 +94,12 @@ def parse_script(path="script.md"):
         m = re.match(r"\s*(voice|rate)\s*:\s*(.+)", line, re.I)
         if m:
             cfg[m.group(1).lower()] = m.group(2).strip()
-        m = re.match(r"\s*вопрос\s*:\s*(.+)", line, re.I)
-        if m:
-            cfg["rise"].append(m.group(1).strip().lower())
+        m = re.match(r"\s*хвост\s*:\s*(-?[\d.]+)", line, re.I)
+        if m:                                   # 'хвост: 0.1' — seconds after the last spoken word (short = hard cut for a loop)
+            cfg["tail"] = float(m.group(1))
+        m = re.match(r"\s*вопрос\s*:\s*(.+?)\s*(?:@\s*(\d+))?\s*$", line, re.I)
+        if m:                                   # 'вопрос: слово' or 'вопрос: слово @14' (only in scene 14)
+            cfg["rise"].append((m.group(1).strip(), int(m.group(2)) if m.group(2) else None))
         m = re.match(r"\s*произношение\s*:\s*(.+?)\s*=\s*(.+)", line, re.I)
         if m:
             cfg["pron"][m.group(1).strip()] = m.group(2).strip()
@@ -80,8 +118,9 @@ def parse_script(path="script.md"):
         voice = re.sub(r"\*\([^)]*\)\*", " ", voice)                   # director's notes *(…)* are not spoken
         voice = re.sub(r"[*_]{1,2}", "", voice)                          # markdown emphasis
         voice = re.sub(r"\s+", " ", voice).strip().strip("«»\"")
+        voice, pauses = split_pauses(voice)
         if voice:
-            sections.append({"title": h.group(1).replace("**", "").strip(), "text": voice})
+            sections.append({"title": h.group(1).replace("**", "").strip(), "text": voice, "pauses": pauses})
     if not sections:
         sys.exit("В script.md не найдено ни одной сцены с голосом (поле «Голос:» или «**VO:**» с цитатой «> …»)")
     return cfg, sections
@@ -227,20 +266,41 @@ def rise_tail(path, words, keys):
         os.replace(tmp, path)
 
 
-def map_display_words(text, spoken_words, spoken_text):
-    """Переносит тайминги произнесённых слов на слова оригинального текста (для субтитров)."""
+DASHES = ("—", "-", "–")
+GLUE = "⁣"            # invisible separator: keeps a multi-word pronunciation as one display word
+
+
+def _merge_dashes(words):
     merged = []
-    for w in text.split():
-        if w in ("—", "-", "–") and merged:
+    for w in words:
+        if w in DASHES and merged:
             merged[-1] += " " + w          # тире не озвучивается — приклеиваем к слову
         else:
             merged.append(w)
-    spoken_disp = [w for w in spoken_text.split() if w not in ("—", "-", "–")]
-    if len(spoken_disp) != len(merged):     # замена произношения изменила число слов
-        merged = spoken_disp
-    a = [_norm(w) for w in spoken_disp]
+    return merged
+
+
+def map_display_words(text, spoken_words, spoken_text, pron=None):
+    """Переносит тайминги произнесённых слов на слова оригинального текста (для субтитров).
+    Если произношение превращает одно слово в несколько («GTA = гэ, тэ, а»), на экране остаётся исходное слово,
+    а его время — от первого до последнего произнесённого куска."""
+    merged = _merge_dashes(text.split())
+    glued = text
+    for k, v in (pron or {}).items():
+        n = len(k.split())                  # «Star Wars Outlaws = Стар Ворс Аутлоз»: word for word, no glue
+        glued = glued.replace(k, v if n > 1 and len(v.split()) == n else v.replace(" ", GLUE))
+    groups = [g for g in glued.split() if g not in DASHES]
+    if len(groups) != len(merged):          # не смогли сопоставить — показываем произнесённый текст
+        merged = [w for w in spoken_text.split() if w not in DASHES]
+        groups = merged
+    parts, owner = [], []
+    for gi, g in enumerate(groups):
+        for piece in g.split(GLUE):
+            if _norm(piece) or len(g.split(GLUE)) == 1:
+                parts.append(piece); owner.append(gi)
+    a = [_norm(w) for w in parts]
     b = [_norm(w["w"]) for w in spoken_words]
-    times = [None] * len(merged)
+    times = [None] * len(parts)
     for blk in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_matching_blocks():
         for k in range(blk.size):
             sw = spoken_words[blk.b + k]
@@ -252,7 +312,12 @@ def map_display_words(text, spoken_words, spoken_text):
             t0 = prev[0] + prev[1]
             t1 = nxt[0] if nxt else t0 + 0.4
             times[k] = (t0 + 0.02, max(0.1, t1 - t0 - 0.04))
-    return [{"w": merged[k], "t": round(times[k][0], 3), "d": round(times[k][1], 3)} for k in range(len(merged))]
+    out = []
+    for gi in range(len(merged)):
+        ts = [times[k] for k in range(len(parts)) if owner[k] == gi]
+        t0 = min(x[0] for x in ts); t1 = max(x[0] + x[1] for x in ts)
+        out.append({"w": merged[gi], "t": round(t0, 3), "d": round(t1 - t0, 3)})
+    return out
 
 
 async def main():
@@ -272,14 +337,25 @@ async def main():
             continue
         path, words, spoken = await synth_retry(i, s["text"], cfg)
         words = tighten(path, words)
-        if cfg["rise"]:
-            rise_tail(path, words, cfg["rise"])
+        keys = []
+        for word, scene in cfg["rise"]:
+            if scene is None or scene == i + 1:     # scene numbers count silent beats too, like the storyboard page
+                keys += [_norm(word), _norm(cfg["pron"].get(word, word))]   # words are matched in their spoken form
+        if keys:
+            rise_tail(path, words, [k for k in keys if k])
+        shown = map_display_words(s["text"], words, spoken, cfg["pron"])
+        if s.get("pauses"):
+            shown = insert_pauses(path, shown, s["pauses"])
         d = duration(path)
         sections.append({"title": s["title"], "start": round(t, 3), "dur": round(d, 3), "file": path.replace("\\", "/"),
-                         "words": map_display_words(s["text"], words, spoken)})
+                         "words": shown})
         print(f"sec{i} «{s['title']}»: start {t:.2f}  dur {d:.2f}")
         t += d + GAP
-    total = t - GAP + TAIL
+    total = t - GAP + cfg.get("tail", TAIL)
+    spoken_secs = [x for x in sections if x["words"]]
+    if "tail" in cfg and spoken_secs:           # 'хвост:' counts from the end of the last spoken word (mp3 has its own silence)
+        lw = spoken_secs[-1]["words"][-1]
+        total = spoken_secs[-1]["start"] + lw["t"] + lw.get("d", 0) + cfg["tail"]
     data = {"total": round(total, 3), "sections": sections}
     with open(os.path.join("src", "vo_timing.js"), "w", encoding="utf-8") as f:
         f.write("window.VO = " + json.dumps(data, ensure_ascii=False, indent=1) + ";\n")

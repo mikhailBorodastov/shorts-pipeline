@@ -8,10 +8,19 @@
   let T = 0, playing = false, clock0 = 0, t0 = 0;
   let notes = [], draft = null, activeId = null, filter = 'open', lastN = 0, codeV = null, loopOn = false;
   const audio = new Audio(); audio.preload = 'auto';
+  // video mode: play the rendered out/*.mp4 instead of drawing every frame live (heavy 3D shots lag in the browser).
+  // Live mode is for checking edits before the video is rebuilt; /api/video says when the video is older than the code.
+  let vmode = false, vinfo = null;
+  const vid = document.getElementById('vid');
 
   // ---------- state persisted across hot reloads ----------
   const keep = (() => { try { return JSON.parse(sessionStorage.getItem('review') || '{}'); } catch { return {}; } })();
-  const persist = () => { try { sessionStorage.setItem('review', JSON.stringify({ T, draft, filter, snd: $('snd').value, rate: $('rate').value, activeId, loopOn })); } catch {} };
+  const persist = () => {
+    try { sessionStorage.setItem('review', JSON.stringify({ T, vmode, draft: draft && { ...draft, refs: undefined }, filter, snd: $('snd').value, rate: $('rate').value, activeId, loopOn })); } catch {}
+    if (!draft) try { sessionStorage.removeItem('reviewRefs'); } catch {}
+  };
+  // the draft's pasted images are big (dataURLs): stored separately and only when they change
+  const persistRefs = () => { try { sessionStorage.setItem('reviewRefs', JSON.stringify(draft && draft.refs || [])); } catch {} };
 
   // ---------- helpers ----------
   const touch = n => { n.updated = Date.now(); return n; };   // every change is stamped; the server merges by this
@@ -71,7 +80,8 @@
   }
 
   function draw() {
-    renderFrame(T);
+    if (!vmode) renderFrame(T);
+    else if (!playing || vid.paused || Math.abs(vid.currentTime - T) > 0.15) vid.currentTime = T;
     $('time').textContent = `${fmt(T)} / ${fmt(TOTAL)}`;
     const k = sceneAt(T);
     $('hud').textContent = `${fmt(T)} · кадр ${Math.round(T * FPS)} · ${k + 1}. ${SCENES[k].name}`;
@@ -96,6 +106,7 @@
       audio.currentTime = T; audio.playbackRate = +$('rate').value;
       on ? audio.play().catch(() => {}) : audio.pause();
     }
+    if (vmode) { vid.playbackRate = +$('rate').value; vid.currentTime = T; on ? vid.play().catch(() => {}) : vid.pause(); }
     persist();
   }
 
@@ -229,6 +240,8 @@
       e.stopPropagation();
     };
     c.append(ta);
+    draft.refs = draft.refs || [];
+    c.append(Refs.tray(draft.refs, c, persistRefs));
     const acts = el('div', 'acts');
     const save = el('button', 'primary', 'Сохранить'); save.onclick = saveDraft;
     const cancel = el('button', 'ghost', 'Отмена'); cancel.onclick = () => { draft = null; persist(); renderNotes(); };
@@ -248,6 +261,8 @@
     if (n.caption) c.append(el('div', 'cap', `«${esc(n.caption)}»`));
     const txt = el('div', 'txt', esc(n.text || ''));
     c.append(txt);
+    let refsEl = Refs.view(n.refs);
+    c.append(refsEl);
     for (const r of n.replies || []) c.append(el('div', 'cap', `<b>${esc(r.who)}:</b> ${esc(r.text)}`));
     const acts = el('div', 'acts');
     if (n.kind === 'sfx' && n.sfx) {
@@ -263,7 +278,14 @@
       const onRange = () => { touch(n); save(); const nre = rangeEditor(n, onRange); re.replaceWith(nre); re = nre; drawMarks(); drawPins(); };
       re = rangeEditor(n, onRange);
       ta.before(re);
-      const fin = () => { n.text = ta.value; touch(n); save(); renderNotes(); };
+      const items = (n.refs || []).map(path => ({ path }));
+      const tr = Refs.tray(items, c);
+      refsEl.replaceWith(tr); refsEl = tr;
+      const fin = async () => {
+        try { n.refs = await Refs.upload(items, n.id); } catch (e) { toast('📎 Картинки не загрузились: ' + e.message); return; }
+        if (!n.refs.length) delete n.refs;
+        n.text = ta.value; touch(n); save(); renderNotes();
+      };
       ta.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) fin(); if (e.key === 'Escape') renderNotes(); e.stopPropagation(); };
       edit.textContent = 'Готово'; edit.onclick = fin;
     };
@@ -283,16 +305,22 @@
 
   function newDraft(x, y) {
     setPlay(false); sfxDraft = null;
-    draft = { t: +T.toFixed(3), x, y, text: draft && draft.text || '' };
+    draft = { t: +T.toFixed(3), x, y, text: draft && draft.text || '', refs: draft && draft.refs || [] };
     persist(); renderNotes();
   }
 
   async function saveDraft() {
-    if (!draft || !draft.text.trim()) return;
+    if (!draft || !((draft.text || '').trim() || (draft.refs || []).length)) return;
     const id = notes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
+    let refs = [];
+    if ((draft.refs || []).length) {
+      $('saved').textContent = 'загружаю картинки…';
+      try { refs = await Refs.upload(draft.refs, id); } catch (e) { toast('📎 Картинки не загрузились: ' + e.message); $('saved').textContent = ''; return; }
+    }
     const k = sceneAt(draft.t);
-    const n = { id, t: draft.t, t2: draft.t2 || null, x: draft.x, y: draft.y, text: draft.text.trim(), status: 'open',
+    const n = { id, t: draft.t, t2: draft.t2 || null, x: draft.x, y: draft.y, text: (draft.text || '').trim(), status: 'open',
       scene: k + 1, sceneName: SCENES[k].name, caption: captionAt(draft.t), created: new Date().toISOString(), updated: Date.now() };
+    if (refs.length) n.refs = refs;
     notes.push(n); draft = null; activeId = id; persist();
     await save(); renderNotes();
     shot(n);
@@ -344,7 +372,7 @@
   // copy as text (fallback way to send)
   $('copy').onclick = async () => {
     const lines = live().filter(n => n.status !== 'done').sort((a, b) => a.t - b.t).map(n =>
-      `#${n.id} [${fmt(n.t)}${n.t2 ? '–' + fmt(n.t2) : ''}] сцена ${n.scene} «${n.sceneName}»${n.x != null ? ` (точка ${Math.round(n.x)},${Math.round(n.y)})` : ''}: ${n.text}`);
+      `#${n.id} [${fmt(n.t)}${n.t2 ? '–' + fmt(n.t2) : ''}] сцена ${n.scene} «${n.sceneName}»${n.x != null ? ` (точка ${Math.round(n.x)},${Math.round(n.y)})` : ''}: ${n.text}${n.refs && n.refs.length ? ` [референсы: ${n.refs.join(', ')}]` : ''}`);
     try { await navigator.clipboard.writeText(lines.join('\n')); $('saved').textContent = 'скопировано ✓'; } catch { prompt('Скопируй:', lines.join('\n')); }
   };
 
@@ -711,6 +739,20 @@
     setTimeout(poll, 1000);
   }
 
+  function setVMode(on) {
+    vmode = !!(on && vinfo && vinfo.url);
+    vid.style.display = vmode ? 'block' : 'none';
+    const b = $('vidBtn'), stale = vinfo && vinfo.stale;
+    b.textContent = vmode ? '🎞 видео' : '⚙ живой';
+    b.classList.toggle('stale', !!(vmode && stale));
+    b.title = !vinfo || !vinfo.url ? 'Видео ещё не собрано (build.sh) — кадры рисуются вживую'
+      : vmode ? (stale ? 'Показываю собранное видео, но код сцен новее: правок в нём ещё нет. Клик — рисовать вживую.' : 'Показываю собранное видео. Клик — рисовать кадр вживую.')
+      : 'Кадры рисуются вживую (видны правки до пересборки, может лагать). Клик — показывать собранное видео.';
+    if (vmode) { vid.currentTime = T; if (playing) vid.play().catch(() => {}); } else vid.pause();
+    draw(); persist();
+  }
+  $('vidBtn').onclick = () => setVMode(!vmode);
+
   // ---------- boot ----------
   READY.then(async () => {
     if (keep.snd != null) $('snd').value = keep.snd;
@@ -718,8 +760,14 @@
     if (keep.filter) { filter = keep.filter; document.querySelectorAll('#filters button').forEach(x => x.classList.toggle('sel', x.dataset.f === filter)); }
     if ($('snd').value) audio.src = $('snd').value;
     draft = keep.draft || null; activeId = keep.activeId || null; loopOn = !!keep.loopOn;
+    if (draft) try { draft.refs = JSON.parse(sessionStorage.getItem('reviewRefs') || '[]'); } catch { draft.refs = []; }
     T = keep.T || 0;
+    const ht = location.hash.match(/t=([\d.]+)/);          // review.html#t=12.3 (links from the script page)
+    if (ht) { T = +ht[1]; history.replaceState(null, '', location.pathname); }
     buildTimeline();
+    try { vinfo = await (await fetch('/api/video')).json(); } catch { vinfo = null; }
+    if (vinfo && vinfo.url) { vid.src = encodeURI(vinfo.url) + '?v=' + vinfo.mtime; }
+    setVMode(keep.vmode != null ? keep.vmode : !!(vinfo && vinfo.url && !vinfo.stale));
     await loadNotes();
     await loadSfx();
     try { const z = +sessionStorage.getItem('reviewZoom'); if (z > 1) setZoom(z); } catch {}

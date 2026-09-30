@@ -50,7 +50,7 @@ def main():
                          "words": map_display_words(s["text"], words, spoken)})
         print(f"sec{i} «{s['title']}»: {len(words)} слов распознано, start {t:.2f} dur {d:.2f}")
         t += d + GAP
-    data = {"total": round(t - GAP + TAIL, 3), "sections": sections}
+    data = {"total": round(t - GAP + cfg.get("tail", TAIL), 3), "sections": sections}
     with open(os.path.join("src", "vo_timing.js"), "w", encoding="utf-8") as f:
         f.write("window.VO = " + json.dumps(data, ensure_ascii=False, indent=1) + ";\n")
     with open(os.path.join("build", "vo_timing.json"), "w", encoding="utf-8") as f:

@@ -22,10 +22,11 @@ trap '[ -n "$STARTED" ] && kill $STARTED 2>/dev/null || true' EXIT
 node render.js sfx
 python audio.py
 [ "$1" = "audio" ] && { echo "OK -> build/mix.wav"; exit 0; }
-node render.js frames ${FPS:-60} 6
+node render.js frames ${FPS:-60} ${WORKERS:-6}
 mkdir -p out
 NAME=$(basename "$PWD" | tr ' ' '_')
-ffmpeg -v error -y -framerate ${FPS:-60} -i build/frames/%05d.png -i build/mix.wav -c:v libx264 -preset slow -crf 17 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "out/${NAME}.mp4"
+EXT=$(cat build/frames/format.txt 2>/dev/null || echo png)
+ffmpeg -v error -y -framerate ${FPS:-60} -i build/frames/%05d.$EXT -i build/mix.wav -c:v libx264 -preset medium -crf 17 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "out/${NAME}.mp4"
 ffmpeg -v error -y -i "out/${NAME}.mp4" -i build/mix_no_vo.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest "out/${NAME}_NO_VO.mp4"
 cp build/mix_no_vo.wav out/music_sfx_no_vo.wav
 echo "OK -> out/${NAME}.mp4"

@@ -16,6 +16,8 @@
   body { display: grid; grid-template-columns: 1fr 400px; grid-template-rows: 1fr auto; height: 100vh; overflow: hidden; }
   #stage { position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 12px; }
   #wrap { position: relative; height: 100%; aspect-ratio: 9 / 16; max-width: 100%; }
+  video#vid { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 10px; pointer-events: none; background: #000; display: none; }
+  #vidBtn.stale { border-color: #f59e0b; color: #fbbf24; }
   canvas#c { width: 100%; height: 100%; display: block; border-radius: 10px; cursor: crosshair; background: #000; }
   .pin { position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; background: var(--pin);
          border: 3px solid #fff; color: #fff; font-weight: 800; font-size: 14px; display: grid; place-items: center;
@@ -28,7 +30,9 @@
 
   aside { grid-row: 1 / 3; grid-column: 2; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
   aside header { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
-  aside h1 { font-size: 17px; margin: 0 0 4px; }
+  aside h1 { font-size: 17px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+  .toscript { font-size: 12px; font-weight: 500; color: var(--acc); text-decoration: none; border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; }
+  .toscript:hover { background: var(--panel2); }
   .hint { color: var(--dim); font-size: 12px; }
   kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 11px monospace; }
   #filters { display: flex; gap: 6px; margin-top: 10px; }
@@ -116,6 +120,7 @@
 <div id="stage">
   <div id="wrap">
     <canvas id="c" width="1080" height="1920"></canvas>
+    <video id="vid" muted playsinline preload="auto"></video>
     <div id="pins"></div>
     <div id="hud">загрузка…</div>
     <div id="reloaded">код обновлён ✓</div>
@@ -127,6 +132,7 @@
   <div id="controls">
     <button id="play" title="Пробел">▶</button>
     <button id="loopBtn">🔁</button>
+    <button id="vidBtn" title="Показывать собранное видео (без лагов) или рисовать кадр вживую (видно правки до пересборки)">⚙ живой</button>
     <button id="prevF" title="←">‹</button><button id="nextF" title="→">›</button>
     <span id="time">00:00.00</span>
     <span id="caption"></span>
@@ -144,8 +150,8 @@
 
 <aside>
   <header>
-    <h1>Правки</h1>
-    <div class="hint">Кликни по кадру — поставишь пин и откроешь заметку. <kbd>N</kbd> — заметка без пина, <kbd>Пробел</kbd> — плей/пауза, <kbd>←</kbd><kbd>→</kbd> — кадр, <kbd>Shift</kbd>+стрелки — 1 с, <kbd>[</kbd><kbd>]</kbd> — к соседней правке.<br><b>Отрезок:</b> <kbd>Shift</kbd>+протянуть по таймлайну, или <kbd>I</kbd> / <kbd>O</kbd> — начало / конец. <kbd>L</kbd> или 🔁 — повтор отрезка.<br><b>Звуки:</b> кликни по цветному блоку на дорожках под словами — заменить, громче/тише, удалить, коммент. «+ 🔊» — добавить звук в текущий момент. <kbd>Ctrl</kbd>+колесо над таймлайном или −/+ — зум. Прослушку останавливает повторный клик по ■ или <kbd>Esc</kbd>. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> — сохранить.</div>
+    <h1>Правки <a href="script.html" class="toscript" title="Раскадровка сценария: текст, кадры, фактчек">📝 Сценарий</a></h1>
+    <div class="hint">Кликни по кадру — поставишь пин и откроешь заметку. <kbd>N</kbd> — заметка без пина, <kbd>Пробел</kbd> — плей/пауза, <kbd>←</kbd><kbd>→</kbd> — кадр, <kbd>Shift</kbd>+стрелки — 1 с, <kbd>[</kbd><kbd>]</kbd> — к соседней правке.<br><b>Отрезок:</b> <kbd>Shift</kbd>+протянуть по таймлайну, или <kbd>I</kbd> / <kbd>O</kbd> — начало / конец. <kbd>L</kbd> или 🔁 — повтор отрезка.<br><b>Референсы:</b> картинку можно вставить в заметку через <kbd>Ctrl</kbd>+<kbd>V</kbd>, перетащить на неё файл или нажать 📎.<br><b>Звуки:</b> кликни по цветному блоку на дорожках под словами — заменить, громче/тише, удалить, коммент. «+ 🔊» — добавить звук в текущий момент. <kbd>Ctrl</kbd>+колесо над таймлайном или −/+ — зум. Прослушку останавливает повторный клик по ■ или <kbd>Esc</kbd>. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> — сохранить.</div>
     <div id="filters">
       <button data-f="open" class="sel">Открытые</button><button data-f="all">Все</button><button data-f="done">Сделанные</button>
     </div>
@@ -158,11 +164,16 @@
   </footer>
 </aside>
 
+<script>window.THREE_READY = new Promise(r => (window.__3dok = r));</script>
+<script type="module" src="vendor/boot3d.js"></script>
 <script src="vo_timing.js"></script>
 <script src="lib.js"></script>
 <script src="chars.js"></script>
+<script src="stage3d.js"></script>
+<script src="moves3d.js"></script>
 <script src="scenes.js"></script>
 <script src="main.js"></script>
+<script src="refs.js"></script>
 <script src="review.js"></script>
 </body>
 </html>
