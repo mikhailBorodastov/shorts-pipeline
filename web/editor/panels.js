@@ -165,8 +165,39 @@ export function initPanels(ED) {
     s.textContent = o.type === 'group' ? `группа · частей: ${(d.objects || []).filter(x => x.parent === id).length}` :
       `источник: ${src.el ? `элемент «${els[src.el] || src.el}» (${src.el})` : '—'} · префаб ${src.prefab || '—'}${src.lib ? ' · ' + src.lib : ''}`;
     props.append(s);
+    if (o.type !== 'group') props.append(swapBtn(o));
     const au = (d.authored || {})[id];
     if (au && au.length) props.append(Object.assign(div('hint'), { textContent: '✋ правил руками: ' + au.join(', ') + ' — Claude не трогает без просьбы' }));
+  }
+
+  // ↔ заменить предмет 3D-пропсом (S3): из препродакшена этого видео или из библиотеки канала; положение, ключи и параметры остаются
+  function swapBtn(o) {
+    const wrap = div('swap'), list = ED.info.props3d || [];
+    const b = document.createElement('button');
+    b.textContent = '↔ Заменить на 3D-пропс…';
+    b.title = list.length ? 'Поставить вместо этого предмета объёмный пропс: положение, ключи и параметры сохранятся. Отменяется Ctrl+Z.' : 'Пока нет 3D-пропсов: сделай их в препродакшене (переключатель 2D / 3D у пропса)';
+    b.disabled = !list.length;
+    b.onclick = () => {
+      if (wrap.querySelector('.menu')) { wrap.querySelector('.menu').remove(); return; }
+      const m = div('menu');
+      for (const it of list) {
+        const x = document.createElement('button'); x.className = 'mi';
+        if (it.img) { const im = document.createElement('img'); im.src = it.img; im.alt = ''; x.append(im); }
+        x.append(Object.assign(document.createElement('span'), { textContent: `${it.name} · ${it.from}` }));
+        x.title = it.ref;
+        if ((o.src || {}).prefab === it.ref) x.disabled = true;
+        x.onclick = async () => {
+          m.remove(); ED.msg(`гружу «${it.name}»…`);
+          if (!(await ED.loadProp(it.ref))) { ED.msg(`«${it.name}» не загрузился — открой пропс в карточке и проверь, что он рисуется`, 'err'); return; }
+          const was = (o.src || {}).prefab || '—';
+          ED.commit([{ op: 'set', path: ['objects', o.id, 'src', 'prefab'], value: it.ref }], `${o.name}: ${was} → 3D-пропс «${it.name}»`);
+        };
+        m.append(x);
+      }
+      wrap.append(m);
+    };
+    wrap.append(b);
+    return wrap;
   }
 
   // one numeric row: label (drag to scrub), inputs, ◆
@@ -239,7 +270,8 @@ export function initPanels(ED) {
     if (prop === 'pos' && p && (Math.abs(p[0]) > 12 || Math.abs(p[2]) > 12 || p[1] < -2 || p[1] > 6)) ED.msg(`⚠ «${o.name}» далеко от комнаты — так и задумано?`, 'warn');
   }
   function params(o) {
-    const info = ((ED.info.prefabInfo || {})[(o.src || {}).prefab]) || {};
+    const pf = (o.src || {}).prefab, lp = ED.lib && ED.lib[pf];
+    const info = ((ED.info.prefabInfo || {})[pf]) || (lp ? { params: lp.params || {}, note: `3D-пропс «${lp.name || pf}» (${pf})` } : {});
     const pr = Object.assign({}, info.params || {}, o.params || {});
     const keys = Object.keys(pr);
     if (info.note) props.append(Object.assign(div('hint'), { textContent: info.note }));

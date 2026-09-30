@@ -14,7 +14,12 @@ const HINTS2 = {
 <p><b>Черновик — не финал:</b> это согласованный образ и стартовый код. Что хочешь видеть в готовом ролике, пиши в <b>🎬 Для финала</b> (у утверждённого — ещё и пином на картинке): это ТЗ для сборки. <b>@</b> в любом поле — ссылка на другой элемент («поставь сюда @[Табличка трассы]»).</p>`,
 };
 const KIND = k => REF.kinds.find(x => x.key === k) || REF.kinds[2];
-const elRender = e => { const rs = e.renders || []; return rs.find(r => r.id === e.render) || rs[rs.length - 1]; };
+// 2D / 3D у персонажа и пропса (S3): нет поля dim — 2D, если черновики уже есть, иначе по умолчанию канала (как ideas_claude.dim_of)
+const dimOf = e => e.dim || ((e.renders || []).length ? '2d' : (((App.info.channel || {}).defaults || {}).dim || '2d'));
+const isProp3 = e => e.kind === 'prop' && dimOf(e) === '3d';
+// черновики того вида, который сейчас выбран: у пропса 2D и 3D-версии живут рядом, переключатель показывает свои
+const elRenders = e => { const rs = e.renders || []; if (e.kind !== 'prop') return rs; const d3 = dimOf(e) === '3d'; return rs.filter(r => !!r.three3 === d3); };
+const elRender = e => { const rs = elRenders(e); return rs.find(r => r.id === e.render) || rs[rs.length - 1]; };
 // layers of a sound element (e.mix; old plans — the single chosen e.sound): [{id, sid, at, gain, note, s: candidate}]
 const elMix = e => {
   const ss = e.sounds || [], mix = e.mix != null ? e.mix : e.sound ? [{ id: 'l1', sid: e.sound, at: 0, gain: 1, note: '' }] : [];
@@ -233,7 +238,7 @@ Object.assign(Plan, {
       h('div.elbody', h('b', e.name || '(без названия)'), e.desc && h('div.eldesc', e.desc),
         h('div.elmeta', h('span.st', { class: e.status || 'new' }, { ok: '✓ утверждён', drop: '✗ не нужен' }[e.status] || '💡 предложен'),
           (e.refs || []).length > 0 && h('span', { title: 'референсов' }, `📎${e.refs.length}`), r && h('span', { title: 'версия черновика' }, `🎨 v${r.v}`),
-          nfx > 0 && h('span', { title: 'неотправленных правок' }, `✏️${nfx}`), r && r.three && h('span', { title: '3D-сцена — можно смотреть живьём' }, '🧊'),
+          nfx > 0 && h('span', { title: 'неотправленных правок' }, `✏️${nfx}`), r && (r.three || r.three3) && h('span', { title: r.three3 ? '3D-пропс — можно покрутить' : '3D-сцена — можно смотреть живьём' }, '🧊'),
           nmix > 1 && h('span', { title: 'звук сведён из нескольких слоёв' }, `🎚${nmix}`), nfin > 0 && h('span', { title: 'пунктов «для финала»' }, `🎬${nfin}`),
           e.by === 'claude' && h('span', { title: 'предложил Claude' }, '🤖')),
         e.kind === 'scene' && sceneCastOf(d, e).length > 0 && Plan.castRow(d, e, true)));
@@ -356,12 +361,14 @@ Object.assign(Plan, {
 
   // 🎨 draft by our engine (ideas_claude.element_spec) + edits by pins, like the video review
   elDraw(d, key, e) {
-    const rs = e.renders || [], cur = elRender(e), scope = 'element:' + e.id, running = Claude.running(key, scope);
+    const rs = elRenders(e), cur = elRender(e), scope = 'element:' + e.id, running = Claude.running(key, scope);
     const FX = ['elements', e.id, 'fx', 'main'], fx = (e.fx || {}).main || {}, pins = fx.pins || [], n = fxCount(fx);
-    const three = e.kind === 'scene' && d.engine === '3d';
+    const three = e.kind === 'scene' && d.engine === '3d', prop3 = isProp3(e), p3 = cur && cur.three3, pins3 = fx.pins3d || [];
+    const has2d = prop3 && (e.renders || []).some(r => !r.three3);
     // a click on the picture: a pin for the next draft (red) or, once the element is approved, a wish «для финала» (green)
     const mode = Plan.pinMode[e.id] || (e.status === 'ok' ? 'final' : 'fix'), FIN = ['elements', e.id, 'final'];
-    const img = cur && h('img', { src: '/' + cur.img, alt: '', title: mode === 'final' ? 'Клик — пин «для финала»' : 'Клик — пин с правкой черновика', onclick: ev => {
+    const img = cur && p3 ? h('img', { src: '/' + cur.img, alt: '', title: 'Клик — покрутить модель и поставить пины', onclick: () => Plan.viewProp(d, e, cur) })
+      : cur && h('img', { src: '/' + cur.img, alt: '', title: mode === 'final' ? 'Клик — пин «для финала»' : 'Клик — пин с правкой черновика', onclick: ev => {
       const b = ev.currentTarget.getBoundingClientRect(), id = uid(mode === 'final' ? 'f' : 'p');
       const x = Math.round((ev.clientX - b.left) / b.width * 1000) / 1000, y = Math.round((ev.clientY - b.top) / b.height * 1000) / 1000;
       if (mode === 'final') { App.focusKey = key + '|' + [...FIN, id, 'text'].join('.'); Store.add(key, FIN, { id, text: '', x, y }); return; }
@@ -373,7 +380,14 @@ Object.assign(Plan, {
     const bare = e.kind === 'scene' ? sceneCastOf(d, e).map(c => c.x).filter(x => !elRender(x)).map(x => x.name) : [];
     const ask = bare.length ? `У ${bare.length === 1 ? 'элемента' : 'элементов'} сцены ещё нет черновика: ${bare.join(', ')}. Claude нарисует ${bare.length === 1 ? 'его' : 'их'} прямо в сцене по описанию. Рисовать сцену сейчас?` : null;
     return [
-      h('div.card-head', h('h3', '🎨 Черновик' + (three || (cur && cur.three) ? ' · 3D' : '')),
+      h('div.card-head', h('h3', '🎨 Черновик' + (three || (cur && cur.three) || prop3 ? ' · 3D' : '')),
+        (e.kind === 'prop' || e.kind === 'char') && h('div.seg.small', { title: '2D — рисунок-карточка; 3D — объёмный пропс (персонажи в 3D — этап S4)' },
+          ['2d', '3d'].map(k => h('button', { class: dimOf(e) === k ? 'sel' : '', disabled: running || (e.kind === 'char' && k === '3d'),
+            title: e.kind === 'char' && k === '3d' ? 'Персонажи в 3D — этап S4 (скелеты)' : '',
+            onclick: () => { Store.set(key, ['elements', e.id, 'dim'], k, true); } }, k.toUpperCase()))),
+        prop3 && h('select.small', { title: 'Как Claude делает 3D-пропс', disabled: running, onchange: ev => Store.set(key, ['elements', e.id, 'how'], ev.target.value, true) },
+          [['auto', 'способ: сам выберет'], ['shapes', 'фигурами кодом'], ['model', 'из модели 📦'], ...(App.info.blender ? [['blender', 'через Blender']] : [])]
+            .map(([v, l]) => h('option', { value: v, selected: (e.how || 'auto') === v }, l))),
         rs.length > 1 && h('span.row', rs.map(r => h('button.small', { class: r === cur ? 'sel' : '', title: r.feedback ? 'правка: ' + r.feedback : 'первая версия',
           onclick: () => Store.set(key, ['elements', e.id, 'render'], r.id, true) }, 'v' + r.v))),
         h('span.sp'),
@@ -383,19 +397,28 @@ Object.assign(Plan, {
           title: 'Перевести сцену в формат редактора (🎬 Оформить сцену)' }),
         cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
-        !cur && Claude.btn({ label: 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
-          title: 'Claude нарисует элемент нашим тулкитом по описанию и референсам, сам посмотрит и поправит. 3–10 минут.' })),
-      running && h('p.dim', 'Claude рисует: пишет код, рендерит, смотрит на картинку и правит — обычно 3–10 минут. Можно заниматься другими элементами.'),
+        p3 && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
+        !cur && Claude.btn({ label: prop3 ? (has2d ? 'Сделать в 3D' : 'Сделать 3D-пропс') : 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
+          title: prop3 ? 'Claude (Opus) соберёт объёмный пропс (фигурами, из модели или в Blender), снимет четыре ракурса, сам посмотрит и поправит. 5–15 минут.'
+            : 'Claude нарисует элемент нашим тулкитом по описанию и референсам, сам посмотрит и поправит. 3–10 минут.' })),
+      running && h('p.dim', prop3 ? 'Claude собирает 3D-пропс: пишет код (или модель в Blender), снимает четыре ракурса, смотрит и правит — обычно 5–15 минут.'
+        : 'Claude рисует: пишет код, рендерит, смотрит на картинку и правит — обычно 3–10 минут. Можно заниматься другими элементами.'),
       Claude.running(key, 'sceneconvert:' + e.id) && h('p.dim', h('span.spin'), ' 🎬 Claude переводит сцену в редактор и сравнивает кадры «было / стало» — 5–10 минут…'),
       e.stage && e.stage.work && Plan.stageInfo(d, e),
       Claude.running(key, 'layout3d:' + e.id) && h('p.dim', h('span.spin'), ' ✋ снимаю новую расстановку — полминуты…'),
-      !cur && !running && h('p.dim', three ? 'Сцена будет 3D-диорамой (stage3d, как в «Не жми эту кнопку»). Переключатель 2D / 3D — на странице препродакшена.'
+      !cur && !running && h('p.dim', prop3 ? (has2d ? '3D-версии ещё нет. Claude сделает её по 2D-черновику: та же форма, цвета и детали, но объёмно — его можно будет крутить и ставить в сцены.'
+          : 'Пропс будет объёмным: Claude соберёт его фигурами, из модели 📦 или в Blender. Его можно будет покрутить и поставить пины прямо на модель.')
+        : three ? 'Сцена будет 3D-диорамой (stage3d, как в «Не жми эту кнопку»). Переключатель 2D / 3D — на странице препродакшена.'
         : 'Добавь референсы слева (необязательно) и нажми ✨ — получишь черновик, который правится пинами, как в ревью.'),
-      cur && h('div.seg.pinmode', { title: 'Что ставит клик по картинке' },
+      cur && !p3 && h('div.seg.pinmode', { title: 'Что ставит клик по картинке' },
         [['fix', '✏️ правка черновика'], ['final', '🎬 для финала']].map(([k, l]) => h('button', { class: mode === k ? 'sel' : '', onclick: () => { Plan.pinMode[e.id] = k; App.render(); } }, l))),
       cur && h('div.elshot', h('div.pinwrap.big', img, pinMarks(fx), finMarks),
         (cur.extra || []).length > 0 && h('div.extra', cur.extra.map(x => h('img', { src: '/' + x, alt: '', title: 'другой момент времени — открыть крупно', onclick: () => UI.lightbox('/' + x) })))),
-      cur && (pins.length ? h('ol.pinlist', pins.map((p, i) => h('li', h('span.pnum', i + 1),
+      p3 && (pins3.length ? h('ol.pinlist', pins3.map((p, i) => h('li', h('span.pnum', i + 1),
+        line(key, [...FX, 'pins3d', p.id, 'text'], { ph: 'что здесь не так / как надо', cls: 'box' }),
+        h('button.icon.del', { title: 'Убрать пин', onclick: () => Store.del(key, [...FX, 'pins3d'], p.id) }, '×'))))
+        : h('p.dim', 'Нажми «🧊 Покрутить · 📍 пины» (или на картинку): крути модель мышью и кликай по ней — каждый клик ставит пин с номером, текст правки пишешь рядом.')),
+      cur && !p3 && (pins.length ? h('ol.pinlist', pins.map((p, i) => h('li', h('span.pnum', i + 1),
         line(key, [...FX, 'pins', p.id, 'text'], { ph: 'что здесь не так / как надо', cls: 'box' }),
         h('button.icon.del', { title: 'Убрать пин', onclick: () => Store.del(key, [...FX, 'pins'], p.id) }, '×'))))
         : h('p.dim', mode === 'final' ? 'Клик по картинке ставит зелёный пин «для финала» — пункт появится в блоке ниже. Правки к следующему черновику — режим «✏️ правка черновика».'
@@ -411,7 +434,8 @@ Object.assign(Plan, {
       cur && cur.feedback && h('p.dim.clamp', cur.by === 'layout' ? `v${cur.v} — ${cur.feedback}` : `✏️ v${cur.v} — правка: ${cur.feedback}`),
       cur && cur.summary && h('p.dim.clamp', { title: 'Клик — целиком', onclick: ev => ev.currentTarget.classList.toggle('open') }, cur.summary),
       cur && cur.note && h('p.clamp.elnote', '💬 ' + cur.note),
-      cur && h('div.code.dim.small', 'код: ', h('code', `_ideas/render/${cur.dir}/element.js`), cur.fn && [' · функция ', h('code', cur.fn)]),
+      cur && h('div.code.dim.small', 'код: ', h('code', `render/${cur.dir}/${p3 ? 'prefab.js' : 'element.js'}`), cur.fn && [' · функция ', h('code', cur.fn)],
+        p3 && cur.how && [' · способ: ', { shapes: 'фигуры кодом', model: 'модель 📦', blender: 'Blender' }[cur.how] || cur.how]),
     ];
   },
 
@@ -442,6 +466,34 @@ Object.assign(Plan, {
       h('iframe', { src, title: '3D-сцена', allow: 'fullscreen' }),
       h('div.row', h('span.dim.small', '«✋ Двигать» (M) — переставить объекты: тяни мышью или стрелками, Q / E — поворот, + / − — размер. «💾 Сохранить» делает новую версию черновика без Claude. Пробел — пауза.'), h('span.sp'),
         h('a.btn', { href: src, target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => removeEventListener('message', onMsg) });
+  },
+  // 🧊 3D-пропс: поворотный стол (stand3d.html?prop=…&view=1&pin=1) — крутить мышью, клик по модели ставит пин (fx.main.pins3d) с текстом справа
+  viewProp(d, e, r) {
+    const key = 'plan:' + d.id, PP = ['elements', e.id, 'fx', 'main', 'pins3d'];
+    const src = `/tpl/stand3d.html?prop=${encodeURIComponent('/rscene/' + r.dir + '/prefab.js')}&view=1&pin=1`;
+    const frame = h('iframe', { src, title: '3D-пропс' }), list = h('div.p3list');
+    const cur = () => { const el = ((Store.get(key) || {}).elements || []).find(x => x.id === e.id); return (((el || {}).fx || {}).main || {}).pins3d || []; };
+    const send = () => { try { frame.contentWindow.postMessage({ type: 'prop-pins', pins: cur().map((p, i) => ({ n: i + 1, p: p.p })) }, location.origin); } catch (err) {} };
+    const draw = focus => {
+      const ps = cur();
+      list.replaceChildren(h('h4', '📍 Пины на модели'),
+        ps.length ? h('ol.pinlist', ps.map((p, i) => h('li', h('span.pnum', i + 1),
+          line(key, [...PP, p.id, 'text'], { ph: 'что здесь не так / как надо', cls: 'box' }),
+          h('button.icon.del', { title: 'Убрать пин', onclick: () => { Store.del(key, PP, p.id, false); draw(); send(); App.render(); } }, '×'))))
+          : h('p.dim.small', 'Кликни по модели — появится пин с номером. Крутить — тяни мышью, колесо — ближе, пробел — вращение стола.'),
+        h('p.dim.small', 'Правки уходят в следующую версию кнопкой «Поправить» в карточке. Там же — «в целом».'));
+      if (focus) { const inp = list.querySelectorAll('input'); const last = inp[inp.length - 1]; if (last) last.focus(); }
+    };
+    const onMsg = ev => {
+      if (ev.origin !== location.origin || !ev.data || ev.source !== frame.contentWindow) return;
+      if (ev.data.type === 'prop-ready') send();
+      if (ev.data.type === 'prop-pin') { Store.add(key, PP, { id: uid('p'), p: ev.data.p, n: ev.data.n, text: '' }, false); draw(true); send(); App.render(); }
+    };
+    addEventListener('message', onMsg);
+    draw();
+    UI.modal(`🧊 ${e.name} · v${r.v}`, h('div.view3d.prop3', h('div.p3main', frame, list),
+      h('div.row', h('span.dim.small', 'Лист из четырёх ракурсов — в карточке; клик по картинке открывает этот просмотр.'), h('span.sp'),
+        h('a.btn', { href: src.replace('&pin=1', ''), target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => removeEventListener('message', onMsg) });
   },
   viewModel(title, url) {
     const src = `/tpl/stand3d.html?model=${encodeURIComponent(url)}&view=1`;

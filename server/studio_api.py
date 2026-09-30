@@ -141,6 +141,9 @@ def lib_search(c, q="", kind=""):
 
 def _render_of(e):
     rs = e.get("renders") or []
+    if e.get("kind") == "prop":                               # у пропса 2D и 3D-версии рядом: берём те, что выбраны переключателем (dim)
+        d3 = e.get("dim") == "3d"
+        rs = [r for r in rs if bool(r.get("three3")) == d3]
     return next((r for r in rs if r.get("id") == e.get("render")), rs[-1] if rs else None)
 
 
@@ -155,7 +158,7 @@ def candidates(A, vid=None):
                 continue
             has = bool(_render_of(e)) if e.get("kind") != "sound" else bool(A.pr().el_mix(e))
             out.append({"video": d["id"], "videoName": d.get("name"), "el": e["id"], "name": e.get("name"), "kind": e.get("kind"),
-                        "ready": has, "lib": e.get("lib"), "assets": len(e.get("assets") or [])})
+                        "ready": has, "lib": e.get("lib"), "assets": len(e.get("assets") or []), "d3": bool((_render_of(e) or {}).get("three3"))})
     return out
 
 
@@ -215,7 +218,7 @@ def publish(A, job):
         if not r:
             raise ValueError("у элемента нет черновика")
         rdir = P.resolve("render/" + r["dir"])
-        for f in ("element.js", "prefabs.js", "scene.json"):
+        for f in ("element.js", "prefabs.js", "scene.json", "prefab.js", "model.glb", "model.py"):   # prefab.js + model — 3D-пропс (S3)
             put(os.path.join(rdir, f), f)
         preview = put(P.resolve(r["img"]), "preview" + os.path.splitext(r["img"])[1])
         for a in e.get("assets") or []:                      # 3D models / pictures the author took into work, with their licenses
@@ -231,14 +234,17 @@ def publish(A, job):
         raise ValueError("у чужого ассета нет лицензии — в библиотеку без неё нельзя")
     A.write_text(os.path.join(vd, "license.json"), json.dumps(lic or [{"own": True, "note": "нарисовано в Claude Studio"}], ensure_ascii=False, indent=1))
     A.write_text(os.path.join(vd, "README.md"), f"# {e.get('name')} — v{v}\n\n{e.get('desc', '')}\n\nИз видео «{doc.get('name')}» ({vid}), элемент {eid}.\n"
-                 + (f"Код: element.js (функция {r.get('fn')})\n" if kind != "sounds" and (r or {}).get("fn") else ""))
+                 + (f"Код: element.js (функция {r.get('fn')})\n" if kind != "sounds" and (r or {}).get("fn") else "")
+                 + ("3D-пропс: prefab.js (props3d.js), в сцене — src.prefab = 'lib:" + lid + "@" + str(v) + "'\n" if kind != "sounds" and (r or {}).get("three3") else ""))
     ver = {"v": v, "ts": now_ms(), "from": {"video": vid, "videoName": doc.get("name"), "element": eid, "render": (_render_of(e) or {}).get("id")},
-           "files": files, "preview": f"v{v}/{preview}" if preview else "", "fn": (_render_of(e) or {}).get("fn", "")}
+           "files": files, "preview": f"v{v}/{preview}" if preview else "", "fn": (_render_of(e) or {}).get("fn", ""),
+           "dim": "3d" if (_render_of(e) or {}).get("three3") else "2d"}
     card["versions"].append(ver)
     card["latest"] = v
     card["name"] = card.get("name") or e.get("name")
     A.write_text(card_p, json.dumps(card, ensure_ascii=False, indent=1))
-    row = {"id": lid, "kind": kind, "name": card["name"], "desc": card.get("desc", ""), "tags": card.get("tags", []), "latest": v,
+    row = {"id": lid, "kind": kind, "name": card["name"], "desc": card.get("desc", ""), "tags": card.get("tags", []), "latest": v, "dim": ver["dim"],
+           "d3": max([x["v"] for x in card["versions"] if x.get("dim") == "3d"] + [0]),
            "preview": f"{lid}/{ver['preview']}" if ver["preview"] else "", "from": ver["from"], "updated": now_ms()}
     items = [i for i in items if i["id"] != lid] + [row]
     lib_save_index(A, c, sorted(items, key=lambda i: (i["kind"], i["name"].lower())))
@@ -275,9 +281,12 @@ def handle_get(A, h, p, q):
         h._json(json.load(open(os.path.join(lib_dir(c), *lid.split("/"), kind.rstrip("s") + ".json"), encoding="utf-8"))); return True
     if p == "/api/lib/candidates":
         h._json({"items": candidates(A, _q1(q, "video") or None)}); return True
-    if p.startswith("/api/lib/file/"):                       # /api/lib/file/<channel>/<kind>/<slug>/v<N>/<file>
-        m = re.match(r"/api/lib/file/([a-z0-9-]+)/(.+)$", p)
-        c = channel_dir(m.group(1)) if m else None
+    if p.startswith("/api/lib/file/"):                       # /api/lib/file/<channel | video:<id>>/<kind>/<slug>/v<N>/<file>
+        m = re.match(r"/api/lib/file/((?:video:)?[a-z0-9-]+)/(.+)$", p)
+        cid = m and m.group(1)
+        if cid and cid.startswith("video:"):                  # сцена видео знает только свой id: канал — тот, где лежит видео
+            cid = P.index()["videos"].get(cid[6:], {}).get("channel")
+        c = channel_dir(cid) if cid else None
         if not c:
             h.send_error(404); return True
         return A._static(h, lib_dir(c), m.group(2))

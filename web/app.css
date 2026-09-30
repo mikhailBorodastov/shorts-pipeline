@@ -546,3 +546,10 @@ textarea.styleedit { width: 100%; min-height: 60vh; font: 12.5px/1.5 "JetBrains 
 .projbar { margin: 6px 0; }
 iframe.projframe { width: 100%; height: calc(100vh - 190px); border: 1px solid var(--line); border-radius: 8px; background: #111; }
 .soon ul { margin: 6px 0 10px 18px; }
+/* 🧊 3D-пропс: поворотный стол + пины справа (S3) */
+.view3d.prop3 .p3main { display: flex; gap: 10px; min-height: 0; }
+.view3d.prop3 iframe { flex: 1; min-width: 0; }
+.view3d.prop3 .p3list { width: 320px; flex: none; max-height: 80vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.view3d.prop3 .p3list h4 { margin: 0; }
+@media (max-width: 900px) { .view3d.prop3 .p3main { flex-direction: column; } .view3d.prop3 .p3list { width: auto; } }
+.card-head .seg.small button { padding: 2px 8px; font-size: 12px; }

@@ -46,6 +46,8 @@ function prop3d(def) {
       return G;
     };
   }
+  const b0 = def.build;                              // динамические наклейки (экраны) — в w.dyn мира, где бы пропс ни собирали
+  def.build = (w, o) => { const r = b0(w, o); const G = r && r.isObject3D ? r : r && r.obj; if (G && G.isObject3D) P3.live(w, G); return r; };
   PROPS3D[def.url] = def; PROP3D_LAST = def;
   return def;
 }

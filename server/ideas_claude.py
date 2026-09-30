@@ -5,7 +5,7 @@ apply(action, docs, params, result) -> ([(key, ops)], summary)
 docs = {"plan": штурм или None, "brand", "bank", "stats", "key", "data"}. ideas_api перезагружает модуль на лету.
 Методика — «Мастер-планер» (пересказ), подача шортсов — prompts/style-guide.md.
 """
-import json, os, re, shutil, sys, time, uuid
+import json, os, re, shutil, subprocess, sys, time, uuid
 import paths as P  # где что лежит (Claude Studio)
 import preprod  # модель элементов препродакшена: @-ссылки, состав сцен, слои звука
 
@@ -745,6 +745,71 @@ def _example_3d(root):
     return out
 
 
+def dim_of(e, ch=None):
+    """2d | 3d у персонажа и пропса (S3): поле dim; нет поля — 2d, если черновики уже есть, иначе по умолчанию канала (channel.json → defaults.dim)."""
+    if e.get("dim") in ("2d", "3d"):
+        return e["dim"]
+    if e.get("renders"):
+        return "2d"
+    return (((ch or {}).get("defaults") or {}).get("dim")) or "2d"
+
+
+def is_prop3(e, ch=None):
+    return e.get("kind") == "prop" and dim_of(e, ch) == "3d"      # персонажи в 3D — S4
+
+
+def _prop3_pins(docs, base, wd, pins):
+    """Прошлая версия 3D-пропса с номерами пинов с четырёх ракурсов -> wd/pins.png, pins_1…7.png."""
+    if not pins or not base:
+        return False
+    pf = os.path.join(P.resolve("render/" + base["dir"]), "prefab.js")
+    if not os.path.isfile(pf):
+        return False
+    pj = os.path.join(wd, "pins.json")
+    json.dump([{"n": i, "p": p["p"]} for i, p in enumerate(pins, 1)], open(pj, "w", encoding="utf-8"))
+    try:
+        subprocess.run(["node", os.path.join(P.STANDS, "render_prop.js"), f"/rscene/{base['dir']}/prefab.js", wd, "--port", str(docs["port"]), "--pins", pj],
+                       capture_output=True, timeout=240)
+    except Exception:
+        return False
+    return os.path.isfile(os.path.join(wd, "pins.png"))
+
+
+def prop3_engine(docs, e, rel, wd, blender):
+    """Контракт 3D-пропса (docs/studio/stage3-props.md) для промпта «🎨 Нарисовать черновик»."""
+    rp = _fwd(os.path.join(P.STANDS, "render_prop.js"))
+    br = _fwd(os.path.join(P.STANDS, "blender_run.py"))
+    how = e.get("how") or "auto"
+    ways = {"shapes": "фигурами кодом (P3.box / cyl / lathe / extrude + наклейки)",
+            "model": "из 3D-модели, которую автор взял в работу (📦 ассеты ниже), с доработкой кодом (детали, наклейки, цвета)",
+            "blender": "через Blender: скрипт bpy (фаски, булевы операции, сглаживание, сложные формы) → model.glb, детали и наклейки — кодом поверх"}
+    if how == "auto":
+        pick = ("Способ выбери сам по сложности: простые формы (ящики, цилиндры, панели) — фигурами кодом; "
+                + ("сложные, скруглённые, органические (кресло, телефонная трубка, машина) — через Blender; " if blender else "")
+                + "если автор взял подходящую модель в 📦 — из неё.")
+    else:
+        pick = "Способ задал автор: " + ways.get(how, how) + "."
+    style = (docs.get("channel") or {}).get("style3d") or "paper"
+    look = "бумажный макет — матовая бумага с зерном, линии сгибов, круглое собрано из граней" if style == "paper" else "игрушка — гладко, скруглённо, мягкий блик"
+    bl = ""
+    if blender:
+        bl = f"""
+   Blender (если выбрал его): напиши в текущую папку model.py — скрипт bpy для пустой сцены (метры; низ модели на z = 0, перед смотрит на -Y Blender:
+   после экспорта это +z three.js). Меши, модификаторы (Bevel, Boolean, Subdivision, Solidify), материалы — только цвет (Principled BSDF Base Color, roughness 1).
+   Собери командой (ровно так): python {br} model.py  → model.glb рядом + размеры; ошибки Python — в ответе, лог — model.log.
+   В prefab.js: models: {{ m1: 'model.glb' }}, kind: 'model', model: 'm1', h: <высота>, detail(w, o, G) {{ … наклейки и мелочи поверх … }}."""
+    return f"""Движок — 3D-пропс для диорамы (props3d.js поверх stage3d.js, three.js). Стиль 3D канала: {look} (материалы P3 делают его сами — не задавай свои материалы без нужды).
+1. Прочитай шапку {_fwd(os.path.join(P.ENGINE, 'props3d.js'))} (P3.box, cyl, lathe, extrude, sticker, part, p) и образец {_fwd(os.path.join(P.STANDS, 'samples', 'crt3d', 'prefab.js'))} — ЭЛТ-монитор фигурами кодом.
+   Бумажный тулкит для рисунков на наклейках (экраны, логотипы, надписи, кнопки): {_fwd(os.path.join(P.STANDS, 'paper.js'))}.
+2. {pick}
+   Запиши в текущую папку prefab.js (контракт — образец):
+   prop3d({{ name: '{e.get('name', '')}', h: <реальная высота, м>, params: {{ … что автор сможет менять в сцене … }}, build(w, o) {{ const G = new THREE.Group(); … return G; }}, tick(T, o, holder) {{ … если что-то движется или светится … }} }});
+   Реальный масштаб в метрах (ёжик ≈ 0.9 м, стол ≈ 0.75 м), 0 — центр низа, перед смотрит на +z. Всё собрано со всех сторон: автор крутит пропс, сзади не должно быть дыр.
+   Мелкие детали — наклейками (P3.sticker с 2D-рисунком) или маленькими P3.box; надписи и экраны — наклейками.{bl}
+3. Сними кадры командой (ровно так): node {rp} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']}
+   Получишь element.png — лист 2×2 из четырёх ракурсов (¾ спереди, другой бок, ¾ сзади, другой бок), element_1/3/5/7.png — каждый крупно, и ошибки страницы."""
+
+
 def element_spec(docs, params, sysp, genre):
     """«🎨 Сделать» for a preproduction element: Claude writes element.js for the stand (2D page.html, or the 3D stand for a scene
     when the plan's engine is 3d), shoots it with render_shot.js, looks and fixes. Work folder: _ideas/render/<plan>/<element>/v<N>/."""
@@ -760,10 +825,15 @@ def element_spec(docs, params, sysp, genre):
     wd = P.resolve("render/" + rel)
     os.makedirs(wd, exist_ok=True)
     base = next((r for r in renders if r.get("id") == params.get("base")), None)
-    if base:
-        prev = os.path.join(P.resolve("render/" + base["dir"]), "element.js")
-        if os.path.isfile(prev):
-            shutil.copy2(prev, os.path.join(wd, "element.js"))
+    prop3 = is_prop3(e, docs.get("channel"))
+    params["_prop3"] = prop3
+    if base and bool(base.get("three3")) == prop3:          # правка — от прошлого кода того же вида (2D -> 3D начинается с нуля, 2D идёт референсом)
+        for f in ("element.js", "prefab.js", "model.py", "model.glb"):
+            prev = os.path.join(P.resolve("render/" + base["dir"]), f)
+            if os.path.isfile(prev):
+                shutil.copy2(prev, os.path.join(wd, f))
+    elif base:
+        base = None
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
     three = e.get("kind") == "scene" and plan.get("engine") == "3d"
     params["_three"] = three
@@ -775,7 +845,14 @@ def element_spec(docs, params, sysp, genre):
     what, sheet, fn = SHEETS[e["kind"]]
     refs = [(r, P.resolve(r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
     ref_lines = "\n".join(f"- '/{r['img']}' (файл {_fwd(p)})" + (f" — {r['note']}" if r.get("note") else "") for r, p in refs) or "(автор референсов не дал — опирайся на описание и узнаваемую конкретику)"
-    own = preprod.assets_brief(e, data, three)
+    own = preprod.assets_brief(e, data, three or prop3)
+    flat = ""
+    if prop3 and not base:
+        r2 = next((r for r in reversed(renders) if not r.get("three3") and r.get("img")), None)
+        if r2:
+            flat = (f"Этот пропс уже нарисован в 2D{' и утверждён автором' if e.get('status') == 'ok' else ''}: картинка {_fwd(P.resolve(r2['img']))}, код {_fwd(os.path.join(P.resolve('render/' + r2['dir']), 'element.js'))}"
+                    + (f" (функция {r2['fn']})" if r2.get("fn") else "") + ". Сделай его объёмным: та же форма, цвета и узнаваемые детали; "
+                    "рисунки деталей (экран, логотип, кнопки, надписи) можно взять из этого кода в наклейки P3.sticker.")
     # a scene is assembled from its characters and props (uses): their drafts and code go in first
     cast = preprod.cast_of(e, plan) if e.get("kind") == "scene" else []
     inside = []
@@ -805,7 +882,10 @@ def element_spec(docs, params, sysp, genre):
     pins = [{"id": p.get("id"), "x": float(p.get("x") or 0), "y": float(p.get("y") or 0), "text": (p.get("text") or "").strip()} for p in fx.get("pins") or []]
     ftext = (fx.get("text") or "").strip()
     fnotes = fx_notes(fx)
-    params["_fx"] = {"text": ftext, "pins": pins, "notes": fnotes} if (ftext or pins or fnotes) else {}
+    pins3 = [{"id": p.get("id"), "p": p.get("p"), "n": p.get("n"), "text": (p.get("text") or "").strip()} for p in fx.get("pins3d") or [] if p.get("p")] if prop3 else []
+    if prop3:
+        pins = []
+    params["_fx"] = {"text": ftext, "pins": pins, "notes": fnotes, "pins3d": pins3} if (ftext or pins or fnotes or pins3) else {}
     edit = ""
     if base and params["_fx"]:
         lines = [f"ПРАВКА. Это новая версия v{v}. В папке уже лежит element.js прошлой версии v{base.get('v')} — начни с него, исправь ровно то, что просит автор, остальное сохрани."]
@@ -817,6 +897,10 @@ def element_spec(docs, params, sysp, genre):
         dst = os.path.join(wd, "pins.png")
         if pins and base.get("img") and os.path.isfile(src) and mark_pins(src, dst, pins):
             lines.append(f"Прошлая версия с номерами пинов: {_fwd(dst)} — посмотри через Read.")
+        for i, p in enumerate(pins3, 1):
+            lines.append(f"- 📍 пин {i} на модели, точка {p['p']} (м, координаты пропса; нормаль {p.get('n')}): «{p['text'] or 'автор отметил это место без слов — посмотри, что там не так'}»")
+        if pins3 and _prop3_pins(docs, base, wd, pins3):
+            lines.append(f"Прошлая версия с номерами пинов с четырёх сторон: {_fwd(dst)} (лист) и pins_1/3/5/7.png крупно — посмотри через Read. Полый кружок — пин с обратной стороны.")
         edit = "\n".join(lines)
     try:
         has_lay = "// ==== расстановка автора" in open(os.path.join(wd, "element.js"), encoding="utf-8").read()
@@ -828,7 +912,9 @@ def element_spec(docs, params, sysp, genre):
                  "(«карточка 3», «коробка 2» — по порядку создания), допиши этим объектам name: '…' ровно как в блоке, иначе после правок имена съедут. "
                  "Автоматические группы («spruce 12», «группа 3») собираются сами из безымянных объектов, созданных подряд на одном месте, — не меняй порядок их создания или собери их части в THREE.Group с этим именем (w.add(group, pos, 'spruce 12')). "
                  "Если правка автора — переставить что-то ещё, можно вписать сдвиг прямо в координаты кода и убрать этот ключ из блока.")
-    if three:
+    if prop3:
+        engine = prop3_engine(docs, e, rel, wd, P.blender())
+    elif three:
         ex = _example_3d(docs["root"])
         engine = f"""Движок — 3D (stage3d.js шаблона, three.js): картонная диорама в духе Paper Mario + свет и пост-эффекты Octopath.
 1. Прочитай шапку {_fwd(os.path.join(P.ENGINE, 'stage3d.js'))} (API мира: card, box, plane, lamp, sun, ambient, motes, shaft, glow, camKeys; герои hogCard, spriteCard; грабли) и {_fwd(os.path.join(P.ENGINE, 'moves3d.js'))}.
@@ -864,6 +950,8 @@ def element_spec(docs, params, sysp, genre):
 Референсы автора — посмотри их через Read и возьми узнаваемое (форму, цвета, детали, надписи), переводя в наш бумажный стиль, а не копируя фото:
 {ref_lines}
 
+{flat}
+
 {('Бесплатные ассеты, которые автор нашёл и взял в работу для этого элемента — используй их (переводя в наш бумажный стиль), а не рисуй то же самое заново; лицензии уже записаны:' + chr(10) + own) if own else ''}
 
 {('В этой сцене стоят (обязательно размести их, узнаваемо и в масштабе; готовый код — скопируй функцию из их element.js к себе и вызови, не рисуй заново):' + chr(10) + chr(10).join(inside)) if inside else ''}
@@ -877,18 +965,22 @@ def element_spec(docs, params, sysp, genre):
 {edit}
 
 {engine}
-4. Посмотри PNG через Read, сравни с описанием и референсами, исправь element.js и отрисуй снова. 2–4 прохода, пока не станет хорошо.
+4. Посмотри PNG через Read, сравни с описанием и референсами, исправь {'prefab.js (и model.py)' if prop3 else 'element.js'} и отрисуй снова. 2–4 прохода, пока не станет хорошо.
 
 Правила: читается за секунду; узнаваемая конкретика важнее общих форм; без белых дыр по краям; все подпути одной фигуры — по часовой стрелке (правило nonzero).
 Жанр: {GENRE[genre]}
 
-В ответе: summary — что нарисовано и какие решения (2–3 предложения); fn — имя главной функции элемента (или функции build для 3D); note — что автору стоит проверить или решить."""
+В ответе: summary — что нарисовано и какие решения (2–3 предложения); fn — {'способ: shapes, model или blender' if prop3 else 'имя главной функции элемента (или функции build для 3D)'}; note — что автору стоит проверить или решить."""
     dirs = [wd, P.files(plan["id"]), P.STANDS, P.render(plan["id"])]
-    if three:
-        dirs += [P.ENGINE] + [os.path.dirname(p) for p, _ in _example_3d(docs["root"])]
-    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 1800,
-            "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
-            "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {shot}:*)"],
+    if three or prop3:
+        dirs += [P.ENGINE] + ([os.path.dirname(p) for p, _ in _example_3d(docs["root"])] if three else [])
+    allowed = ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {shot}:*)"]
+    if prop3:
+        allowed = ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {_fwd(os.path.join(P.STANDS, 'render_prop.js'))}:*)"]
+        if P.blender():
+            allowed.append(f"Bash(python {_fwd(os.path.join(P.STANDS, 'blender_run.py'))}:*)")
+    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 2400 if prop3 else 1800,
+            "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"], "allowed": allowed,
             "dirs": dirs, "schema": S({"summary": STR, "fn": STR, "note": STR})}
 
 
@@ -1198,13 +1290,21 @@ def apply(action, docs, params, res):
         fx = params.get("_fx") or {}
         rid = nid("r")
         fb = "; ".join(([fx["text"]] if fx.get("text") else []) + [n["text"] for n in fx.get("notes") or []]
-                       + [f"📍{i} {p['text'] or '(смотри место)'}" for i, p in enumerate(fx.get("pins") or [], 1)])
+                       + [f"📍{i} {p['text'] or '(смотри место)'}" for i, p in enumerate((fx.get("pins") or []) + (fx.get("pins3d") or []), 1)])
         item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "feedback": fb, "fx": fx, "fn": res.get("fn", ""),
                 "summary": res.get("summary", ""), "note": res.get("note", ""), "three": bool(params.get("_three")), "ts": t}
-        ops = [{"op": "add", "path": ["elements", eid, "renders"], "item": item}, {"op": "set", "path": ["elements", eid, "render"], "value": rid}]
+        ops = []
+        if params.get("_prop3"):
+            if not os.path.isfile(os.path.join(wd, "prefab.js")):
+                raise RuntimeError("Claude не записал prefab.js — попробуй ещё раз")
+            item.update({"three3": True, "how": res.get("fn", ""), "fn": ""})
+            if e.get("dim") != "3d":
+                ops.append({"op": "set", "path": ["elements", eid, "dim"], "value": "3d"})
+        ops += [{"op": "add", "path": ["elements", eid, "renders"], "item": item}, {"op": "set", "path": ["elements", eid, "render"], "value": rid}]
         cur = ((e.get("fx") or {}).get("main")) or {}
         ops += [{"op": "del", "path": ["elements", eid, "fx", "main", "pins"], "id": p["id"]} for p in fx.get("pins") or [] if p.get("id")]
         ops += [{"op": "del", "path": ["elements", eid, "fx", "main", "notes"], "id": n["id"]} for n in fx.get("notes") or [] if n.get("id")]
+        ops += [{"op": "del", "path": ["elements", eid, "fx", "main", "pins3d"], "id": p["id"]} for p in fx.get("pins3d") or [] if p.get("id")]
         if fx.get("text") and (cur.get("text") or "").strip() == fx["text"]:
             ops.append({"op": "set", "path": ["elements", eid, "fx", "main", "text"], "value": ""})
         return [(key, ops)], f"Claude нарисовал «{e.get('name', '')}» v{v}"

@@ -83,7 +83,7 @@ function ideaBanner(d) {
 }
 
 // edits on a drawn picture: {text, pins: [{id, x, y, text}]}, x/y — share of width/height
-const fxCount = e => (e && e.pins ? e.pins.length : 0) + (e && (e.text || '').trim() ? 1 : 0) + ((e && e.notes) || []).filter(n => (n.text || '').trim()).length;
+const fxCount = e => (e && e.pins ? e.pins.length : 0) + (e && e.pins3d ? e.pins3d.length : 0) + (e && (e.text || '').trim() ? 1 : 0) + ((e && e.notes) || []).filter(n => (n.text || '').trim()).length;
 
 // «В целом» as a stack of separate edits (fx.<part>.notes[]): Enter in an item adds the next one, Backspace in an empty one removes it.
 // redraw — for a modal that App.render does not repaint (the cover edits); the page re-renders itself otherwise.

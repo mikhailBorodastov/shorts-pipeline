@@ -129,5 +129,12 @@ test('handheld — детерминирован от t', () => {
   near(S.sceneHandheld(1, 0, noise).p, [0, 0, 0]);
 });
 
+test('3D-пропсы: ссылки lib: / el: — адреса prefab.js и список без повторов (S3)', () => {
+  assert.strictEqual(S.scenePropUrl('lib:props/elt-monitor@2', '260930-08d8'), '/api/lib/file/video:260930-08d8/props/elt-monitor/v2/prefab.js');
+  assert.strictEqual(S.scenePropUrl('el:eee455b0d@v3', '260930-08d8'), '/rscene/260930-08d8/eee455b0d/v3/prefab.js');
+  assert.strictEqual(S.scenePropUrl('crt', 'x'), null);
+  assert.deepStrictEqual(S.scenePropRefs({ objects: [{ src: { prefab: 'crt' } }, { src: { prefab: 'lib:props/a@1' } }, { src: { prefab: 'lib:props/a@1' } }, {}] }), ['lib:props/a@1']);
+});
+
 console.log(`\n${n - failed} / ${n} тестов прошли`);
 process.exit(failed ? 1 : 0);

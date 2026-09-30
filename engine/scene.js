@@ -145,8 +145,33 @@ function scnCapture(w, fn) {
   return { ret, added };
 }
 
+// 3D-пропсы из библиотеки канала и препродакшена (S3, props3d.js): src.prefab = 'lib:props/<slug>@<N>' | 'el:<элемент>@v<N>'.
+// Их prefab.js грузятся до сборки мира (loadSceneProps) и лежат в S.lib; prefabs.js сцены их не содержит.
+function scenePropRefs(scene) {
+  return [...new Set((scene.objects || []).map(o => (o.src || {}).prefab).filter(k => /^(lib|el):/.test(k || '')))];
+}
+function scenePropUrl(ref, plan) {
+  let m = /^lib:([a-z]+)\/([a-z0-9-]+)@(\d+)$/.exec(ref || '');
+  if (m) return `/api/lib/file/video:${plan}/${m[1]}/${m[2]}/v${m[3]}/prefab.js`;
+  m = /^el:([A-Za-z0-9_-]+)@v?(\d+)$/.exec(ref || '');
+  if (m) return `/rscene/${plan}/${m[1]}/v${m[2]}/prefab.js`;
+  return null;
+}
+// load(src) — загрузчик скриптов страницы; into — уже загруженные (S.lib). Модели glb догружаются, если движок уже поднят
+async function loadSceneProps(refs, plan, load, into = {}) {
+  for (const ref of refs) {
+    if (into[ref]) continue;
+    const u = scenePropUrl(ref, plan);
+    if (!u) continue;
+    try { await load(u); into[ref] = (typeof PROPS3D !== 'undefined' && PROPS3D[u]) || PROP3D_LAST; }
+    catch (e) { console.warn('scene: пропс не загрузился', ref, e.message); }
+  }
+  if (typeof X3 !== 'undefined' && X3.R && typeof loadModels3 === 'function') await loadModels3();
+  return into;
+}
+
 function scnBuildPrefab(w, S, o, holder) {
-  const key = o.src && o.src.prefab, pf = key && S.prefabs[key];
+  const key = o.src && o.src.prefab, pf = key && (S.prefabs[key] || S.lib[key]);
   const out = { tick: null, overlay: null };
   if (!pf) { if (key) console.warn('scene: нет префаба', key, 'у', o.name); return out; }
   const kind = pf.kind || (pf.build ? 'group' : pf.draw && pf.px ? 'card' : 'group');
@@ -162,7 +187,7 @@ function scnBuildPrefab(w, S, o, holder) {
       return w.card(c);
     }
     if (kind === 'box') { const b = Object.assign({}, pf, { pos: [0, 0, 0] }); delete b.kind; delete b.tick; return w.box(b); }
-    if (kind === 'model') return w.model(pf.model, Object.assign({}, pf, { pos: [0, 0, 0], name: o.name }));
+    if (kind === 'model' && !pf.build) return w.model(pf.model, Object.assign({}, pf, { pos: [0, 0, 0], name: o.name }));   // 3D-пропс (prop3d) собирает себя сам: ключ модели и детали
     return pf.build ? pf.build(w, o) : null;
   });
   // home: where the prefab code builds the thing (old scenes build «in place»): an inverse transform brings it to the object's origin,
@@ -319,5 +344,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
+  module.exports = { scenePropRefs, scenePropUrl, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

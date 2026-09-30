@@ -392,6 +392,38 @@ def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edi
 
 
 # ---------------------------------------------------------------- prefabs.js: what things there are and their parameters
+def props3d_choices(A, key, plan):
+    """Чем можно заменить предмет сцены (S3): 3D-пропсы этого видео (el:<id>@v<N>, выбранная версия) и библиотеки канала (lib:props/<slug>@<N>)."""
+    pid = _pid(key)
+    out = []
+    for x in plan.get("elements") or []:
+        rs = [r for r in x.get("renders") or [] if r.get("three3")]
+        if x.get("kind") != "prop" or not rs or x.get("status") == "drop":
+            continue
+        r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1])
+        out.append({"ref": f"el:{x['id']}@v{r['v']}", "name": x.get("name", ""), "img": "/" + r["img"] if r.get("img") else "",
+                    "from": "видео" + (" ✓" if x.get("status") == "ok" else ""), "h": r.get("h")})
+    ch = P.index()["videos"].get(pid, {}).get("channel")
+    try:
+        c = A.stapi().channel_dir(ch)
+        ld = A.stapi().lib_dir(c)
+        for it in A.stapi().lib_index(c):
+            if it.get("kind") != "props":
+                continue
+            try:
+                card = json.load(open(os.path.join(ld, *it["id"].split("/"), "prop.json"), encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            v3 = [v for v in card.get("versions") or [] if v.get("dim") == "3d"]
+            if v3:
+                v = v3[-1]
+                out.append({"ref": f"lib:{it['id']}@{v['v']}", "name": it.get("name", ""), "from": "библиотека",
+                            "img": f"/api/lib/file/{c['id']}/{it['id']}/{v['preview']}" if v.get("preview") else ""})
+    except Exception as e:
+        print("! props3d_choices:", e)
+    return out
+
+
 def prefab_info(path):
     """{key: {kind, note, params: {name: default}}} from prefabs.js: entries «  key: { kind: '…'» of PREFABS, the comment lines above
     an entry are its note, P_(o, 'name', default) / o.params.name inside it are its parameters."""
@@ -709,6 +741,8 @@ def handle_get(A, h, p, q):
                              "versions": [{"v": r.get("v"), "id": r.get("id"), "feedback": r.get("feedback", ""), "img": r.get("img", "")} for r in e.get("renders") or [] if r.get("stage")]},
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
                  "prefabInfo": prefab_info(os.path.join(P.resolve("render/" + rel), "prefabs.js")),
+                 "props3d": props3d_choices(A, key, plan),
+                 "style3d": ((P.channel(P.index()["videos"].get(_pid(key), {}).get("channel")) or {}).get("style3d")) or "paper",
                  "clip": f"/rscene/{rel}/clip.mp4" if os.path.isfile(os.path.join(work_dir(A, _pid(key), el), "clip.mp4")) else ""})
         return True
     if p == "/api/scene/rev":

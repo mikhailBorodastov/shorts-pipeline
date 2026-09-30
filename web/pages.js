@@ -91,7 +91,7 @@ const Pages = {
     const src = it.preview ? `/api/lib/file/${LIB.channel}/${it.preview}` : '';
     return h('div.libcard', { title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : '') },
       src ? h('img', { src, alt: '', onclick: () => UI.lightbox(src) }) : h('div.noimg', it.kind === 'sounds' ? '🔊' : '📦'),
-      h('b', it.name), h('span.dim.small', `lib:${it.id}@${it.latest}`));
+      h('b', it.name, it.d3 ? h('span.small', { title: `есть 3D-версия v${it.d3}` }, ' 🧊') : ''), h('span.dim.small', `lib:${it.id}@${it.latest}`));
   },
   lib() {
     if (!LIB.items && !LIB.busy) Pages.loadLib();
@@ -104,7 +104,7 @@ const Pages = {
         h('div.card-head', h('h3', '✓ Утверждено в видео'), h('span.dim', 'опубликуй в библиотеку, чтобы брать в другие ролики (новой версией, если уже есть)')),
         !LIB.cand ? h('p.dim', 'Смотрю видео…') : !cand.length ? h('p.dim', 'Утверждённых ✓ персонажей, пропсов и звуков с черновиком пока нет.')
           : h('div.cands', cand.map(x => h('div.row.cand',
-            h('span', KIND_ICON[x.kind] || '•'), h('b', x.name), h('span.dim.small', 'из «' + x.videoName + '»'), h('span.sp'),
+            h('span', KIND_ICON[x.kind] || '•'), h('b', x.name), x.d3 && h('span.small', { title: '3D-пропс: в сцене встанет объёмным' }, '🧊 3D'), h('span.dim.small', 'из «' + x.videoName + '»'), h('span.sp'),
             x.lib && h('span.dim.small', `уже: lib:${x.lib.id}@${x.lib.v}`),
             h('button', { onclick: () => Pages.publish(x, x.lib ? x.lib.id : 'new') }, x.lib ? '⬆ новая версия' : '📚 в библиотеку'))))));
   },

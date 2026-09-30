@@ -57,6 +57,10 @@
   #vmsg { color: #9a93d6; font-size: 12px; min-height: 16px; }
   #vload { position: fixed; inset: 0; display: none; place-items: center; color: #9a93d6; font: 15px "Rubik", sans-serif; text-align: center; padding: 20px; }
   body.view.loading #vload { display: grid; }
+  /* 3D-пропс: показываем центральный квадрат кадра (пропс вписан в него), фон нейтральный */
+  body.view.propview { background: #1d1d1f; }
+  body.view.propview canvas { aspect-ratio: 1 / 1; object-fit: cover; }
+  body.view.propview #vui { width: min(100%, calc(100vh - 82px)); }
   @media (max-width: 700px) { body.view #vmain { flex-direction: column; } #vpanel { width: auto; height: auto; max-height: 40vh; } }
 </style>
 </head>
@@ -130,6 +134,7 @@
 <script>
   const q = new URLSearchParams(location.search), VIEW = q.get('view') === '1', EDIT = VIEW && q.get('edit') === '1' && q.get('key') && q.get('el');
   if (VIEW) document.body.classList.add('view', 'loading');
+  if (VIEW && q.get('prop')) document.body.classList.add('propview');
   const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + (src.includes('?') ? '&' : '?') + 'v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error('сцена не загрузилась: ' + src)); document.head.append(s); });
   const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = () => { IMG[k] = im; ok(); }; im.onerror = () => { console.error('картинка не загрузилась: ' + src); ok(); }; im.src = src; });
 
@@ -150,7 +155,45 @@
   }
 
   // ?prop=… — 3D-пропс на поворотном столе (props3d.js). Пропс крутится, камера и свет стоят: тени честные, пины — в координатах пропса
-  const PROP = { def: null, G: null, o: null, size: [1, 1, 1], len: 8 };
+  const PROP = { def: null, G: null, o: null, size: [1, 1, 1], len: 8, pins: [] };
+  try { PROP.pins = JSON.parse(q.get('pins') || '[]'); } catch (e) {}
+  // 📍 пины на модели: номер в кружке в точке p (координаты пропса); за моделью — полый кружок
+  function drawPins(ctx) {
+    const w = X3.worlds[0];
+    if (!PROP.G || !PROP.pins.length || !w) return;
+    w.cam.updateMatrixWorld(); PROP.G.updateMatrixWorld(true);
+    const RC = new THREE.Raycaster(), meshes = [];
+    PROP.G.traverse(x => { if (x.isMesh) meshes.push(x); });
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+    PROP.pins.forEach((pn, i) => {
+      const wp = PROP.G.localToWorld(new THREE.Vector3(...pn.p)), v = wp.clone().project(w.cam);
+      if (v.z > 1) return;
+      const dir = wp.clone().sub(w.cam.position), dist = dir.length();
+      RC.set(w.cam.position, dir.normalize());
+      const hit = RC.intersectObjects(meshes, false)[0], hidden = hit && hit.distance < dist - 0.01;
+      const x = (v.x + 1) / 2 * W, y = (1 - v.y) / 2 * H, r = 30, n = pn.n || i + 1;
+      ctx.lineWidth = 6; ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+      if (hidden) { ctx.strokeStyle = '#ff3b5c'; ctx.setLineDash([8, 6]); ctx.stroke(); ctx.setLineDash([]); }
+      else { ctx.fillStyle = '#ff3b5c'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.stroke(); }
+      ctx.shadowBlur = 0; ctx.fillStyle = hidden ? '#ff3b5c' : '#fff'; ctx.font = '800 34px Rubik'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(n), x, y + 1);
+    });
+    ctx.restore();
+  }
+  // клик по модели -> точка и нормаль в координатах пропса (или null)
+  function propHit(e) {
+    const w = X3.worlds[0]; if (!PROP.G || !w) return null;
+    w.cam.updateMatrixWorld(); PROP.G.updateMatrixWorld(true);
+    const RC = new THREE.Raycaster(); RC.setFromCamera(ndc(e), w.cam);
+    const meshes = []; PROP.G.traverse(x => { if (x.isMesh) meshes.push(x); });
+    const hit = RC.intersectObjects(meshes, false)[0];
+    if (!hit) return null;
+    const p = PROP.G.worldToLocal(hit.point.clone()), nn = hit.face ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
+    const inv = new THREE.Matrix4().copy(PROP.G.matrixWorld).invert(), nl = nn.transformDirection(inv);
+    const r = v => Math.round(v * 1000) / 1000;
+    return { p: [r(p.x), r(p.y), r(p.z)], n: [r(nl.x), r(nl.y), r(nl.z)] };
+  }
   const propAngle = T => -Math.PI / 4 + (T - 1) / PROP.len * TAU;       // T = 1, 3, 5, 7 -> ¾ спереди-справа, ¾ спереди-слева, ¾ сзади…
   async function propScene(url) {
     if (q.get('style')) PROP_STYLE = q.get('style');
@@ -186,7 +229,7 @@
         const el = 0.32;
         w.cam.position.set(0, fit.y + Math.sin(el) * fit.d, Math.cos(el) * fit.d); w.target.set(0, fit.y, 0);
       } });
-    window.ELEMENT = { t: 1, len: PROP.len, draw(ctx, T) { w.draw(ctx, T, 4, T); } };
+    window.ELEMENT = { t: 1, len: PROP.len, draw(ctx, T) { w.draw(ctx, T, 4, T); drawPins(ctx); } };
   }
 
   // ?stage=… — scene.json + prefabs.js (template/src/scene.js)
@@ -195,7 +238,9 @@
     const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now());
     if (!r.ok) throw new Error('scene.json не загрузился: ' + url);
     window.SCENE = await r.json();
-    window.WORLD = sceneWorld(SCENE, typeof PREFABS !== 'undefined' ? PREFABS : {});
+    const plan = (url.match(/\/rscene\/([^/]+)\//) || [])[1];      // 3D-пропсы библиотеки и препродакшена (lib: / el:) — до сборки мира
+    const LIB = await loadSceneProps(scenePropRefs(SCENE), plan, load);
+    window.WORLD = sceneWorld(SCENE, typeof PREFABS !== 'undefined' ? PREFABS : {}, LIB);
     window.ELEMENT = { t: SCENE.t0 != null ? SCENE.t0 : 0.6, len: SCENE.len || 6,
       draw(ctx, T) { WORLD.draw(ctx, T, 4, T); if (WORLD.S) drawSceneOverlays(WORLD.S, ctx, T); } };
   }
@@ -478,7 +523,14 @@
   // what is under the pointer: the first hit that belongs to an item (transparent parts of paper cards do not count)
   let RC0 = null;
   const rc = () => RC0 || (RC0 = new THREE.Raycaster());   // THREE is there only after boot3d.js
-  function ndc(e) { const b = cv.getBoundingClientRect(); return new THREE.Vector2((e.clientX - b.left) / b.width * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1); }
+  function ndc(e) {
+    const b = cv.getBoundingClientRect();
+    if (document.body.classList.contains('propview')) {          // object-fit: cover — виден центральный квадрат кадра W×W
+      const k = W / b.width, x = (e.clientX - b.left) * k, y = H / 2 + (e.clientY - b.top - b.height / 2) * k;
+      return new THREE.Vector2(x / W * 2 - 1, -(y / H) * 2 + 1);
+    }
+    return new THREE.Vector2((e.clientX - b.left) / b.width * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1);
+  }
   function opaque(hit) {
     const m = hit.object.material, img = m && !Array.isArray(m) && m.map && m.map.image;
     if (!hit.uv || !img || !(img instanceof HTMLCanvasElement)) return true;
@@ -557,7 +609,23 @@
       if (onBtn && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); nudge('reset', e); return; }
       if (K && !(onBtn && (e.key === 'Enter'))) { e.preventDefault(); nudge(K, e); }
     });
-    let drag = null;
+    let drag = null, down = null;
+    const PIN = !!PROP.G && q.get('pin') === '1';       // ?prop=…&view=1&pin=1: клик по модели ставит пин (страница карточки получает его сообщением)
+    if (PIN) {
+      V.playing = false; V.T = 1;
+      $('vhint').textContent = '📍 Клик по модели — пин · тяни — крутить · колесо — ближе / дальше · правая кнопка — сдвиг · пробел — вращение';
+      cv.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, b: e.button }; }, true);
+      cv.addEventListener('pointerup', e => {
+        if (!down || down.b !== 0 || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return;
+        const hit = propHit(e);
+        if (hit && parent !== window) parent.postMessage({ type: 'prop-pin', ...hit }, location.origin);
+      }, true);
+      addEventListener('message', ev => {
+        if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'prop-pins') return;
+        PROP.pins = ev.data.pins || []; V.dirty = true;
+      });
+      if (parent !== window) parent.postMessage({ type: 'prop-ready' }, location.origin);
+    }
     cv.addEventListener('contextmenu', e => e.preventDefault());
     cv.addEventListener('pointerdown', e => {
       cv.focus({ preventScroll: true });

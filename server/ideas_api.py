@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 5
+API_VERSION = 6
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -70,6 +70,9 @@ KINDS = preprod.KINDS
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
 
 # survives hot reloads: importlib.reload re-runs this file in the same module dict
+if globals().get("_loaded_once"):                  # paths.py перечитывается вместе с этим файлом (правка paths — тронь и ideas_api)
+    importlib.reload(P)
+_loaded_once = True
 JOBS = globals().get("JOBS") or {}
 _lock = globals().get("_lock") or threading.RLock()
 _revc = globals().get("_revc") or {}
@@ -1152,7 +1155,7 @@ def handle_get(h):
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
         ch = P.channel()
-        h._json({"api": API_VERSION, "data": DATA, "root": ROOT, "claude": bool(claude_bin()), "model": MODEL, "legacy": P.legacy(),
+        h._json({"api": API_VERSION, "data": DATA, "root": ROOT, "claude": bool(claude_bin()), "model": MODEL, "legacy": P.legacy(), "blender": bool(P.blender()),
                  "channels": [{k: c.get(k) for k in ("id", "name", "icon", "lang", "formats")} for c in P.channels()],
                  "channel": ch and {k: v for k, v in ch.items() if k != "dir"},
                  "plans": [dict(plan_summary(d), stage=d.get("stage") or "idea", folder=d.get("_folder"), channel=d.get("_channel"))

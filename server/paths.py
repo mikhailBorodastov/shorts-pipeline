@@ -185,3 +185,13 @@ def projects():
 def studio_path(*parts):
     """Папка _studio, её же видит пайплайн ролика (sfx_library, animalese.py): рядом, выше по папкам — в скриптах ролика."""
     return os.path.join(STUDIO, *parts)
+
+
+def blender():
+    """Blender для 3D-пропсов (S3): state.json → blender, _studio/tools/blender/*/blender.exe (портативный), PATH, Program Files. None — нет."""
+    import glob, shutil
+    cands = [state_get("blender")]
+    cands += sorted(glob.glob(os.path.join(STUDIO, "tools", "blender", "*", "blender.exe")), reverse=True)
+    cands += [shutil.which("blender")]
+    cands += sorted(glob.glob(os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Blender Foundation", "*", "blender.exe")), reverse=True)
+    return next((c for c in cands if c and os.path.isfile(c)), None)
