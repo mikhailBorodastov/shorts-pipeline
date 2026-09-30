@@ -200,7 +200,8 @@ def patch_text(text, file):
         text = text.replace(old, new)
     if "_studio_dir(" not in text:
         return None
-    m = list(re.finditer(r"^(?:import|from) [^\n]+\n", text, re.M))
+    first = text.find("_studio_dir(")                     # the finder goes after the imports that come before its first use
+    m = [x for x in re.finditer(r"^(?:import|from) [^\n]+\n", text, re.M) if x.end() <= first]
     at = m[-1].end() if m else 0
     return text[:at] + FINDER + text[at:]
 

@@ -13,6 +13,16 @@
 import json, os, subprocess, sys, wave
 import numpy as np
 
+def _studio_dir(start=None):
+    """_studio (бывший _pipeline) — вверх по папкам от ролика: рядом с ним, у канала или в рабочей папке (Claude Studio)."""
+    d = os.path.abspath(start or ".")
+    for _ in range(6):
+        for n in ("_studio", "_pipeline"):
+            if os.path.isdir(os.path.join(d, n, "sfx_library")) or os.path.isfile(os.path.join(d, n, "sfx_library.py")):
+                return os.path.join(d, n)
+        d = os.path.dirname(d)
+    return os.path.join(os.path.dirname(os.path.abspath(start or ".")), "_pipeline")
+
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8")
@@ -156,7 +166,7 @@ def sfx_shimmer():
 SFX = {k[4:]: v for k, v in list(globals().items()) if k.startswith("sfx_")}
 
 # ---------------- sound library (_pipeline/sfx_library, see _pipeline/sfx_library.py) ----------------
-LIB_DIR = os.environ.get("SFX_LIBRARY") or os.path.join(os.path.dirname(os.path.abspath(".")), "_pipeline", "sfx_library")
+LIB_DIR = os.environ.get("SFX_LIBRARY") or os.path.join(_studio_dir(), "sfx_library")
 USE_LIBRARY = True   # False = standard names ('pop', 'whoosh', ...) are always synthesised
 # standard names -> library sounds. peak_at: where the sound's loudest point lands, relative to the cue time
 # (None = the sound simply starts at the cue). Synth is the fallback when the library isn't installed.
@@ -348,7 +358,7 @@ def build_music():
 def build_talk():
     """animalese lines ('talk:<who>:<text>' cues from scenes.js) -> their own track, mixed like the voice"""
     import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(".")), "_pipeline"))
+    sys.path.insert(0, _studio_dir())
     from animalese import speak
     out = np.zeros(N)
     try:

@@ -11,6 +11,16 @@ POST /api/ref?id=N[&kind=script]  <- картинка-референс к зам
 import base64, importlib, json, os, re, threading, time
 from urllib.parse import urlparse, parse_qs, unquote
 
+def _studio_dir(start=None):
+    """_studio (бывший _pipeline) — вверх по папкам от ролика: рядом с ним, у канала или в рабочей папке (Claude Studio)."""
+    d = os.path.abspath(start or ".")
+    for _ in range(6):
+        for n in ("_studio", "_pipeline"):
+            if os.path.isdir(os.path.join(d, n, "sfx_library")) or os.path.isfile(os.path.join(d, n, "sfx_library.py")):
+                return os.path.join(d, n)
+        d = os.path.dirname(d)
+    return os.path.join(os.path.dirname(os.path.abspath(start or ".")), "_pipeline")
+
 API_VERSION = 5
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -20,7 +30,7 @@ NOTES = os.path.join(REVIEW, "notes.json")
 REFS = os.path.join(REVIEW, "refs")                  # картинки-референсы к заметкам (видео и сценария)
 REF_MAX = 10 * 1024 * 1024
 WATCH = [os.path.join(ROOT, "src"), os.path.join(ROOT, "build", "mix.wav"), os.path.join(ROOT, "build", "sfx_resolved.json")]
-SFX_LIB = os.environ.get("SFX_LIBRARY") or os.path.join(os.path.dirname(ROOT), "_pipeline", "sfx_library")
+SFX_LIB = os.environ.get("SFX_LIBRARY") or os.path.join(_studio_dir(ROOT), "sfx_library")
 MIME = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".json": "application/json; charset=utf-8",
         ".md": "text/markdown; charset=utf-8", ".html": "text/html; charset=utf-8"}
 os.makedirs(SHOTS, exist_ok=True)
