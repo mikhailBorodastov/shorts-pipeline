@@ -1284,6 +1284,13 @@ SCENE_RULES = """Сцена — документ scene.json (формат — _p
 Новые id придумывай сам: буква типа + 6 символов (o…, k…, c…, m…, s…, g…)."""
 
 
+LOOK_SONNET = ("- Если для просьбы нужен новый вид предмета (другой рисунок, новая деталь), а не расстановка — сделай, что можешь операциями, "
+               "и в reply скажи, что вид меняет режим Opus (переключатель в панели) или «Поправить» в карточке элемента.")
+LOOK_OPUS = ("- Если для просьбы нужен новый вид предмета (другой рисунок, новая деталь, другой цвет корпуса) — поправь его код прямо в prefabs.js (Edit): "
+             "только нужный префаб или его функцию рисования, остальное не трогай; позиции и движение — по-прежнему операциями в ops. "
+             "Проверь себя кадром: {SHOT} — и посмотри PNG через Read (1–3 прохода). В поле prefabs коротко напиши, что поменял в коде (пусто — если не трогал).")
+
+
 def _scene_summary(doc, info, limit=160):
     by = {o["id"]: o for o in doc.get("objects") or []}
     rows = []
@@ -1343,13 +1350,19 @@ def sceneagent_spec(docs, e, doc, c):
 - ops — ОДНА пачка операций, которая выполняет просьбу целиком (её отменят одним Ctrl+Z). Меняй только то, о чём просят. Координаты считай по pos других объектов (стол, пол) — не на глаз.
   «Поставь на стол» — y = высота столешницы (смотри pos предметов, которые уже стоят на столе); «включи / потеплее / ярче» — params предмета (color, intensity) или яркость света.
   Время ключей — от курсора, если автор не назвал другое. Не трогай ключи, которых просьба не касается.
-- Если для просьбы нужен новый вид предмета (другой рисунок, новая деталь), а не расстановка — сделай, что можешь операциями, и в reply скажи, что вид меняется кнопкой «Поправить» в карточке элемента.
+{LOOK_OPUS if c.get('prefabs') else LOOK_SONNET}
 - Если просьба непонятна или противоречит authored — ops пустой, в reply — короткий вопрос.
 - reply — 1–2 фразы автору по-русски, что сделано; desc — короткое описание пачки для истории («лампа: на стол, тёплый свет»).
 - Ничего не выдумывай про объекты: только id и префабы из списка выше."""
     sysp = ("Ты — помощник автора в редакторе 3D-сцены бумажной анимации (Claude Studio). Ты правишь сцену операциями над её JSON-документом: "
             "точно, минимально, по просьбе. Ручные правки автора священны. Отвечай строго JSON по схеме.")
     dirs = [work] + ([os.path.dirname(frame)] if frame else [])
+    if c.get("prefabs"):                                   # Opus: may also change how things look (prefabs.js), checks itself with a frame
+        shot = _fwd(os.path.join(docs["here"], "render_shot.js"))
+        dirs += [os.path.join(docs["pipe"], "template", "src"), os.path.join(docs["here"], "web", "render")]
+        return {"system": sysp, "prompt": prompt.replace("{SHOT}", f'node {shot} "{c["url"]}" {_fwd(c["check"])} {c["t"]:.2f}'), "cwd": work, "timeout": 1500,
+                "tools": ["Read", "Grep", "Edit", "Bash"], "allowed": ["Read", "Grep", "Edit", f"Bash(node {shot}:*)"], "dirs": dirs,
+                "schema": S({"reply": STR, "desc": STR, "ops": ARR(OP_SCHEMA), "allow": ARR(STR), "prefabs": STR}, ["reply", "desc", "ops"])}
     return {"system": sysp, "prompt": prompt, "cwd": work, "timeout": 600, "tools": ["Read", "Grep"], "allowed": ["Read", "Grep"], "dirs": dirs,
             "schema": S({"reply": STR, "desc": STR, "ops": ARR(OP_SCHEMA), "allow": ARR(STR)}, ["reply", "desc", "ops"])}
 

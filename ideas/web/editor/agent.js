@@ -61,6 +61,12 @@ export function initAgent(ED) {
       setLock(null);
       if (s.status !== 'done') { wait.className = 'msg err'; wait.textContent = s.status === 'cancelled' ? 'Отменено' : '⚠ ' + (s.error || s.status); return; }
       const r = s.result || {};
+      if (r.prefabs) {                                            // Claude drew things anew: the page must load the new prefabs.js
+        const entry = { batch: r.batch, desc: '💬 ' + (r.desc || text), ops: r.ops, undo: r.undo, at: Date.now(), agent: true };
+        ED.undo.push(entry); ED.redo = [];
+        ED.reloadPage('Claude поменял вид предметов: ' + (r.desc || text) + ' — Ctrl+Z вернёт как было');
+        return;
+      }
       await ED.reload('агент');
       wait.textContent = (r.reply || '') + (r.desc ? `\n→ ${r.desc}` : '') + (r.warn && r.warn.length ? `\n⚠ ${r.warn.join('; ')}` : '');
       const m = document.createElement('div'); m.className = 'meta';

@@ -166,6 +166,20 @@ const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); } }; 
 Автоматические имена устойчивы, пока не меняется порядок создания объектов; поэтому «Поправить» от такой версии просит Claude сохранить блок
 и закрепить автоматические имена через `name` (или собрать части автогруппы в `THREE.Group` с её именем).
 
+## 6а. Редактор сцены «🎬 Оформить сцену» (S1 Claude Studio)
+
+ТЗ и состояние — [studio/stage1-editor.md](studio/stage1-editor.md), формат — [studio/architecture.md §3.3–3.5](studio/architecture.md).
+- **Старый формат** (`element.js` + блок расстановки) → кнопка «🎬 Перевести в редактор» в карточке 3D-сцены (задача `sceneconvert`, Opus, 5–10 мин):
+  Claude пишет `render/<plan>/<el>/work/prefabs.js` + `scene.json`, сам сравнивает кадры «было / стало» (`scene_diff.py`), сервер проверяет ещё раз
+  и пишет `e.stage = {work, from, fromV, diff, compare, ts}`. У сцены в редакторе «✋ Расставить» скрыт: расстановка теперь в редакторе.
+- **Редактор** — `#/p/<plan>/pre/<el>/stage`: iframe `/tpl/editor.html?key=…&el=…` поверх страницы (модули `web/editor/`, движок `template/src/scene.js`).
+  Правки — операциями `POST /api/scene/op` (история `work/history.jsonl`, отмена — обратная пачка), `authored` — что автор правил руками.
+- **Версия** («💾 версия», Ctrl+S) → `v<N>/` = `scene.json` + `prefabs.js` + кадры, запись в `renders[]` с `stage: true` — карточка показывает её как обычную версию.
+  «🎞 клип» → `work/clip.mp4` (`render_clip.js`, звуки дорожки сведены), ссылка в `e.stage.clip`.
+- **«Поправить»** у сцены в редакторе уходит не в `element_spec`, а агенту сцены (`sceneagent`, Opus): пины и «в целом» → одна пачка операций → новая версия.
+- **Агент** в редакторе («/»): просьба → `sceneagent` (Sonnet, переключатель Opus) → одна пачка; лента — `e.stage.chat`. Пока он работает, сцена только для просмотра.
+- CLI: `python ideas_server.py scene show|ops|history|undo|version|clip|validate|finish <plan> <el>` (`finish` — зарегистрировать перевод, сделанный руками).
+
 ## 7. Сцены и их состав
 
 - «Что в сцене» (`uses`) + @-упоминания в текстах сцены = состав (`cast_of`), с пометкой, откуда элемент попал.

@@ -61,6 +61,7 @@ ED.commit = (ops, desc, o = {}) => {
       const r = await api('/api/scene/op', { key: ED.key, el: ED.el, ops: done, desc, batch, kind, undoes: o.undoes, by: 'author' });
       if (r.prev !== exp) await reload('правки из другого места');
       ED.rev = r.rev;
+      if (done.some(op => op.path && op.path[0] === 'prefabsRev')) ED.reloadPage('вид предметов вернулся');   // the prefab code changed: a new page
       if (r.warn && r.warn.length && !r.warn.includes('ничего не изменилось')) ED.msg('⚠ ' + r.warn.join('; '), 'warn');
     } catch (e) {
       ED.msg('Не сохранилось: ' + e.message, 'err');
@@ -94,15 +95,20 @@ ED.undoLast = () => {
   const e = ED.undo.pop();
   if (!e) { ED.msg('Нечего отменять'); return; }
   const r = ED.commit(e.undo, '↺ отмена: ' + e.desc, { kind: 'undo', undoes: e.batch, force: e.agent });
-  if (r) { ED.redo.push(e); ED.msg('↺ ' + e.desc); } else ED.undo.push(e);
+  if (r) { e.undoBatch = r.batch; ED.redo.push(e); ED.msg('↺ ' + e.desc); } else ED.undo.push(e);
 };
 ED.redoLast = () => {
   const e = ED.redo.pop();
   if (!e) { ED.msg('Нечего возвращать'); return; }
-  const r = ED.commit(e.ops, '↻ ' + e.desc, { kind: 'redo' });
+  const r = ED.commit(e.ops, '↻ ' + e.desc, { kind: 'redo', undoes: e.undoBatch });
   if (r) { e.undo = r.undo; ED.undo.push(e); ED.msg('↻ ' + e.desc); } else ED.redo.push(e);
 };
 
+// prefabs.js changed (the agent drew things anew, or that was undone): the page loads again, where the author was
+ED.reloadPage = why => {
+  try { sessionStorage.setItem('editor.keep', JSON.stringify({ el: ED.el, t: ED.t, sel: [...ED.sel], undo: ED.undo.slice(-50), redo: ED.redo.slice(-50), why })); } catch {}
+  location.reload();
+};
 // the whole scene again from the server (the agent or the CLI changed it)
 async function reload(why) {
   const j = await api(`/api/scene?key=${encodeURIComponent(ED.key)}&el=${ED.el}${ED.ver ? '&ver=' + ED.ver : ''}`);
@@ -597,6 +603,11 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
         if (r.rev > ED.rev && !ED.readonly) await reload('rev ' + r.rev);
       } catch {}
     }, 1500);
+    try {                                                        // back after a reload for new prefabs: the same moment, selection and undo stack
+      const k = JSON.parse(sessionStorage.getItem('editor.keep') || 'null');
+      sessionStorage.removeItem('editor.keep');
+      if (k && k.el === ED.el) { ED.t = k.t || 0; ED.select((k.sel || []).filter(id => id === 'camera' || find(ED.doc, id))); ED.undo = k.undo || []; ED.redo = k.redo || []; if (k.why) setTimeout(() => ED.msg('🎨 ' + k.why)); }
+    } catch {}
     step(ED.t); ED.vp.fromScene();                               // the free camera starts where the scene camera is at t
     document.getElementById('app').classList.remove('loading');
     requestAnimationFrame(loop);

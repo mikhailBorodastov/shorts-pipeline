@@ -354,7 +354,7 @@ def _log(A, key, el, rec):
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
-def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edit", undoes=None):
+def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edit", undoes=None, prefabs=None):
     """One batch under the lock: apply, validate (schema + ids), authored, rev, history. -> {rev, prev, undo, batch, warn}."""
     if not isinstance(ops, list) or not ops:
         raise ValueError("нет операций")
@@ -378,8 +378,15 @@ def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edi
         work["updated"] = now_ms()
         save_scene(A, key, el, work)
         batch = batch or new_id("b")
+        if undoes:                                          # undoing a batch that changed the look: the code comes back too
+            prev_b = next((h_ for h_ in reversed(history(A, key, el, 400)) if h_.get("batch") == undoes and h_.get("prefabs")), None)
+            if prev_b and os.path.isfile(prev_b["prefabs"]):
+                cur = os.path.join(work_dir(A, _pid(key), el), "prefabs.js")
+                keep = os.path.join(work_dir(A, _pid(key), el), "_prefabs", f"{batch or 'undo'}-{now_ms()}.js")
+                shutil.copy2(cur, keep); shutil.copy2(prev_b["prefabs"], cur)
+                prefabs = keep                                  # and redo of this undo brings the new look back
         _log(A, key, el, {"ts": now_ms(), "by": by, "desc": (desc or "правка")[:300], "ops": done, "undo": undo, "rev": work["rev"], "batch": batch, "kind": kind,
-                              **({"undoes": undoes} if undoes else {})})
+                              **({"undoes": undoes} if undoes else {}), **({"prefabs": prefabs} if prefabs else {})})
         return {"rev": work["rev"], "prev": prev, "undo": undo, "ops": done, "batch": batch, "warn": limits(work)}
 
 
@@ -623,9 +630,15 @@ def agent(A, job):
         shoot(A, key, stage_url(A._docs(key)["port"], f"{pid}/{el}/work"), frame_dir, str(round(t, 2)))
         frame = os.path.join(frame_dir, f"element_{round(t, 2)}.png")
         C = A.capi()
-        spec = C.sceneagent_spec(A._docs(key), element(A, key, el), doc, {"work": wd, "frame": frame if os.path.isfile(frame) else "", "t": t,
-                                  "sel": job.params.get("sel") or [], "ask": job.params.get("ask") or "", "history": history(A, key, el, 25)})
         model = job.params.get("model")
+        pf = os.path.join(wd, "prefabs.js")
+        bak = os.path.join(wd, "_prefabs", f"{job.id}.js")
+        os.makedirs(os.path.dirname(bak), exist_ok=True)
+        shutil.copy2(pf, bak)                                    # Opus may change the look: keep the code as it was, for undo
+        before = open(pf, encoding="utf-8").read()
+        spec = C.sceneagent_spec(A._docs(key), element(A, key, el), doc, {"work": wd, "frame": frame if os.path.isfile(frame) else "", "t": t,
+                                  "sel": job.params.get("sel") or [], "ask": job.params.get("ask") or "", "history": history(A, key, el, 25),
+                                  "prefabs": model == "opus", "url": stage_url(A._docs(key)["port"], f"{pid}/{el}/work"), "check": os.path.join(wd, "_agent", "check")})
         spec["model"] = A.VISUAL_MODEL if model == "opus" else A.TEXT_MODEL
         job.summary = "Claude думает над сценой…"
         res = A.run_claude(job, spec)
@@ -637,9 +650,18 @@ def agent(A, job):
         named = lambda i: i in sel or ("камер" in ask and i == "camera") or any(len(w) > 3 and w[:5] in ask for w in names.get(i, "").split())
         allow = [a for a in res.get("allow") or [] if isinstance(a, str) and named(a.split(".")[0])]
         out = {"reply": res.get("reply") or "", "desc": res.get("desc") or "", "rev": doc.get("rev", 0), "applied": False}
-        if ops:
-            r = apply(A, key, el, ops, by="claude", desc="💬 " + (res.get("desc") or job.params.get("ask") or "правка агента"), allow=allow, kind="agent")
-            out.update(applied=True, rev=r["rev"], batch=r["batch"], undo=r["undo"], ops=r["ops"], warn=r.get("warn"))
+        changed = open(pf, encoding="utf-8").read() != before
+        if ops or changed:
+            desc = "💬 " + (res.get("desc") or job.params.get("ask") or "правка агента")
+            if changed:                                          # the look changed: a marker op, so the batch is in the history and undo brings the code back
+                ops = ops + [{"op": "set", "path": ["prefabsRev"], "value": job.id}]
+                desc += " · вид предметов: " + (res.get("prefabs") or "prefabs.js")[:160]
+            if not changed:
+                os.remove(bak)
+            r = apply(A, key, el, ops, by="claude", desc=desc, allow=allow, kind="agent", prefabs=bak if changed else None)
+            out.update(applied=True, rev=r["rev"], batch=r["batch"], undo=r["undo"], ops=r["ops"], warn=r.get("warn"), prefabs=changed)
+        else:
+            os.remove(bak)
         if job.params.get("fromCard"):                           # from the card: the sent edits are done, and the result is a new version with frames
             A.apply_ops(key, [{"op": "set", "path": ["elements", el, "fx", "main"], "value": {}}])
             if out["applied"]:
