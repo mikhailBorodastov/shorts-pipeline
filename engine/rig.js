@@ -61,7 +61,7 @@ function character(def) {
   if (def.rig === 'parts') def.rigUrl = base + 'rig.json';           // части: суставы, крепление частей, позы — данными (редактор скелета их двигает)
   // префаб сцены: kind 'group' — engine/scene.js собирает его как 3D-пропс (S.lib), см. charCard
   def.kind = 'group';
-  def.build = (w, o) => { const c = charCard(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.keyed(T); } }; };
+  def.build = (w, o) => { const c = charCard(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.scenePose(T); } }; };
   RIG.chars[def.id] = def; CHAR_LAST = def;
   if (typeof PROPS3D !== 'undefined') PROPS3D[def.url] = def;     // loadSceneProps находит его так же, как 3D-пропс
   return def;
@@ -310,6 +310,178 @@ function rigParts(ctx, char, pose, x, y, h, T) {
   return { joints, k, M };
 }
 
+
+// ---------------------------------------------------------------- S5: клипы, слои, IK, ходьба, липсинк (docs/studio/stage5-animations.md)
+// клип: { id: 'hog/wave', name, type, dur, loop, tracks: { 'armR.rot': [[t, v, ease?]…], 'face.mouth': [[t, 'open']], 'ik.armR': [[t, [x, y]]], 'card.y': …, sit, facing }, proc: 'gait' }
+RIG.anims = RIG.anims || {};
+function rigAnim(a) { if (a && a.id) RIG.anims[a.id] = a; return a; }
+const _RIG_EASE = { linear: p => p, io: p => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2), in: p => p * p, out: p => 1 - (1 - p) * (1 - p), hold: () => 0 };
+function _rigLerp(a, b, p) {
+  if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * p;
+  if (Array.isArray(a) && Array.isArray(b)) return a.map((x, i) => (typeof x === 'number' && typeof b[i] === 'number' ? x + (b[i] - x) * p : x));
+  return p < 1 ? a : b;
+}
+// значение дорожки [[t, v, ease?]…] в момент t (ступенькой для строк и логических, до первого — первое, после последнего — последнее)
+function rigTrackAt(list, t) {
+  if (!list || !list.length) return undefined;
+  const K = list.slice().sort((a, b) => a[0] - b[0]);
+  if (t <= K[0][0]) return K[0][1];
+  const last = K[K.length - 1]; if (t >= last[0]) return last[1];
+  let i = 0; while (i < K.length - 2 && t >= K[i + 1][0]) i++;
+  const a = K[i], b = K[i + 1];
+  if (typeof a[1] !== 'number' && !Array.isArray(a[1])) return a[1];
+  const e = _RIG_EASE[a[2] || 'io'] || _RIG_EASE.io;
+  return _rigLerp(a[1], b[1], e((t - a[0]) / (b[0] - a[0] || 1)));
+}
+// дорожки клипа в момент lt -> слой позы
+function rigClipLayer(anim, lt) {
+  const L = {};
+  for (const [name, list] of Object.entries(anim.tracks || {})) {
+    const v = rigTrackAt(list, lt); if (v === undefined) continue;
+    const [a, b] = name.split('.');
+    if (a === 'face') (L.face = L.face || {})[b] = v;
+    else if (a === 'ik') (L.ik = L.ik || {})[b] = v;
+    else if (a === 'card') (L.card = L.card || {})[b] = v;
+    else if (b === undefined) L[a] = v;                                  // sit, facing
+    else ((L.bones = L.bones || {})[a] = L.bones[a] || {})[b] = v;
+  }
+  return L;
+}
+// слой b поверх a с весом w (числа и массивы — плавно, строки и логические — с середины)
+const _RIG_DEF = { rot: 0, len: 1, sq: 0, x: 0, y: 0, rz: 0, ry: 0, sy: 0 };
+function rigBlend(a, b, w) {
+  if (!b || w <= 0) return a;
+  const out = JSON.parse(JSON.stringify(a || {}));
+  const mixv = (x, y, d) => (w >= 1 ? y : _rigLerp(x === undefined ? d : x, y, w));
+  for (const [bn, ch] of Object.entries(b.bones || {})) {
+    const o = ((out.bones = out.bones || {})[bn] = out.bones[bn] || {});
+    for (const [f, v] of Object.entries(ch)) o[f] = mixv(o[f], v, _RIG_DEF[f] == null ? 0 : _RIG_DEF[f]);
+  }
+  for (const k of ['face', 'card']) for (const [f, v] of Object.entries(b[k] || {})) { const o = (out[k] = out[k] || {}); o[f] = typeof v === 'number' || Array.isArray(v) ? mixv(o[f], v, k === 'card' ? (_RIG_DEF[f] || 0) : v) : (w >= 0.5 ? v : o[f]); }
+  for (const [f, v] of Object.entries(b.ik || {})) { const o = (out.ik = out.ik || {}); o[f] = o[f] ? _rigLerp(o[f], v, w) : v; out._ikw = Object.assign(out._ikw || {}, { [f]: Math.max(w, (out._ikw || {})[f] || 0) }); }
+  for (const k of ['sit', 'facing']) if (b[k] !== undefined && w >= 0.5) out[k] = b[k];
+  return out;
+}
+
+// ---- IK
+// ёжик: цель лапы [x, y] в долях роста от ног (y вверх) -> угол и длина (drawHog: одна кость, тянется)
+function rigIKHog(char, pose, side, tgt) { return rigHogAim(char, pose, side, tgt[0], -tgt[1]); }
+// две кости (плечо a + предплечье b) к цели в координатах листа: закон косинусов; bend — сторона сгиба (+1 / −1)
+function rigIK2(R, pose, ida, idb, tgt, bend = 1) {
+  const bs = R.bones || [], A = bs.find(x => x.id === ida), B = bs.find(x => x.id === idb); if (!A || !B) return null;
+  const end = B.end || (bs.find(x => x.parent === idb) || {}).joint; if (!end) return null;
+  const M = rigPartsBones(R, Object.assign({}, pose, { bones: Object.assign({}, pose.bones, { [ida]: {}, [idb]: {} }) }));
+  const P = M[A.parent] || _RIG_I, J = _rigApply(P, A.joint[0], A.joint[1]);           // плечо в мире листа
+  const la = Math.hypot(B.joint[0] - A.joint[0], B.joint[1] - A.joint[1]), lb = Math.hypot(end[0] - B.joint[0], end[1] - B.joint[1]);
+  const dx = tgt[0] - J[0], dy = tgt[1] - J[1], d = Math.max(1e-6, Math.min(la + lb - 1e-3, Math.hypot(dx, dy)));
+  const c2 = (d * d - la * la - lb * lb) / (2 * la * lb), q2 = bend * Math.acos(Math.max(-1, Math.min(1, c2)));
+  const q1 = Math.atan2(dy, dx) - Math.atan2(lb * Math.sin(q2), la + lb * Math.cos(q2));
+  const restA = Math.atan2(B.joint[1] - A.joint[1], B.joint[0] - A.joint[0]), restB = Math.atan2(end[1] - B.joint[1], end[0] - B.joint[0]);
+  const parentRot = Math.atan2(P.b, P.a);
+  return { [ida]: { rot: q1 - restA - parentRot }, [idb]: { rot: q2 - restB + restA } };   // мировые углы: A = родитель + покой A + a; B = … + покой B + a + b
+}
+function rigSolveIK(char, pose) {
+  if (!pose.ik) return pose;
+  const out = JSON.parse(JSON.stringify(pose)); out.bones = out.bones || {};
+  for (const [bone, tgt] of Object.entries(pose.ik)) {
+    if (!tgt) continue;
+    const w = (pose._ikw || {})[bone] == null ? 1 : pose._ikw[bone];
+    let sol = null;
+    if (char.rig === 'param' || char.skeleton === 'hog') { const r = rigIKHog(char, out, bone === 'armL' ? -1 : 1, tgt); sol = { [bone]: { rot: r.rot, len: r.len } }; }
+    else if (char.rigData) {
+      const R = char.rigData, ch = (R.bones || []).find(b => b.parent === bone);
+      const [fx, fy] = R.foot || [0, 0], hh = R.height || 900;
+      const T = [fx + tgt[0] * hh, fy - tgt[1] * hh];
+      if (ch) sol = rigIK2(R, out, bone, ch.id, T, (R.bones.find(b => b.id === bone) || {}).bend || 1);
+    }
+    if (sol) out.bones = rigBlend({ bones: out.bones }, { bones: sol }, w).bones;
+  }
+  delete out.ik; delete out._ikw;
+  return out;
+}
+
+// ---- ходьба: фаза от пройденного пути (как hogCard + gait3), для ёжика — встроенный клип 'hog/walk'
+rigAnim({ id: 'hog/walk', name: 'Ходьба', type: 'hog', proc: 'gait', stride: 0.32, dur: 1, loop: true });
+function rigGaitLayer(char, phase) {
+  const s = Math.sin(phase);
+  if (char.rig === 'param' || char.skeleton === 'hog')
+    return { bones: { legL: { rot: Math.max(0, -s) }, legR: { rot: Math.max(0, s) }, armL: { rot: s * 0.35 }, armR: { rot: -s * 0.35 } }, card: { y: Math.abs(s) * 0.045, rz: s * 0.05 } };
+  const a = RIG.anims[(char.skel && char.skel.type) + '/walk'];
+  if (a && !a.proc) return rigClipLayer(a, (phase / TAU * (a.dur || 1)) % (a.dur || 1));
+  return { card: { y: Math.abs(s) * 0.03, rz: s * 0.04 } };
+}
+// путь объекта по ключам позиции к моменту T (кэш по 1/30 с) и скорость
+function rigPath(o, T) {
+  const K = (o.keys || {}).pos; if (!K || K.length < 2) return { dist: 0, speed: 0 };
+  const sig = JSON.stringify(K);
+  if (!o._path || o._path.sig !== sig) {
+    const end = Math.max(...K.map(k => k.t)) + 1, n = Math.ceil(end * 30) + 2, D = new Float32Array(n);
+    let prev = evalKeys(K, 0, o.pos || [0, 0, 0]);
+    for (let i = 1; i < n; i++) { const p = evalKeys(K, i / 30, prev); D[i] = D[i - 1] + Math.hypot(p[0] - prev[0], p[2] - prev[2]); prev = p; }
+    Object.defineProperty(o, '_path', { value: { sig, D }, enumerable: false, configurable: true, writable: true });
+  }
+  const D = o._path.D, i = Math.max(0, Math.min(D.length - 2, T * 30)), i0 = Math.floor(i), f = i - i0;
+  const dist = D[i0] + (D[i0 + 1] - D[i0]) * f;
+  const j = Math.min(D.length - 1, Math.floor(T * 30) + 3), k = Math.max(0, Math.floor(T * 30) - 3);
+  return { dist, speed: (D[j] - D[k]) / ((j - k) / 30 || 1) };
+}
+
+// ---- объект сцены -> поза: клипы, ходьба, ключи позы, IK, эмоция, костюмы, липсинк. env(T) — громкость звука липсинка 0..1
+function rigSceneLayer(char, o, T, base, env) {
+  let p = base || {};
+  const FADE = 0.2;
+  let legsBusy = false;
+  for (const c of (o.clips || []).slice().sort((a, b) => a.t - b.t)) {
+    const a = RIG.anims[c.anim]; if (!a) continue;
+    const dur = c.dur || a.dur || 1; if (T < c.t || T > c.t + dur) continue;
+    const w = Math.max(0, Math.min(1, (T - c.t) / FADE, (c.t + dur - T) / FADE, 1));
+    if (a.proc === 'gait') { p = rigBlend(p, rigGaitLayer(char, (T - c.t) * (c.speed || 1) * TAU), w); legsBusy = true; continue; }
+    let lt = (T - c.t) * (c.speed || 1); lt = c.loop || a.loop ? lt % (a.dur || 1) : Math.min(lt, a.dur || dur);
+    const L = rigClipLayer(a, lt);
+    if (L.bones && (L.bones.legL || L.bones.legR)) legsBusy = true;
+    p = rigBlend(p, L, w);
+  }
+  if (o.walk !== 'off' && !legsBusy) {
+    const { dist, speed } = rigPath(o, T), w = Math.max(0, Math.min(1, speed / 0.25));
+    if (w > 0.01) { const st = (RIG.anims[(o.walk && o.walk !== 'auto') ? o.walk : 'hog/walk'] || {}).stride || 0.32; p = rigBlend(p, rigGaitLayer(char, dist / st * Math.PI), w); }
+  }
+  // ключи позы: по каналам между ключами, у которых этот канал задан
+  const PK = (o.pose || []).slice().sort((a, b) => a.t - b.t);
+  if (PK.length) {
+    const chans = {};
+    for (const k of PK) {
+      for (const [b, f] of Object.entries(k.bones || {})) for (const [ff, v] of Object.entries(f)) (chans['b.' + b + '.' + ff] = chans['b.' + b + '.' + ff] || []).push([k.t, v, k.ease || 'io']);
+      for (const [b, v] of Object.entries(k.ik || {})) (chans['ik.' + b] = chans['ik.' + b] || []).push([k.t, v, k.ease || 'io']);
+      for (const [f, v] of Object.entries(k.face || {})) (chans['f.' + f] = chans['f.' + f] || []).push([k.t, v, k.ease || 'io']);
+    }
+    const L = {};
+    for (const [ch, list] of Object.entries(chans)) {
+      const v = rigTrackAt(list, T), [kind, b, f] = ch.split('.');
+      if (kind === 'b') ((L.bones = L.bones || {})[b] = L.bones[b] || {})[f] = v;
+      else if (kind === 'ik') (L.ik = L.ik || {})[b] = v;
+      else (L.face = L.face || {})[b] = v;
+    }
+    p = rigBlend(p, L, 1);
+  }
+  p = rigSolveIK(char, p);
+  if (env != null && o.lipsync) { const e = env(T); if (e > (o.lipsync.threshold || 0.12)) p = rigPose(p, { face: { mouth: 'open' } }); }
+  return p;
+}
+
+// 2D-кадр с каналами карточки (подскок, наклон, сжатие, поворот) — то, что в 3D делает charCard (для 2D-роликов, стенда, ленты кадров)
+function rigDrawCard(ctx, char, pose, x, y, h, T) {
+  const K = pose.card || {}, m = h / (char.h || 0.9);
+  ctx.save(); ctx.translate(x, y - (K.y || 0) * m); ctx.rotate(-(K.rz || 0)); ctx.scale(Math.max(0.02, Math.abs(Math.cos(K.ry || 0))), 1 + (K.sy || 0));
+  const st = rigDraw(ctx, char, pose, 0, 0, h, T);
+  ctx.restore();
+  return st;
+}
+// клип на персонаже в момент lt (для стенда, листа и ленты): база персонажа + клип + IK
+function rigClipPose(char, anim, lt, base) {
+  if (anim.proc === 'gait') return rigSolveIK(char, rigBlend(base || char.pose || {}, rigGaitLayer(char, lt * TAU), 1));
+  return rigSolveIK(char, rigBlend(base || char.pose || {}, rigClipLayer(anim, lt), 1));
+}
+
 // ---------------------------------------------------------------- общий вход
 function rigDraw(ctx, char, pose, x, y, h, T) {
   if (!char) return null;
@@ -330,7 +502,7 @@ function charCard(w, char, opt = {}) {
   const cur = () => { const p = (c && c.pose) || {}; return c && c.autoBack ? Object.assign({}, p, { facing: 'back' }) : p; };
   c = w.card({
     name: opt.name || char.name, px: [cw, ch], h: hM * ch / size, foot, rim: 6, dynamic: true, thick: 0.02, glow: opt.self == null ? 0.22 : opt.self, noItem: !!opt.o,
-    state(lt, T) { return JSON.stringify(cur(), (k, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v)) + '|' + Math.round(T * 8) + '|' + blinkAt(T, (char.base || {}).seed || 1).toFixed(1); },
+    state(lt, T) { return JSON.stringify(cur(), (k, v) => (k === 'card' ? undefined : typeof v === 'number' ? Math.round(v * 100) / 100 : v)) + '|' + Math.round(T * 8) + '|' + blinkAt(T, (char.base || {}).seed || 1).toFixed(1); },
     draw(g, cw2, ch2, lt, T) { rigDraw(g, char, cur(), cw2 / 2, ch2 - foot, size, T); },
   });
   c.char = char;
@@ -338,6 +510,8 @@ function charCard(w, char, opt = {}) {
   c.basePose = c.pose;
   // ключи объекта сцены: pose.<кость>.<rot|len|sq>, face.<поле>, wear.<костюм> — поверх позы (дорожки S5 ложатся сюда же)
   c.keyed = T => rigPose(c.basePose, c.keyLayer(T));
+  // S5: всё, что задаёт объект сцены (клипы, ходьба, ключи позы, IK, эмоция, костюмы, липсинк) поверх base (база персонажа или поза поведения)
+  c.scenePose = (T, base) => rigPose(rigSceneLayer(char, so, T, base || c.basePose, c.env || null), c.keyLayer(T));
   c.keyLayer = T => {                                       // только то, что задают ключи (поверх позы поведения или базы)
     const K = (so.keys) || {};
     let p = {};
@@ -367,7 +541,15 @@ function charCard(w, char, opt = {}) {
     const lim = R.facingMaxDeg * Math.PI / 180;
     const away = Math.abs(d) > Math.PI / 2;
     if (away && !(c.pose && c.pose.facing)) { c.autoBack = true; d = d > 0 ? d - Math.PI : d + Math.PI; } else c.autoBack = false;
-    inner.rotation.y = Math.max(-lim, Math.min(lim, d));
+    inner.rotation.y = Math.max(-lim, Math.min(lim, d)) + ((c.pose && c.pose.card && c.pose.card.ry) || 0);
+  });
+  // каналы карточки из клипов и ходьбы (card.y / rz / sy) — поверх того, что делает поведение (gait3 / hop3)
+  w.tick(() => {
+    const K = (c.pose && c.pose.card) || null, inner = c.inner || c;
+    if (!K) { if (c._cardSet) { inner.position.y = 0; inner.rotation.z = 0; inner.scale.y = 1; c._cardSet = false; } return; }
+    inner.position.y = K.y || 0; inner.rotation.z = K.rz || 0; inner.scale.y = 1 + (K.sy || 0); c._cardSet = true;
   });
   return c;
 }
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { RIG, rigAnim, rigTrackAt, rigClipLayer, rigBlend, rigPose, rigPartsBones, rigIK2, rigSceneLayer, rigPath, rigGaitLayer };

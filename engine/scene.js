@@ -159,7 +159,8 @@ function scenePropUrl(ref, plan) {
   return null;
 }
 // load(src) — загрузчик скриптов страницы; into — уже загруженные (S.lib). Модели glb догружаются, если движок уже поднят
-async function loadSceneProps(refs, plan, load, into = {}) {
+async function loadSceneProps(refs, plan, load, into = {}, scene = null) {
+  if (scene) Object.defineProperty(into, '__scene', { value: scene, enumerable: false, configurable: true, writable: true });
   for (const ref of refs) {
     if (into[ref]) continue;
     const u = scenePropUrl(ref, plan);
@@ -173,8 +174,21 @@ async function loadSceneProps(refs, plan, load, into = {}) {
     }
     catch (e) { console.warn('scene: пропс не загрузился', ref, e.message); }
   }
+  // клипы анимаций (S5): id 'hog/wave' -> library/anims/hog/wave.json канала видео
+  if (typeof RIG !== 'undefined' && typeof rigAnim === 'function' && into.__scene) {
+    for (const id of sceneAnimRefs(into.__scene)) {
+      if (RIG.anims[id]) continue;
+      try { const r = await fetch(`/api/lib/file/video:${plan}/anims/${id}.json?v=${Date.now()}`); if (r.ok) rigAnim(await r.json()); } catch (e) { console.warn('scene: клип не загрузился', id); }
+    }
+  }
   if (typeof X3 !== 'undefined' && X3.R && typeof loadModels3 === 'function') await loadModels3();
   return into;
+}
+// клипы, которые нужны персонажам сцены: clips[].anim и walk (кроме auto / off)
+function sceneAnimRefs(scene) {
+  const ids = [];
+  for (const o of scene.objects || []) { for (const c of o.clips || []) ids.push(c.anim); if (o.walk && o.walk !== 'auto' && o.walk !== 'off') ids.push(o.walk); }
+  return [...new Set(ids.filter(x => /^[a-z0-9-]+\/[a-z0-9-]+$/.test(x || '')))];
 }
 
 function scnBuildPrefab(w, S, o, holder) {
@@ -351,5 +365,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { scenePropRefs, scenePropUrl, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
+  module.exports = { scenePropRefs, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

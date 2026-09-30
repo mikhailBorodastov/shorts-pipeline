@@ -240,7 +240,7 @@
     if (!r.ok) throw new Error('scene.json не загрузился: ' + url);
     window.SCENE = await r.json();
     const plan = (url.match(/\/rscene\/([^/]+)\//) || [])[1];      // 3D-пропсы библиотеки и препродакшена (lib: / el:) — до сборки мира
-    const LIB = await loadSceneProps(scenePropRefs(SCENE), plan, load);
+    const LIB = await loadSceneProps(scenePropRefs(SCENE), plan, load, {}, SCENE);
     window.WORLD = sceneWorld(SCENE, typeof PREFABS !== 'undefined' ? PREFABS : {}, LIB);
     if (q.get('orbit')) {                           // &orbit=x,y,z,r[,a0,a1] — проверка: камера облетает точку по дуге (градусы, 0 — со стороны +z) за длину сцены (Paper Mario, S4)
       const [ox, oy, oz, orr, a0 = 0, a1 = 360] = q.get('orbit').split(',').map(Number), u0 = WORLD.o.update;

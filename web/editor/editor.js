@@ -575,7 +575,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     await Promise.all(Object.entries(P).map(([k, s]) => pic(k, s)));
     await Promise.all(['900 40px Rubik', '800 40px Nunito', '700 40px Caveat'].map(f => document.fonts.load(f).catch(() => {})));
     if (j.style3d) PROP_STYLE = j.style3d;
-    ED.lib = await loadSceneProps(scenePropRefs(ED.doc), ED.key.slice(5), load);          // 3D-пропсы lib: / el: (S3)
+    ED.lib = await loadSceneProps(scenePropRefs(ED.doc), ED.key.slice(5), load, {}, ED.doc);          // 3D-пропсы lib: / el: (S3)
     ED.loadProp = async ref => { await loadSceneProps([ref], ED.key.slice(5), load, ED.lib); return !!ED.lib[ref]; };
     ED.w = sceneWorld(ED.doc, typeof PREFABS !== 'undefined' ? PREFABS : {}, ED.lib);
     await stage3dInit();

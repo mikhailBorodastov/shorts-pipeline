@@ -15,6 +15,7 @@
 <canvas id="c" width="1080" height="1080"></canvas>
 <!-- Стенд персонажа со скелетом (S4, engine/rig.js).
      ?char=<url prefab.js персонажа>  &pose=<JSON позы>  &emotion=<имя>  &wear=<JSON {костюм: true|false}>  &skel=1 — кости поверх
+     &anim=<url клипа .json> — клип играет петлёй (S5)  &strip=1&n=8 — лента кадров клипа
      &poses=1 — лист проверочных поз типа скелета (skeleton.poses)  &emotions=1 — сетка эмоций (✓ — утверждена)  &bg=<цвет>  &size=<W>x<H>
      window.shot(kind, t) -> PNG (render_shot.js …&parts=element кладёт element.png) -->
 <script src="/tpl/lib.js"></script>
@@ -27,12 +28,13 @@
   const js = (k, d) => { try { return JSON.parse(q.get(k) || '') ; } catch (e) { return d; } };
   if (q.get('size')) { const [a, b] = q.get('size').split('x').map(Number); cv.width = a; cv.height = b; }
   const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + (src.includes('?') ? '&' : '?') + 'v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error('не загрузилось: ' + src)); document.head.append(s); });
-  let CH = null;
+  let CH = null, ANIM = null;
   window.READY = (async () => {
     await load(q.get('char'));
     CH = CHAR_LAST;
     for (const u of CH.needs || []) await load(u);
     await rigLoadExtras(CH);
+    if (q.get('anim')) { const r = await fetch(q.get('anim') + '?v=' + Date.now()); if (!r.ok) throw new Error('клип не загрузился: ' + q.get('anim')); ANIM = rigAnim(await r.json()); }
     await Promise.all(['900 40px Rubik', '700 40px Caveat'].map(f => document.fonts.load(f).catch(() => {})));
   })();
 
@@ -67,6 +69,16 @@
     const W2 = cv.width, H2 = cv.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = q.get('bg') || '#ece6da'; ctx.fillRect(0, 0, W2, H2);
     const base = rigPose(CH.pose, q.get('emotion') ? rigEmotion(CH, q.get('emotion')) : null, { wear: js('wear', {}) }, js('pose', {}));
+    if (ANIM && q.get('strip') === '1') {                 // лента кадров клипа: n моментов по длине
+      const n = +q.get('n') || 8, dur = ANIM.dur || 1, cwid = W2 / n, h = Math.min(cwid * 1.1, H2 * 0.72);
+      for (let i = 0; i < n; i++) { const lt = dur * i / (n - 1 || 1);
+        const st = rigDrawCard(ctx, CH, rigClipPose(CH, ANIM, lt, base), cwid * (i + 0.5), H2 - 60, h, T);
+        ctx.font = '600 26px Rubik'; ctx.fillStyle = '#6b6456'; ctx.textAlign = 'center'; ctx.fillText(lt.toFixed(2) + ' с', cwid * (i + 0.5), H2 - 18); }
+      ctx.font = '700 34px Rubik'; ctx.textAlign = 'left'; ctx.fillStyle = '#3b3a37'; ctx.fillText(ANIM.name || ANIM.id, 24, 44);
+      return;
+    }
+    if (ANIM) { const lt = (T % (ANIM.dur || 1)); const st = rigDrawCard(ctx, CH, rigClipPose(CH, ANIM, lt, base), W2 / 2, H2 * 0.88, H2 * 0.62, T);
+      if (q.get('skel') === '1' && st && st.joints) drawJoints(ctx, CH.skel, st.joints); return; }
     if (q.get('emotions') === '1') {                      // сетка эмоций: ✓ — утверждена автором
       const E = Object.entries(CH.emotions || {}), n = E.length || 1, cols = Math.min(n, 4), rows = Math.ceil(n / cols);
       const cwid = W2 / cols, rh = H2 / rows, h = Math.min(cwid * 0.95, rh * 0.8);
