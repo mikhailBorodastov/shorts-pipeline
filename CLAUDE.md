@@ -19,6 +19,10 @@
   на `engine/props3d.js`: фигуры `P3.box / cyl / lathe / extrude`, наклейки `P3.sticker` из 2D-рисунков; или Blender: `model.py` → `python _studio/stands/blender_run.py model.py` → `model.glb`).
   Стиль 3D канала — `channel.json → style3d` (у «Доедать будешь» — бумажный макет). Кадры — `node _studio/stands/render_prop.js <url prefab.js> <папка>` (4 ракурса + лист);
   в сцене редактора — `src.prefab = 'lib:props/<slug>@N'` или `'el:<элемент>@vN'`. Образец — `_studio/stands/samples/crt3d/prefab.js`, ТЗ — `docs/studio/stage3-props.md`.
+- **Персонажи со скелетом (Claude Studio, S4):** персонаж библиотеки — `lib:characters/<slug>@N` = `prefab.js` (`character({...})`, `engine/rig.js`) + костюмы / `rig.json`.
+  Ёжик — риг `param` поверх `drawHog` (скелет `hog`: тело, голова, лапы, ноги; лицо — look, lid, mouth, brows), пижама и кепка — костюмы (`wear`). Остальные — риг `parts` (части на костях).
+  Поза — `{ bones: { armL: { rot, len } }, face: { mouth, brows, look }, wear: { kepka: true }, sit }`; нарисовать — `rigDraw(ctx, char, pose, x, yНог, рост, T)`, в 3D — `charCard(w, char)`.
+  Посмотреть персонажа в позе — `python _studio/server/studio.py char pose <slug> '<поза JSON>' out.png`. ТЗ — `docs/studio/stage4-characters.md`.
 - **glTF-модели:** `ASSETS.models = { key: '../assets/models/x.glb' }` грузит `stage3dInit` (загрузчик — `vendor/GLTFLoader.js`, three r186, MIT), в мире — `w.model(key, { h, pos, rotY, name, matte: true, anim })`: модель встаёт на пол по центру, `matte` делает её матовой, «бумажной». Берутся из препродакшена (📦 ассеты) — лицензии в README элемента.
 - **Проверка:** `render.js snap` как обычно. `RENDER_PAGE=demo.html` рендерит другую страницу проекта. Ошибки WebGL видны в консоли snap (`[pageerror]`).
 - **Грабли:** в шейдерах не использовать `pow(0.0, y)` (NaN на D3D → bloom заливает кадр чёрным); спрайты прятать `visible = false`, а не масштабом 0. `WT(i, 'кот')` находит первое слово с подстрокой («котов»!) — бери уникальные куски. Кадры клипов в `assets/*/f%03d.jpg` бывают 480×360, а не 320×240 — считай кроп по реальному размеру.

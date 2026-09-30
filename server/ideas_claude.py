@@ -373,6 +373,9 @@ name — коротко (2–5 слов); desc — как выглядит ил�
     elif action == "element":
         return element_spec(docs, params, sysp, genre)
 
+    elif action == "charparts":
+        return charparts_spec(docs, params, sysp)
+
     elif action == "sound":
         return sound_spec(docs, params, sysp)
 
@@ -808,6 +811,93 @@ def prop3_engine(docs, e, rel, wd, blender):
    Мелкие детали — наклейками (P3.sticker с 2D-рисунком) или маленькими P3.box; надписи и экраны — наклейками.{bl}
 3. Сними кадры командой (ровно так): node {rp} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']}
    Получишь element.png — лист 2×2 из четырёх ракурсов (¾ спереди, другой бок, ¾ сзади, другой бок), element_1/3/5/7.png — каждый крупно, и ошибки страницы."""
+
+
+def charparts_spec(docs, params, sysp):
+    """«🦴 Собрать персонажа» (S4): Claude (Opus) рисует персонажа частями на листе и предлагает скелет —
+    prefab.js (character({ …, parts: { имя(g) {…} } })) + rig.json (суставы, крепление частей, позы, лица), снимает render_char.js, правит.
+    Папка — render/<plan>/<el>/v<N>/ (как черновики). docs/studio/stage4-characters.md §3.2, §4."""
+    plan, data = docs["plan"], docs["data"]
+    e = next((x for x in plan.get("elements") or [] if x["id"] == params.get("el")), None)
+    if not e or e.get("kind") != "char":
+        raise ValueError("собрать со скелетом можно только персонажа")
+    renders = e.get("renders", [])
+    v = max([r.get("v", 0) for r in renders] + [0]) + 1
+    rel = f"{plan['id']}/{e['id']}/v{v}"
+    wd = P.resolve("render/" + rel)
+    os.makedirs(wd, exist_ok=True)
+    base = next((r for r in renders if r.get("id") == params.get("base") and r.get("rigchar")), None)
+    if base:
+        for f in ("prefab.js", "rig.json"):
+            src = os.path.join(P.resolve("render/" + base["dir"]), f)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(wd, f))
+    params["_wd"], params["_rel"], params["_v"] = wd, rel, v
+    slug = re.sub(r"[^a-z0-9-]+", "-", (e.get("slug") or e["id"]).lower()).strip("-") or e["id"]
+    rc = _fwd(os.path.join(P.STANDS, "render_char.js"))
+    cmd = f"node {rc} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']}"
+    refs = [(r, P.resolve(r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+    ref_lines = "\n".join(f"- {_fwd(p_)}" + (f" — {r['note']}" if r.get("note") else "") for r, p_ in refs) or "(референсов нет — опирайся на описание)"
+    r2 = next((r for r in reversed(renders) if not r.get("rigchar") and r.get("img")), None)
+    flat = (f"Персонаж уже нарисован листом (2D): картинка {_fwd(P.resolve(r2['img']))}, код {_fwd(os.path.join(P.resolve('render/' + r2['dir']), 'element.js'))}"
+            + (f" (функция {r2['fn']})" if r2.get("fn") else "") + ". Возьми его облик и код рисования, разрежь на части.") if r2 else ""
+    fx = ((e.get("fx") or {}).get("main")) or {}
+    notes = [n["text"] for n in fx_notes(fx)] + ([fx["text"].strip()] if (fx.get("text") or "").strip() else [])
+    params["_fx"] = {"notes": fx_notes(fx), "text": (fx.get("text") or "").strip(), "pins": []} if notes else {}
+    edit = ""
+    if base:
+        edit = f"ПРАВКА. Это версия v{v}; в папке уже лежат prefab.js и rig.json прошлой версии v{base.get('v')} — начни с них, сделай ровно то, что просит автор, остальное сохрани:\n" + "\n".join(f"- «{t}»" for t in notes)
+        if base.get("img"):
+            edit += f"\nПрошлая версия (лист поз): {_fwd(P.resolve(base['img']))}"
+    types = []
+    try:
+        sd = os.path.join((docs.get("channel") or {}).get("dir") or "", "library", "skeletons")
+        for f in sorted(os.listdir(sd)) if sd and os.path.isdir(sd) else []:
+            j = json.load(open(os.path.join(sd, f), encoding="utf-8"))
+            types.append(f"- {j.get('type')}: {j.get('name', '')} — кости {', '.join(b['id'] for b in j.get('bones', []))} ({_fwd(os.path.join(sd, f))})")
+    except Exception:
+        pass
+    paper = _fwd(os.path.join(P.STANDS, "paper.js"))
+    rig = _fwd(os.path.join(P.ENGINE, "rig.js"))
+    sample = _fwd(os.path.join(P.STANDS, "samples", "testchar"))
+    prompt = f"""Задача: собрать персонажа «{e.get('name', '')}» для роликов канала — нарисовать его ЧАСТЯМИ и предложить СКЕЛЕТ, чтобы его можно было двигать (позы, эмоции, позже анимации).
+Описание от автора: {e.get('desc') or '(нет — придумай по названию и идее ролика)'}
+Где нужен: {e.get('why') or '—'}
+
+{STYLE}
+
+Референсы автора (посмотри через Read):
+{ref_lines}
+{flat}
+
+{preprod.element_brief(e, plan, data)}
+
+{edit}
+
+Типы скелетов, что уже есть в библиотеке канала (если персонаж подходит под тип — возьми ТЕ ЖЕ id костей, тогда анимации типа будут общими):
+{chr(10).join(types) or '- hog: наш бумажный ёжик (риг по параметрам drawHog, частей не нужно)'}
+Если это ёжик (похож на нашего бумажного ёжика) — НЕ рисуй части: ответь fn = hog, в note — почему; автор соберёт его на скелете ёжика.
+
+Как устроено (прочитай шапку и раздел «риг 'parts'» в {rig}; образец формата — {sample}/prefab.js и rig.json, «гусеница» с гнущимся телом, рукой на булавке и двумя лицами):
+1. prefab.js в текущей папке:
+   character({{ id: '{slug}', name: '{e.get('name', '')}', skeleton: '<тип>', rig: 'parts', h: <рост в метрах; ёжик ≈ 0.74>, parts: {{ имяЧасти(g) {{ … рисует часть в координатах листа … }}, … }} }});
+   Тулкит бумаги (глобальный): {paper} — cut / cutEll / torn / grainOver / circle, цвета и зерно как у нашего ёжика. Каждая часть — своя функция, рисует ТОЛЬКО свою часть на прозрачном листе.
+   Части заходят за сустав с запасом (кружок или скругление под соседней частью), чтобы при повороте не было щели; дальние части (задние лапы, хвост) — ниже по z.
+2. rig.json: {{ "schema": 1, "type": "<тип латиницей, например cat>", "typeName": "<по-русски>", "mode": "bend" или "pins", "sheet": [1000, 1000], "foot": [x, y — точка между ступнями], "height": <рост на листе, px>,
+   "bones": [{{ "id", "parent", "joint": [x, y] — сустав в покое, "end": [x, y] — конец кости (для последних в цепочке), "limits": [мин, макс] радиан }}],
+   "parts": [{{ "id": "имяЧасти", "bone": "кость" (часть целиком на кости) или "bones": [цепочка] (гнётся — хвост, тело, уши), "z": порядок, "front": true — только спереди (лицо) }}],
+   "slots": {{ "head": "кость головы", "handL": …, "handR": …, "back": … }},
+   "face": {{ "base": "частьЛица", "emotions": {{ "радость": "частьЛица2", … }} }}, "emotions": {{ "радость": {{}} , … }},
+   "poses": {{ "покой": {{}}, … ещё 4 проверочные позы типа (например «лапы вверх», «шаг», «сидит», «хвост трубой»): {{ "bones": {{ "кость": {{ "rot": радианы (+ по часовой) }} }}, "face": {{ "name": "радость" }} }} }} }}
+   Кости: корень root в точке ног; тело, голова, уши, лапы (по кости на сегмент, если лапа должна гнуться), хвост цепочкой из 3 костей. Эмоции-лица: base + радость + удивление + грусть (лица рисуй отдельными частями на кости головы).
+3. Сними кадры (ровно так): {cmd}
+   element.png — пять проверочных поз с костями, rest.png — покой с костями, clean.png — без костей, emotions.png — лица. Посмотри все через Read:
+   части не рвутся и не расходятся в суставах, сгибы гладкие, кости стоят в суставах, позы читаются, лица различимы. Исправь prefab.js / rig.json и сними снова — 2–4 прохода.
+
+В ответе: summary — что нарисовано и какой скелет (2–3 предложения); fn — тип скелета (или hog); note — что автору проверить (какие суставы подвинуть в редакторе скелета)."""
+    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 2400,
+            "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"], "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {rc}:*)"],
+            "dirs": [wd, P.files(plan["id"]), P.STANDS, P.ENGINE, P.render(plan["id"])], "schema": S({"summary": STR, "fn": STR, "note": STR})}
 
 
 def element_spec(docs, params, sysp, genre):
@@ -1274,6 +1364,33 @@ def apply(action, docs, params, res):
             by[o["item"]["kind"]] = by.get(o["item"]["kind"], 0) + 1
         many = {"scene": "сцены", "char": "персонажи", "prop": "пропсы", "sound": "звуки"}
         return [(key, ops)], "Claude: " + (", ".join(f"{many[k]} +{n}" for k, n in by.items()) or "новых элементов нет")
+
+    if action == "charparts":
+        wd, rel, v = params["_wd"], params["_rel"], params["_v"]
+        eid = params["el"]
+        e = next((x for x in plan.get("elements") or [] if x["id"] == eid), None)
+        if not e:
+            return [], "Элемент уже удалён"
+        if (res.get("fn") or "").strip().lower() == "hog":
+            return [], "Claude: это ёжик — собирай на скелете ёжика (библиотека: персонаж со скелетом hog). " + (res.get("note") or "")
+        main = os.path.join(wd, "element.png")
+        if not os.path.isfile(main) or not os.path.isfile(os.path.join(wd, "rig.json")):
+            raise RuntimeError("Claude не довёл персонажа до кадров (element.png, rig.json) — попробуй ещё раз")
+        img = docs["save"](plan["id"], open(main, "rb").read())
+        extra = [docs["save"](plan["id"], open(os.path.join(wd, f), "rb").read()) for f in ("rest.png", "clean.png", "emotions.png") if os.path.isfile(os.path.join(wd, f))]
+        fx = params.get("_fx") or {}
+        rid = nid("r")
+        fb = "; ".join(([fx["text"]] if fx.get("text") else []) + [n["text"] for n in fx.get("notes") or []])
+        item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "feedback": fb, "fx": fx, "fn": res.get("fn", ""), "rigchar": True,
+                "summary": res.get("summary", ""), "note": res.get("note", ""), "ts": t}
+        ops = [{"op": "add", "path": ["elements", eid, "renders"], "item": item}, {"op": "set", "path": ["elements", eid, "render"], "value": rid}]
+        if e.get("form") != "rig":
+            ops.append({"op": "set", "path": ["elements", eid, "form"], "value": "rig"})
+        cur = ((e.get("fx") or {}).get("main")) or {}
+        ops += [{"op": "del", "path": ["elements", eid, "fx", "main", "notes"], "id": n["id"]} for n in fx.get("notes") or [] if n.get("id")]
+        if fx.get("text") and (cur.get("text") or "").strip() == fx["text"]:
+            ops.append({"op": "set", "path": ["elements", eid, "fx", "main", "text"], "value": ""})
+        return [(key, ops)], f"Claude собрал «{e.get('name', '')}» со скелетом ({res.get('fn', '')}) v{v}"
 
     if action == "element":
         wd, rel, v = params["_wd"], params["_rel"], params["_v"]

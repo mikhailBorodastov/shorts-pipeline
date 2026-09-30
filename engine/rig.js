@@ -57,7 +57,8 @@ function character(def) {
   def.url = src.replace(location.origin, '');
   def.needs = (def.costumes || []).map(c => (/^(\/|https?:)/.test(c) ? c : base + c).replace(location.origin, ''));
   def.skel = RIG.skeletons[def.skeleton] || null;
-  def.extrasUrl = base + '../emotions.json';                        // эмоции, утверждённые после публикации — общие для всех версий персонажа
+  if (/\/characters\/[^/]+\/v\d+\/$/.test(base)) def.extrasUrl = base + '../emotions.json';   // библиотека: эмоции, утверждённые после публикации — общие для всех версий
+  if (def.rig === 'parts') def.rigUrl = base + 'rig.json';           // части: суставы, крепление частей, позы — данными (редактор скелета их двигает)
   // префаб сцены: kind 'group' — engine/scene.js собирает его как 3D-пропс (S.lib), см. charCard
   def.kind = 'group';
   def.build = (w, o) => { const c = charCard(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.keyed(T); } }; };
@@ -68,9 +69,22 @@ function character(def) {
 
 // эмоции из characters/<slug>/emotions.json поверх тех, что в prefab.js (загрузчики зовут после загрузки персонажа)
 async function rigLoadExtras(def) {
-  if (!def || !def.extrasUrl) return def;
-  try { const r = await fetch(def.extrasUrl + '?v=' + Date.now()); if (r.ok) def.emotions = Object.assign({}, def.emotions || {}, await r.json()); } catch (e) {}
+  if (!def) return def;
+  if (def.rigUrl) {
+    try { const r = await fetch(def.rigUrl + '?v=' + Date.now()); if (r.ok) rigUseData(def, await r.json()); } catch (e) { console.error('rig.json: ' + e.message); }
+  }
+  if (def.extrasUrl) {
+    try { const r = await fetch(def.extrasUrl + '?v=' + Date.now()); if (r.ok) def.emotions = Object.assign({}, def.emotions || {}, await r.json()); } catch (e) {}
+  }
   return def;
+}
+// данные рига частей (rig.json) -> персонаж: скелет типа (для листа, поз и редактора) и кэш частей сбрасывается
+function rigUseData(def, R) {
+  def.rigData = R; def._parts = null;
+  def.skel = { type: R.type || def.skeleton, name: R.typeName || R.type, rig: 'parts', bones: (R.bones || []).map(b => ({ id: b.id, parent: b.parent, limits: b.limits })),
+    slots: R.slots || {}, poses: R.poses || {} };
+  RIG.skeletons[def.skel.type] = RIG.skeletons[def.skel.type] || def.skel;
+  if (R.emotions) def.emotions = Object.assign({}, R.emotions, def.emotions || {});
 }
 
 // ---------------------------------------------------------------- позы
@@ -85,7 +99,7 @@ function rigPose(...layers) { return layers.reduce((a, b) => _rigMerge(a, b || {
 const _bone = (pose, id) => (pose.bones && pose.bones[id]) || {};
 
 // эмоция персонажа -> слой позы лица
-function rigEmotion(char, name) { const e = (char.emotions || {})[name]; return e ? { face: Object.assign({}, e, { ok: undefined, by: undefined, note: undefined }) } : {}; }
+function rigEmotion(char, name) { const e = (char.emotions || {})[name]; return e ? { face: Object.assign({ name }, e, { ok: undefined, by: undefined, note: undefined }) } : {}; }
 
 // что надето: char.wear + pose.wear (true / false по id костюма)
 function rigWorn(char, pose) {
@@ -168,6 +182,132 @@ function rigHogLegsFront(ctx, x, y, h, sw, col) {
     ctx.restore();
   });
   ctx.restore();
+}
+
+
+// ---------------------------------------------------------------- риг 'parts': части на костях (кот и все не-ёжики)
+// rig.json: { type, mode: 'pins' | 'bend', sheet: [W, H], foot: [x, y], height: рост на листе (px),
+//   bones: [{ id, parent, joint: [x, y], end?: [x, y], limits? }],            суставы — в пикселях листа, покой
+//   parts: [{ id, bone | bones: [цепочка], z }],                              часть на одной кости (pins) или гнётся по цепочке (bend)
+//   face: { base: 'часть', emotions: { 'радость': 'часть' } }, poses: { имя: поза }, emotions: { имя: { name } } }
+// Рисунки частей — функции в prefab.js: character({ …, parts: { имя(g) { … рисует в координатах листа … } } }).
+function _rigAff(a, b, c, d, e, f) { return { a, b, c, d, e, f }; }
+function _rigMul(m, n) { return _rigAff(m.a * n.a + m.c * n.b, m.b * n.a + m.d * n.b, m.a * n.c + m.c * n.d, m.b * n.c + m.d * n.d, m.a * n.e + m.c * n.f + m.e, m.b * n.e + m.d * n.f + m.f); }
+function _rigApply(m, x, y) { return [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]; }
+const _RIG_I = _rigAff(1, 0, 0, 1, 0, 0);
+// мировые матрицы костей в координатах листа: M_b = M_parent · T(J) · R(rot) · T(-J); root — ещё и сдвиг (x, y px)
+function rigPartsBones(R, pose) {
+  const B = {}, byId = {}; for (const b of R.bones || []) byId[b.id] = b;
+  const get = id => {
+    if (B[id]) return B[id];
+    const b = byId[id]; if (!b) return _RIG_I;
+    const pb = (pose.bones || {})[id] || {}, P = b.parent ? get(b.parent) : _RIG_I;
+    const [jx, jy] = b.joint || [0, 0], r = pb.rot || 0, c = Math.cos(r), s = Math.sin(r);
+    let m = _rigMul(P, _rigAff(1, 0, 0, 1, jx + (pb.x || 0), jy + (pb.y || 0)));
+    m = _rigMul(m, _rigAff(c, s, -s, c, 0, 0));
+    if (pb.sx || pb.sy) m = _rigMul(m, _rigAff(pb.sx || 1, 0, 0, pb.sy || 1, 0, 0));
+    m = _rigMul(m, _rigAff(1, 0, 0, 1, -jx, -jy));
+    return (B[id] = m);
+  };
+  for (const b of R.bones || []) get(b.id);
+  return B;
+}
+// часть -> холст, обрезанный по непрозрачному (один раз)
+function _rigPartCanvas(def, id) {
+  def._parts = def._parts || {};
+  if (def._parts[id]) return def._parts[id];
+  const R = def.rigData, [W0, H0] = R.sheet || [1000, 1000], fn = (def.parts || {})[id];
+  const c = document.createElement('canvas'); c.width = W0; c.height = H0;
+  if (fn) fn(c.getContext('2d'));
+  const d = c.getContext('2d').getImageData(0, 0, W0, H0).data;
+  let x0 = W0, y0 = H0, x1 = -1, y1 = -1;
+  for (let y = 0; y < H0; y += 2) for (let x = 0; x < W0; x += 2) if (d[(y * W0 + x) * 4 + 3] > 4) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  let out = { img: null, x: 0, y: 0 };
+  if (x1 >= 0) {
+    x0 = Math.max(0, x0 - 4); y0 = Math.max(0, y0 - 4); x1 = Math.min(W0, x1 + 5); y1 = Math.min(H0, y1 + 5);
+    const k = document.createElement('canvas'); k.width = x1 - x0; k.height = y1 - y0;
+    k.getContext('2d').drawImage(c, -x0, -y0); out = { img: k, x: x0, y: y0 };
+  }
+  return (def._parts[id] = out);
+}
+// веса вершин сетки к костям цепочки: обратное расстояние до отрезка кости (в покое), степень 4 — мягкий сгиб у сустава
+function _rigSeg(R, id) {
+  const bs = R.bones || [], b = bs.find(x => x.id === id); if (!b) return null;
+  const ch = bs.find(x => x.parent === id), a = b.joint, e = b.end || (ch && ch.joint) || [a[0], a[1] - 1];
+  return [a, e];
+}
+function _rigDistSeg(x, y, s) {
+  const [[ax, ay], [bx, by]] = s, vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy || 1;
+  const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / L));
+  return Math.hypot(x - ax - vx * t, y - ay - vy * t);
+}
+function _rigMesh(def, part, P) {
+  def._mesh = def._mesh || {};
+  const key = part.id;
+  if (def._mesh[key]) return def._mesh[key];
+  const R = def.rigData, n = part.grid || 10, W = P.img.width, H = P.img.height, segs = part.bones.map(b => _rigSeg(R, b));
+  const V = [];
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+    const u = i / n * W, v = j / n * H, sx = P.x + u, sy = P.y + v;
+    let ws = segs.map(s => (s ? 1 / Math.pow(_rigDistSeg(sx, sy, s) + 6, 4) : 0)), sum = ws.reduce((a, b) => a + b, 0) || 1;
+    V.push({ u, v, sx, sy, w: ws.map(x => x / sum) });
+  }
+  return (def._mesh[key] = { n, V });
+}
+// треугольник источника (u, v на холсте части) -> треугольник на экране: аффинная матрица
+function _rigTri(ctx, img, s0, s1, s2, d0, d1, d2) {
+  const [u0, v0] = s0, [u1, v1] = s1, [u2, v2] = s2, [x0, y0] = d0, [x1, y1] = d1, [x2, y2] = d2;
+  const den = u0 * (v2 - v1) - u1 * v2 + u2 * v1 + (u1 - u2) * v0;
+  if (Math.abs(den) < 1e-9) return;
+  const a = -(v0 * (x2 - x1) - v1 * x2 + v2 * x1 + (v1 - v2) * x0) / den, b = -(v0 * (y2 - y1) - v1 * y2 + v2 * y1 + (v1 - v2) * y0) / den;
+  const c = (u0 * (x2 - x1) - u1 * x2 + u2 * x1 + (u1 - u2) * x0) / den, d = (u0 * (y2 - y1) - u1 * y2 + u2 * y1 + (u1 - u2) * y0) / den;
+  const e = (u0 * (v2 * x1 - v1 * x2) + v0 * (u1 * x2 - u2 * x1) + (u2 * v1 - u1 * v2) * x0) / den;
+  const f = (u0 * (v2 * y1 - v1 * y2) + v0 * (u1 * y2 - u2 * y1) + (u2 * v1 - u1 * v2) * y0) / den;
+  const cx = (x0 + x1 + x2) / 3, cy = (y0 + y1 + y2) / 3, gr = (x, y) => { const dx = x - cx, dy = y - cy, l = Math.hypot(dx, dy) || 1; return [x + dx / l * 0.8, y + dy / l * 0.8]; };
+  ctx.save(); ctx.beginPath();
+  const p0 = gr(x0, y0), p1 = gr(x1, y1), p2 = gr(x2, y2);
+  ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.closePath(); ctx.clip();
+  ctx.transform(a, b, c, d, e, f); ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+function rigParts(ctx, char, pose, x, y, h, T) {
+  const R = char.rigData;
+  if (!R) { ctx.save(); ctx.fillStyle = '#a33'; ctx.font = '24px Rubik'; ctx.fillText('нет rig.json', x - 60, y - h / 2); ctx.restore(); return null; }
+  const [fx, fy] = R.foot || [0, 0], k = h / (R.height || 900), M = rigPartsBones(R, pose);
+  const face = pose.face || {}, F = R.face || {}, back = pose.facing === 'back';
+  const faceIds = new Set([F.base, ...Object.values(F.emotions || {})].filter(Boolean));
+  const faceNow = back ? null : (F.emotions || {})[face.name] || F.base;
+  ctx.save();
+  ctx.translate(x, y); if (pose.flip) ctx.scale(-1, 1); ctx.scale(k, k); ctx.translate(-fx, -fy);
+  const parts = (R.parts || []).slice().sort((a, b) => (a.z || 0) - (b.z || 0));
+  for (const part of parts) {
+    if (faceIds.has(part.id) && part.id !== faceNow) continue;
+    if (back && part.front) continue;
+    const P = _rigPartCanvas(char, part.id); if (!P.img) continue;
+    const chain = part.bones && part.bones.length > 1 && (R.mode || 'bend') === 'bend' ? part.bones : null;
+    if (!chain) {
+      const m = M[part.bone || (part.bones || [])[0]] || _RIG_I;
+      ctx.save(); ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f); ctx.drawImage(P.img, P.x, P.y); ctx.restore();
+      continue;
+    }
+    const mesh = _rigMesh(char, Object.assign({}, part, { bones: chain }), P), n = mesh.n, V = mesh.V;
+    const D = V.map(v => { let dx = 0, dy = 0; chain.forEach((b, i) => { if (!v.w[i]) return; const q = _rigApply(M[b] || _RIG_I, v.sx, v.sy); dx += q[0] * v.w[i]; dy += q[1] * v.w[i]; }); return [dx, dy]; });
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
+      _rigTri(ctx, P.img, [V[a].u, V[a].v], [V[b].u, V[b].v], [V[c].u, V[c].v], D[a], D[b], D[c]);
+      _rigTri(ctx, P.img, [V[b].u, V[b].v], [V[d].u, V[d].v], [V[c].u, V[c].v], D[b], D[d], D[c]);
+    }
+  }
+  ctx.restore();
+  // суставы для показа скелета (в координатах ctx)
+  const tr = (px, py) => { let X = (px - fx) * k, Y = (py - fy) * k; if (pose.flip) X = -X; return [x + X, y + Y]; };
+  const joints = {};
+  for (const b of R.bones || []) {
+    const par = b.parent ? M[b.parent] : _RIG_I, q = _rigApply(par, b.joint[0], b.joint[1]);
+    joints[b.id] = tr(q[0], q[1]);
+    if (b.end) { const e = _rigApply(M[b.id], b.end[0], b.end[1]); joints[b.id + '.end'] = tr(e[0], e[1]); }
+  }
+  return { joints, k, M };
 }
 
 // ---------------------------------------------------------------- общий вход

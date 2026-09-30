@@ -144,6 +144,9 @@ def _render_of(e):
     if e.get("kind") == "prop":                               # у пропса 2D и 3D-версии рядом: берём те, что выбраны переключателем (dim)
         d3 = e.get("dim") == "3d"
         rs = [r for r in rs if bool(r.get("three3")) == d3]
+    if e.get("kind") == "char":                               # у персонажа лист и версии со скелетом рядом (form: rig — S4)
+        rg = e.get("form") == "rig"
+        rs = [r for r in rs if bool(r.get("rigchar")) == rg]
     return next((r for r in rs if r.get("id") == e.get("render")), rs[-1] if rs else None)
 
 
@@ -177,6 +180,9 @@ def publish(A, job):
         raise ValueError("сцены в библиотеку не публикуются (только персонажи, пропсы, звуки, 3D-модели)")
     c = channel_dir(P.index()["videos"].get(vid, {}).get("channel"))
     items = lib_index(c)
+    r0 = _render_of(e) if kind == "characters" else None
+    if r0 and r0.get("rigchar"):                               # персонаж со скелетом (S4): версия персонажа + тип скелета — char_api
+        return publish_rigged(A, job, doc, vid, e, r0, as_)
     if as_ == "new":
         base = slug(e.get("name"))
         sl, k = base, 2
@@ -251,6 +257,37 @@ def publish(A, job):
     A.apply_ops(key, [{"op": "set", "path": ["elements", eid, "lib"], "value": {"id": lid, "v": v, "channel": c["id"]}}])
     job.result = row
     job.summary = f"«{e.get('name')}» в библиотеке: lib:{lid}@{v}"
+
+
+def publish_rigged(A, job, doc, vid, e, r, as_):
+    """Персонаж со скелетом -> library/characters/<slug>/vN (prefab.js, rig.json, превью) + library/skeletons/<type>.json (кости, слоты, позы)."""
+    C = A.chapi()
+    c = channel_dir(P.index()["videos"].get(vid, {}).get("channel"))
+    src = P.resolve("render/" + r["dir"])
+    rig = json.load(open(os.path.join(src, "rig.json"), encoding="utf-8"))
+    sl = as_.split("/", 1)[1] if as_ and as_ != "new" else slug(e.get("name"))
+    tmp = os.path.join(lib_dir(c), "characters", sl, "_new")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    for f in os.listdir(src):
+        if f.endswith(".js") or f == "rig.json":
+            shutil.copy2(os.path.join(src, f), os.path.join(tmp, f))
+    card = C.load_card(lib_dir(c), sl)
+    v = max([x["v"] for x in (card or {}).get("versions") or []] + [0]) + 1
+    dst = os.path.join(lib_dir(c), "characters", sl, f"v{v}")
+    shutil.move(tmp, dst)
+    res = C.add_version(A, sl, dst, {"rig": "parts", "skeleton": rig.get("type") or "?", "name": e.get("name"), "desc": e.get("desc", ""),
+                                     "note": r.get("summary", "")}, cid=c["id"], video={"video": vid, "videoName": doc.get("name"), "element": e["id"], "render": r.get("id")})
+    sk = {"schema": 1, "type": rig.get("type"), "name": rig.get("typeName") or rig.get("type"), "rig": "parts",
+          "bones": [{k: b[k] for k in ("id", "parent", "limits") if k in b} for b in rig.get("bones") or []],
+          "slots": rig.get("slots") or {}, "poses": rig.get("poses") or {}, "from": {"character": sl, "v": res["v"]}}
+    if rig.get("type"):
+        p = os.path.join(lib_dir(c), "skeletons", rig["type"] + ".json")
+        if not os.path.isfile(p):                              # тип скелета заводится первым персонажем; дальше его кости — общий договор
+            C.save_skeleton(A, sk, c["id"])
+    A.apply_ops(job.key, [{"op": "set", "path": ["elements", e["id"], "lib"], "value": {"id": res["id"], "v": res["v"], "channel": c["id"]}}])
+    job.result = res
+    job.summary = f"«{e.get('name')}» со скелетом {rig.get('type')} в библиотеке: {res['ref']}"
 
 
 def run_job(A, job):

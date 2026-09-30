@@ -98,11 +98,13 @@ def add_version(A, slug, src_dir, meta, cid=None, video=None):
     files = sorted(os.path.relpath(os.path.join(r, f), vd).replace(os.sep, "/") for r, _, fs in os.walk(vd) for f in fs)
     url = f"/api/lib/file/{c['id']}/characters/{slug}/v{v}/prefab.js"
     tmp = os.path.join(vd, "_shot")
-    png = render_pose(A, url, tmp, extra="&skel=0")
+    png = render_pose(A, url, tmp, extra="&skel=0")          # превью — без костей
     shutil.copy2(png, os.path.join(vd, "preview.png"))
     shutil.rmtree(tmp, ignore_errors=True)
     if "preview.png" not in files:
         files.append("preview.png")
+    if not os.path.isfile(emotions_path(ld, slug)):
+        A.write_text(emotions_path(ld, slug), "{}")
     if not os.path.isfile(os.path.join(vd, "license.json")):
         A.write_text(os.path.join(vd, "license.json"), json.dumps([{"own": True, "note": "нарисовано в Claude Studio"}], ensure_ascii=False, indent=1))
     ver = {"v": v, "ts": now_ms(), "files": files, "preview": f"v{v}/preview.png", "rig": meta.get("rig", "param"), "skeleton": meta.get("skeleton", "hog"),
@@ -194,6 +196,11 @@ def sheet_info(A, slug, cid=None):
     sk = r and r.get("skeleton")
     same = [x for x in chars(A, cid) if x.get("skeleton") == sk and x["slug"] != slug] if sk else []
     em = prefab_emotions(ld, slug, r["v"]) if r else {}
+    try:                                                    # риг частей: лица-эмоции записаны в rig.json версии
+        for k, v in (json.load(open(os.path.join(ld, "characters", slug, f"v{r['v']}", "rig.json"), encoding="utf-8")).get("emotions") or {}).items():
+            em[k] = dict(v, src="prefab", ok=v.get("ok", True))
+    except (OSError, ValueError, TypeError):
+        pass
     em.update(load_emotions(ld, slug))
     costumes = []
     if r:
@@ -235,7 +242,48 @@ def emotion_spec(A, info, want=""):
             "model": A.TEXT_MODEL, "timeout": 300}
 
 
+def rig_version(A, job):
+    """✋ редактор скелета -> новая версия черновика персонажа: тот же prefab.js, новый rig.json, кадры render_char.js (без Claude)."""
+    key, el, base_id, rig = job.key, job.params["el"], job.params.get("base"), job.params["rig"]
+    plan = A.load(key)
+    e = A._by_id(plan.get("elements"), el)
+    if not e:
+        raise ValueError("элемент не найден")
+    base = next((r for r in e.get("renders") or [] if r.get("id") == base_id and r.get("rigchar")), None)
+    if not base:
+        raise ValueError("нет версии персонажа со скелетом")
+    v = max([r.get("v", 0) for r in e.get("renders") or []] + [0]) + 1
+    pid = key[5:]
+    rel = f"{pid}/{el}/v{v}"
+    src, wd = P.resolve("render/" + base["dir"]), P.resolve("render/" + rel)
+    os.makedirs(wd, exist_ok=True)
+    for f in os.listdir(src):
+        if f.endswith(".js") or f == "parts":
+            (shutil.copytree if os.path.isdir(os.path.join(src, f)) else shutil.copy2)(os.path.join(src, f), os.path.join(wd, f))
+    old = json.load(open(os.path.join(src, "rig.json"), encoding="utf-8"))
+    moved = [b["id"] for b in rig.get("bones") or [] if (next((o for o in old.get("bones") or [] if o["id"] == b["id"]), {}) or {}).get("joint") != b.get("joint")]
+    reparent = [b["id"] for b in rig.get("bones") or [] if (next((o for o in old.get("bones") or [] if o["id"] == b["id"]), {}) or {}).get("parent") != b.get("parent")]
+    A.write_text(os.path.join(wd, "rig.json"), json.dumps(rig, ensure_ascii=False, indent=1))
+    d = A._docs(key)
+    r = subprocess.run(["node", os.path.join(P.STANDS, "render_char.js"), f"/rscene/{rel}/prefab.js", wd, "--port", str(d["port"])], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=300)
+    main = os.path.join(wd, "element.png")
+    if not os.path.isfile(main):
+        raise RuntimeError("кадры не снялись: " + (r.stdout + r.stderr)[-400:])
+    img = d["save"](pid, open(main, "rb").read())
+    extra = [d["save"](pid, open(os.path.join(wd, f), "rb").read()) for f in ("rest.png", "clean.png", "emotions.png") if os.path.isfile(os.path.join(wd, f))]
+    fb = "🦴 скелет: " + ", ".join(filter(None, [("суставы " + ", ".join(moved)) if moved else "", ("родители " + ", ".join(reparent)) if reparent else ""])) or "🦴 скелет без изменений"
+    rid = "r" + os.urandom(4).hex()
+    item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "feedback": fb, "by": "skeleton", "rigchar": True, "fn": base.get("fn", ""), "ts": now_ms()}
+    A.apply_ops(key, [{"op": "add", "path": ["elements", el, "renders"], "item": item}, {"op": "set", "path": ["elements", el, "render"], "value": rid}])
+    job.result = item
+    job.summary = f"«{e.get('name')}» v{v}: {fb}"
+
+
 def run_job(A, job):
+    if job.kind == "charrig":
+        rig_version(A, job)
+        return True
     if job.kind == "charemotions":
         slug = job.params["slug"]
         info = sheet_info(A, slug)
@@ -278,6 +326,9 @@ def handle_post(A, h, p, body):
                 em[name]["by"] = em[name].get("by") or "author"
         save_emotions(A, ld, slug, em)
         h._json({"ok": True, "emotions": em}); return True
+    if p == "/api/char/rig":                                 # 🦴 редактор скелета: сохранить суставы новой версией (без Claude)
+        j = A.start_job("charrig", body["key"], "charrig:" + body["el"], {"el": body["el"], "base": body.get("base"), "rig": body["rig"]})
+        h._json({"job": j.info()}); return True
     if p == "/api/char/emotions":                            # ✨ предложить эмоции (Claude, Sonnet)
         j = A.start_job("charemotions", "char:" + body["slug"], "emotions", {"slug": body["slug"], "want": body.get("want", "")})
         h._json({"job": j.info()}); return True

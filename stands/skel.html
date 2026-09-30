@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Редактор скелета — Claude Studio</title>
+<link rel="icon" href="data:,">
+<style>
+  @font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf"); font-weight: 300 900; }
+  @font-face { font-family: "Caveat"; src: url("/fonts/Caveat.ttf"); font-weight: 400 700; }
+  html, body { margin: 0; height: 100%; background: #1d1d1f; color: #e6e6e6; font: 13px Rubik, system-ui, sans-serif; }
+  body { display: flex; gap: 10px; padding: 8px; box-sizing: border-box; }
+  #cv { flex: 1; min-width: 0; height: calc(100vh - 16px); object-fit: contain; background: #ece6da; border-radius: 8px; cursor: default; touch-action: none; }
+  #cv.drag { cursor: grabbing; } #cv.over { cursor: grab; }
+  aside { width: 300px; flex: none; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+  h4 { margin: 4px 0; color: #ffcc33; }
+  button { background: #2c2c30; color: #e6e6e6; border: 1px solid #3a3a3e; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  button:hover { background: #36363b; } button.on { background: #4d9cff; border-color: #4d9cff; color: #fff; } button.save { background: #2d9d5a; border-color: #2d9d5a; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .bone { display: grid; grid-template-columns: 1fr 90px; gap: 4px; align-items: center; padding: 3px 6px; border-radius: 6px; }
+  .bone.sel { background: #23405f; } .bone b { font-weight: 600; } .bone select { background: #262629; color: #e6e6e6; border: 1px solid #3a3a3e; border-radius: 4px; font: inherit; }
+  .hint { color: #9a9aa0; font-size: 12px; line-height: 1.45; } #msg { color: #9a9aa0; font-size: 12px; min-height: 16px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<canvas id="cv" width="1000" height="1100" aria-label="Персонаж и кости"></canvas>
+<aside>
+  <h4>🦴 Скелет</h4>
+  <div class="hint">Тяни сустав (кружок) мышью — части, которые на нём держатся, будут вращаться вокруг нового места. Ctrl+Z / Ctrl+Shift+Z — отмена и возврат. Клик по кости в списке — подсветить.</div>
+  <div class="row"><button id="play" title="Прогнать проверочные позы типа">▶ Позы</button><select id="pose"></select></div>
+  <div id="bones"></div>
+  <div class="row"><button id="undo">↺ Отменить</button><button id="redo">↻ Вернуть</button></div>
+  <button id="save" class="save" disabled>💾 Сохранить скелет — новая версия</button>
+  <div id="msg" aria-live="polite"></div>
+</aside>
+<!-- Редактор скелета персонажа (риг 'parts', S4): ?char=<url prefab.js>&key=plan:<id>&el=<элемент>&base=<render id>
+     Сохранение -> POST /api/char/rig {key, el, base, rig} -> задача charrig: новая версия черновика с этим rig.json, кадры переснимаются. -->
+<script src="/tpl/lib.js"></script>
+<script>const IMG = {}, SEQ = {}; const seqFrame = () => null;</script>
+<script src="/render/paper.js"></script>
+<script src="/tpl/scene.js"></script>
+<script src="/tpl/rig.js"></script>
+<script>
+  const q = new URLSearchParams(location.search), cv = document.getElementById('cv'), ctx = cv.getContext('2d'), $ = id => document.getElementById(id);
+  const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + '?v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error(src)); document.head.append(s); });
+  let CH, R, start = '', undo = [], redo = [], sel = null, drag = null, over = null, play = null, poseName = '';
+  const X = 500, Y = 1040, Hh = 900;                                   // где стоит персонаж на холсте и его рост
+  const snap = () => JSON.stringify(R.bones);
+  const changed = () => { $('save').disabled = snap() === start; CH._mesh = null; draw(); list(); };
+  function push() { undo.push(snap()); redo = []; }
+  function sheetOf(px, py) { const k = Hh / (R.height || 900); return [R.foot[0] + (px - X) / k, R.foot[1] + (py - Y) / k]; }
+  function mouse(e) { const b = cv.getBoundingClientRect(), s = Math.min(b.width / cv.width, b.height / cv.height), ox = (b.width - cv.width * s) / 2, oy = (b.height - cv.height * s) / 2; return [(e.clientX - b.left - ox) / s, (e.clientY - b.top - oy) / s]; }
+  let J = {};
+  function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#ece6da'; ctx.fillRect(0, 0, cv.width, cv.height);
+    let pose = {};
+    if (play) { const P = Object.entries(R.poses || {}), t = (performance.now() - play) / 1000, i = Math.floor(t / 1.6) % Math.max(1, P.length), f = (t % 1.6) / 1.6, w = Math.sin(Math.min(1, f / 0.7) * Math.PI);
+      const [nm, p] = P[i] || ['', {}]; poseName = nm; const B = {}; for (const [b, v] of Object.entries(p.bones || {})) B[b] = { rot: (v.rot || 0) * w }; pose = { bones: B, face: w > 0.5 ? p.face : {} }; }
+    else if ($('pose').value) pose = (R.poses || {})[$('pose').value] || {};
+    const st = rigDraw(ctx, CH, pose, X, Y, Hh, 0);
+    J = (st && st.joints) || {};
+    ctx.save(); ctx.lineCap = 'round';
+    for (const b of R.bones) { const a = J[b.id], p = b.parent && J[b.parent], e = J[b.id + '.end'];
+      ctx.strokeStyle = sel === b.id ? '#ffcc33' : 'rgba(77,156,255,0.9)'; ctx.lineWidth = sel === b.id ? 7 : 5;
+      if (p && a) { ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(a[0], a[1]); ctx.stroke(); }
+      if (a && e) { ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke(); } }
+    for (const b of R.bones) { const a = J[b.id]; if (!a) continue; const hot = over === b.id || sel === b.id;
+      circle(ctx, a[0], a[1], hot ? 14 : 11, hot ? '#ffcc33' : '#4d9cff'); circle(ctx, a[0], a[1], 5, '#fff');
+      ctx.font = '600 20px Rubik'; ctx.fillStyle = '#1d3b66'; ctx.textAlign = 'left'; ctx.fillText(b.id, a[0] + 15, a[1] - 10); }
+    ctx.restore();
+    if (play) { ctx.font = '700 34px Rubik'; ctx.fillStyle = '#6b6456'; ctx.textAlign = 'center'; ctx.fillText(poseName, X, 60); }
+  }
+  function hit(m) { let best = null, bd = 18; for (const b of R.bones) { const a = J[b.id]; if (!a) continue; const d = Math.hypot(a[0] - m[0], a[1] - m[1]); if (d < bd) { bd = d; best = b.id; } } return best; }
+  function list() {
+    const box = $('bones'); box.textContent = '';
+    for (const b of R.bones) {
+      const row = document.createElement('div'); row.className = 'bone' + (sel === b.id ? ' sel' : '');
+      const nm = document.createElement('b'); nm.textContent = b.id; nm.onclick = () => { sel = sel === b.id ? null : b.id; draw(); list(); }; nm.style.cursor = 'pointer';
+      const par = document.createElement('select'); par.title = 'родитель';
+      par.append(new Option('— корень', '')); for (const o of R.bones) if (o.id !== b.id) par.append(new Option('← ' + o.id, o.id));
+      par.value = b.parent || ''; par.onchange = () => { push(); if (par.value) b.parent = par.value; else delete b.parent; changed(); };
+      row.append(nm, par); box.append(row);
+    }
+  }
+  cv.addEventListener('pointerdown', e => { if (play) return; const m = mouse(e), id = hit(m); if (!id) { sel = null; draw(); list(); return; }
+    sel = id; push(); drag = { id }; cv.setPointerCapture(e.pointerId); cv.classList.add('drag'); list(); });
+  cv.addEventListener('pointermove', e => { const m = mouse(e);
+    if (!drag) { const h = hit(m); if (h !== over) { over = h; cv.classList.toggle('over', !!h); draw(); } return; }
+    const b = R.bones.find(x => x.id === drag.id), [sx, sy] = sheetOf(m[0], m[1]);
+    b.joint = [Math.round(sx), Math.round(sy)]; if (b.id === 'root') R.foot = b.joint.slice(); CH._mesh = null; draw(); });
+  const end = () => { if (drag) { drag = null; cv.classList.remove('drag'); changed(); } };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  addEventListener('keydown', e => { if (!(e.ctrlKey || e.metaKey) || (e.key !== 'z' && e.key !== 'Z' && e.key !== 'я' && e.key !== 'Я')) return; e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); });
+  const doUndo = () => { if (!undo.length) return; redo.push(snap()); R.bones = JSON.parse(undo.pop()); changed(); };
+  const doRedo = () => { if (!redo.length) return; undo.push(snap()); R.bones = JSON.parse(redo.pop()); changed(); };
+  $('undo').onclick = doUndo; $('redo').onclick = doRedo;
+  $('play').onclick = () => { play = play ? null : performance.now(); $('play').classList.toggle('on', !!play); $('play').textContent = play ? '⏸ Стоп' : '▶ Позы'; const f = () => { if (!play) { draw(); return; } draw(); requestAnimationFrame(f); }; f(); };
+  $('pose').onchange = () => draw();
+  $('save').onclick = async () => {
+    $('save').disabled = true; $('msg').textContent = 'Сохраняю…';
+    try {
+      const r = await fetch('/api/char/rig', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Ideas': '1' },
+        body: JSON.stringify({ key: q.get('key'), el: q.get('el'), base: q.get('base'), rig: R }) });
+      const j = await r.json(); if (!r.ok || j.error) throw new Error(j.error || r.status);
+      $('msg').textContent = 'Новая версия появится через полминуты — окно можно закрыть.';
+      if (parent !== window) parent.postMessage({ type: 'skel-saved', job: j.job }, location.origin);
+    } catch (e) { $('msg').textContent = '⚠ ' + e.message; $('save').disabled = false; }
+  };
+  (async () => {
+    await load(q.get('char')); CH = CHAR_LAST; for (const u of CH.needs || []) await load(u); await rigLoadExtras(CH);
+    R = CH.rigData; if (!R) { $('msg').textContent = '⚠ нет rig.json'; return; }
+    R.bones = R.bones || []; start = snap();
+    const ps = $('pose'); ps.append(new Option('поза: покой', '')); for (const k of Object.keys(R.poses || {})) ps.append(new Option(k, k));
+    await document.fonts.load('600 20px Rubik').catch(() => {});
+    draw(); list();
+  })().catch(e => { $('msg').textContent = '⚠ ' + e.message; });
+</script>
+</body>
+</html>

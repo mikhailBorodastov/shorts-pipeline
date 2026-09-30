@@ -1,0 +1,13 @@
+{ "schema": 1, "type": "worm", "mode": "bend", "sheet": [1000, 1000], "foot": [500, 900], "height": 700,
+  "bones": [
+    { "id": "root", "joint": [500, 900] },
+    { "id": "b1", "parent": "root", "joint": [500, 900], "end": [500, 670] },
+    { "id": "b2", "parent": "b1", "joint": [500, 670], "end": [500, 440] },
+    { "id": "b3", "parent": "b2", "joint": [500, 440], "end": [500, 210] },
+    { "id": "arm", "parent": "b2", "joint": [570, 495], "end": [770, 495] } ],
+  "parts": [ { "id": "arm", "bone": "arm", "z": 1 }, { "id": "body", "bones": ["b1", "b2", "b3"], "z": 0 },
+             { "id": "face", "bone": "b3", "z": 2, "front": true }, { "id": "face_joy", "bone": "b3", "z": 2, "front": true } ],
+  "face": { "base": "face", "emotions": { "радость": "face_joy" } },
+  "emotions": { "радость": { "ok": true } },
+  "poses": { "покой": {}, "изгиб": { "bones": { "b1": { "rot": 0.3 }, "b2": { "rot": 0.4 }, "b3": { "rot": 0.4 }, "arm": { "rot": -0.8 } }, "face": { "name": "радость" } },
+             "назад": { "bones": { "b1": { "rot": -0.25 }, "b2": { "rot": -0.35 }, "b3": { "rot": -0.3 }, "arm": { "rot": 1.2 } } } } }

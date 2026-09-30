@@ -46,7 +46,7 @@ EFFORT = os.environ.get("IDEAS_EFFORT", "")
 # модели кнопок ✨: текст (вопросы, биты, названия, список элементов, подбор звука) — Sonnet, визуал (черновики элементов, обложка и первый кадр) — Opus
 TEXT_MODEL = os.environ.get("IDEAS_TEXT_MODEL", "sonnet")           # алиас: самый новый Sonnet, который знает установленный Claude Code
 VISUAL_MODEL = os.environ.get("IDEAS_VISUAL_MODEL", "claude-opus-5-5")
-VISUAL_ACTIONS = ("element", "render")
+VISUAL_ACTIONS = ("element", "render", "charparts")
 TEXT_EFFORT = {"elements": "medium", "sound": "medium", "assets": "medium"}              # усилие для текстовых кнопок препродакшена; остальные — по умолчанию Claude Code
 VISUAL_EFFORT = os.environ.get("IDEAS_VISUAL_EFFORT", "")           # пусто — по умолчанию Claude Code
 MAX_JOBS = 3
@@ -80,7 +80,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -796,7 +796,7 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
-        elif job.kind.startswith("char"):
+        elif job.kind in ("charrig", "charemotions"):          # персонажи (S4): сохранение скелета, эмоции; charparts — обычная задача Claude ниже
             chapi().run_job(sys.modules[__name__], job)
         else:
             run_action(job)

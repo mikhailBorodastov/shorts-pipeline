@@ -64,6 +64,23 @@
 
 `studio.py char list | show <slug> | pose <slug> '<поза JSON>' out.png | skeleton <type>` — посмотреть персонажа в позе (рендер через стенд), для Claude и проверок.
 
+## 5а. Как сделано (для реализатора)
+
+- **Движок** `engine/rig.js`: `character()`, `costume()`, `rigPose()`, `rigEmotion()`, `rigDraw()`, `rigHog` (param), `rigParts` (pins / bend, сетка 10×10, веса — обратное расстояние до отрезков костей в покое,
+  степень 4), `charCard` (карточка + ключи `pose.* / face.* / wear.* / emotion` + Paper Mario `PAPER_RULES`). `rigHogAim` — угол и длина лапы к точке (для поведения, до IK S5).
+  `rigLoadExtras` подгружает `rig.json` (риг частей) и `emotions.json` библиотеки. Персонаж регистрируется и как префаб сцены (`PROPS3D[url]`) — `lib:characters/<slug>@N` грузится как 3D-пропс;
+  `scene.libs` — персонажи, нужные коду `prefabs.js` («поведение» ёжика «Комнаты»).
+- **Файлы версии**: `prefab.js` (+ `costumes/*.js` у param, `rig.json` у parts: `type, typeName, mode, sheet, foot, height, bones[{id, parent, joint, end, limits}], parts[{id, bone | bones, z, front}],
+  slots, face {base, emotions}, emotions, poses`). Углы позы — радианы, «+» — по часовой.
+- **Стенды**: `stands/char.html?char=…` (`&pose / &emotion / &wear / &skel=1 / &poses=1 / &emotions=1 / &size`), `stands/skel.html` (редактор скелета), `stands/render_char.js`
+  (element.png — позы с костями, rest.png, clean.png, emotions.png). Тест «было / стало» пижамного ёжика — `stands/samples/rig_pajama_test.html` (0 отличающихся пикселей в 21 состоянии);
+  проверочный персонаж частей — `stands/samples/testchar/`. `stand3d.html …&orbit=x,y,z,r,a0,a1` — облёт камеры (Paper Mario).
+- **Сервер** `server/char_api.py`: библиотека персонажей (`chars`, `add_version`, `skeleton_hog` — скелет ёжика берётся из rig.js), `/api/char`, `/api/chars`, `/api/char/emotion(s)`, `/api/char/rig`,
+  задачи `charemotions` (Sonnet), `charrig` (без Claude, новая версия с rig.json); CLI `studio.py char list | show | pose | skeleton | version`. Задача Claude `charparts` (Opus) — `ideas_claude.charparts_spec`,
+  публикация — `studio_api.publish_rigged` (персонаж + `skeletons/<type>.json`, если типа ещё нет).
+- **Страница**: лист персонажа `web/charsheet.js` (`#/lib/char/<slug>`); карточка персонажа препродакшена — «🖼 лист / 🦴 со скелетом» (`form: 'rig'`), «🦴 Собрать персонажа», «🦴 Редактор скелета»;
+  редактор сцены — галочки костюмов и эмоция у персонажа (`panels.js`, `charBox`).
+
 ## 6. Порядок работ
 
 1. `rig.js` + `skeletons/hog.json` + доработки `drawHog`; стенд `stands/char.html?char=…&pose=…` (картинка персонажа в позе, скелет поверх); тест — пижамный ёжик
