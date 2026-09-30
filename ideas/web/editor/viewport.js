@@ -1,4 +1,4 @@
-// 3D-вид редактора: свободная камера (как в Blender), мини-вид «глазами камеры» 9:16, вид камеры (Numpad 0) с безопасными зонами,
+// 3D-вид редактора: свободная камера (как в Blender), мини-вид «глазами камеры» 9:16, вид камеры (0 или Numpad 0) с безопасными зонами,
 // выбор кликом, гизмо TransformControls, модальные G / R / S, путь камеры и рамки кадра на ключах.
 // Один WebGLRenderer (X3.R из stage3d.js), два вьюпорта: свободный вид — прямой рендер (быстро, без пост-эффектов),
 // кадр камеры — через цепочку пост-эффектов сцены (как в ролике) в свой прямоугольник.
@@ -401,7 +401,7 @@ export function initViewport(ED) {
     if (ops.length) ED.commit(ops, `сброс: ${NAMES[mode]} (${ids.length})`);
   };
 
-  // F / Numpad . — look at the selection; Home — everything
+  // F / . / Numpad . — look at the selection; Home — everything
   VP.frameSel = () => {
     const b = new THREE.Box3();
     for (const id of ED.sel) { const rec = ED.S.objects.get(id) || ED.S.lights.get(id); if (rec) b.expandByObject(rec.holder); }
@@ -444,7 +444,7 @@ export function initViewport(ED) {
         octx.setTransform(dpr, 0, 0, dpr, 0, 0);
         octx.strokeStyle = '#6fe0ff'; octx.lineWidth = 1; octx.strokeRect(r.x - 0.5, r.y - 0.5, r.w + 1, r.h + 1);
         octx.fillStyle = 'rgba(0,0,0,0.6)'; octx.fillRect(r.x, r.y + r.h, r.w, 16);
-        octx.fillStyle = '#6fe0ff'; octx.font = '11px Inter, system-ui, sans-serif'; octx.fillText('🎥 камера · Numpad 0', r.x + 4, r.y + r.h + 12);
+        octx.fillStyle = '#6fe0ff'; octx.font = '11px Inter, system-ui, sans-serif'; octx.fillText('🎥 камера · 0', r.x + 4, r.y + r.h + 12);
       }
     }
   };

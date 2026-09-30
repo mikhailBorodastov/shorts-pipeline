@@ -1,5 +1,5 @@
 {
-  "_": "Хоткеи редактора сцены: действие -> клавиши. Объекты — как в Blender, время — как в Premiere Pro. Клавиши — по физическому месту (e.code), раскладка не важна. Контекст «tl:» — когда в фокусе таймлайн, «vp:» — 3D-вид / дерево.",
+  "_": "Хоткеи редактора сцены: действие -> клавиши. Объекты — как в Blender, время — как в Premiere Pro. Клавиши — по физическому месту (e.code), раскладка не важна. Без нумпада: 0 верхнего ряда = Numpad 0, точка = Numpad . (как «эмуляция нумпада» в Blender). Контекст «tl:» — когда в фокусе таймлайн, «vp:» — 3D-вид / дерево.",
   "select_all": ["a"], "deselect_all": ["alt+a"],
   "grab": ["g"], "rotate": ["r"], "scale": ["s"],
   "reset_pos": ["alt+g"], "reset_rot": ["alt+r"], "reset_scale": ["alt+s"],
@@ -7,8 +7,8 @@
   "duplicate": ["shift+d"], "delete": ["x", "delete"], "hide": ["h"], "unhide_all": ["alt+h"],
   "group": ["ctrl+g"], "ungroup": ["ctrl+alt+g"],
   "key": ["i"], "unkey": ["alt+i"],
-  "frame_sel": ["numpad.", "f"], "frame_all": ["vp:home"],
-  "cam_view": ["numpad0"], "cam_key": ["ctrl+alt+numpad0"],
+  "frame_sel": ["numpad.", "f", "."], "frame_all": ["vp:home"],
+  "cam_view": ["numpad0", "0"], "cam_key": ["ctrl+alt+numpad0", "ctrl+alt+0"],
   "props": ["n"], "tree": ["ctrl+shift+o"], "agent": ["/"],
   "play": ["space"], "shuttle_back": ["j"], "stop": ["k"], "shuttle_fwd": ["l"],
   "frame_prev": ["left"], "frame_next": ["right"], "frame_prev5": ["shift+left"], "frame_next5": ["shift+right"],

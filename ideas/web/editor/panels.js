@@ -287,7 +287,7 @@ export function initPanels(ED) {
     const b2 = document.createElement('button'); b2.textContent = '✂ склейка здесь'; b2.onclick = () => ED.tl.addCut();
     const b3 = document.createElement('button'); b3.textContent = f ? 'фокус = цель' : ''; b3.hidden = !f; b3.onclick = () => ED.commit([{ op: 'set', path: ['camera', 'focus'], value: null }], 'камера: фокус на цель');
     row.append(b1, b2, b3); props.append(row);
-    hint(`Ключей: ${(c.keys || []).length}, склеек: ${(c.cuts || []).length}. Numpad 0 — смотреть глазами камеры; Ctrl+Alt+Numpad 0 — камера сюда. Тяни конус в 3D-виде — ключ на курсоре.`);
+    hint(`Ключей: ${(c.keys || []).length}, склеек: ${(c.cuts || []).length}. 0 (Numpad 0) — смотреть глазами камеры; Ctrl+Alt+0 — камера сюда. Тяни конус в 3D-виде — ключ на курсоре.`);
   }
   function sceneProps() {
     const d = ED.doc;
@@ -299,7 +299,7 @@ export function initPanels(ED) {
     numRow('длина', 'с', [d.len], 0.5, nv => ED.commit([{ op: 'set', path: ['len'], value: Math.max(0.5, nv[0]) }], `длина сцены ${nv[0]} с`), false, null);
     numRow('кадров/с', '', [d.fps || 30], 1, nv => ED.commit([{ op: 'set', path: ['fps'], value: Math.max(1, Math.round(nv[0])) }], `кадров в секунду: ${nv[0]}`), false, null, x => x);
     hint(`Объектов: ${(d.objects || []).length} · свет: ${(d.lights || []).length} · маркеров: ${(d.markers || []).length} · звуков: ${(d.sounds || []).length}`);
-    hint('Клик по объекту — выбрать. G / R / S — двигать / вращать / масштаб (X Y Z — ось), I — ключ, Shift+D — дубль, Ctrl+G — группа, Numpad 0 — камера, / — Claude. Полный список — ☰ → Клавиши.');
+    hint('Клик по объекту — выбрать. G / R / S — двигать / вращать / масштаб (X Y Z — ось), I — ключ, Shift+D — дубль, Ctrl+G — группа, 0 (Numpad 0) — камера, / — Claude. Полный список — ☰ → Клавиши.');
   }
   // small DOM helpers
   function div(c) { const d = document.createElement('div'); d.className = c; return d; }
