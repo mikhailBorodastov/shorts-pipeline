@@ -424,7 +424,7 @@ def version(A, job):
     if not os.path.isfile(main):
         raise RuntimeError("кадр не снялся: " + out.strip()[-300:])
     img = A.save_file(pid, open(main, "rb").read())
-    extra = [A.save_file(pid, open(os.path.join(wd, f), "rb").read()) for f in sorted(os.listdir(wd), key=lambda f: float(re.sub(r"[^\d.]", "", f) or 0))
+    extra = [A.save_file(pid, open(os.path.join(wd, f), "rb").read()) for f in sorted(os.listdir(wd), key=lambda f: float((re.search(r"_([\d.]+)\.png$", f) or [0, 0])[1]))
              if f.startswith("element_") and f.endswith(".png")]
     note = (job.params.get("note") or "").strip()
     hist = history(A, key, el, 400)

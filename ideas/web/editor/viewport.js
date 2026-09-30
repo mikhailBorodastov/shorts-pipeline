@@ -35,7 +35,7 @@ export function initViewport(ED) {
     orbit.yaw = Math.atan2(d.x, d.z); orbit.pitch = Math.asin(Math.max(-1, Math.min(1, d.y / orbit.dist)));
     cam.fov = w.cam.fov; cam.updateProjectionMatrix(); place();
   }
-  VP.fromScene = fromScene;
+  VP.fromScene = fromScene; VP.place = place;
 
   function resize() {
     const r = box.getBoundingClientRect();

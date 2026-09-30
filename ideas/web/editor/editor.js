@@ -275,7 +275,10 @@ function del() {
   const lights = [...ED.sel].filter(id => (ED.doc.lights || []).some(l => l.id === id));
   if (!ids.length && !lights.length) return;
   const fromEl = ids.filter(id => (find(ED.doc, id).src || {}).el);
-  if (fromEl.length && !confirm(`Удалить из сцены: ${names(fromEl)}? Это элементы препродакшена (из состава сцены). Отменить можно Ctrl+Z.`)) return;
+  if (fromEl.length && !del.sure) {
+    ED.confirm(`Удалить из сцены: ${names(fromEl)}? Это элементы препродакшена (из состава сцены). Отменить можно Ctrl+Z.`, 'Удалить').then(ok => { if (ok) { del.sure = true; del(); del.sure = false; } });
+    return;
+  }
   const ops = [];
   const gone = new Set(ids.flatMap(subtree));
   for (const id of [...gone].reverse()) ops.push({ op: 'del', path: ['objects'], id });
@@ -333,7 +336,7 @@ async function job(path, body, label) {
 }
 async function saveVersion() {
   if (ED.readonly) return;
-  const note = prompt('Версия сцены — короткая заметка (можно пусто):', '');
+  const note = await ED.ask('💾 Версия сцены — короткая заметка (можно пусто)', '', { ok: 'Сохранить версию' });
   if (note === null) return;
   $('version').disabled = true;
   try { const s = await job('/api/scene/version', { key: ED.key, el: ED.el, note }, '💾 сохраняю версию'); ED.msg('💾 ' + s.summary); $('sver').textContent = `· рабочая копия (v${s.result.v} сохранена)`; }
@@ -348,15 +351,28 @@ async function makeClip() {
   } catch (e) { ED.msg('Клип не собрался: ' + e.message, 'err'); }
   $('clip').disabled = false;
 }
-function popup(html) {
-  const p = $('popup'); p.innerHTML = html; p.hidden = false;
+function popup(html, onClose) {
+  const p = $('popup'); if (!p.hidden && p._onClose) p._onClose(); p._onClose = onClose || null;
+  p.innerHTML = html; p.hidden = false;
   p.style.left = Math.max(10, (innerWidth - Math.min(660, innerWidth - 20)) / 2) + 'px'; p.style.top = '60px';
-  const close = e => { if (!p.contains(e.target) || e.key === 'Escape') { p.hidden = true; p.innerHTML = ''; removeEventListener('pointerdown', close, true); removeEventListener('keydown', closeK, true); } };
+  const close = e => { if (!p.contains(e.target) || e.key === 'Escape') { const f = p._onClose; p._onClose = null; p.hidden = true; p.innerHTML = ''; removeEventListener('pointerdown', close, true); removeEventListener('keydown', closeK, true); if (f) f(); } };
   const closeK = e => { if (e.key === 'Escape') { e.stopPropagation(); close(e); } };
   setTimeout(() => { addEventListener('pointerdown', close, true); addEventListener('keydown', closeK, true); });
   return p;
 }
 ED.popup = popup;
+// a small question in the page (instead of prompt / confirm): Enter — ok, Esc — cancel
+ED.ask = (title, value = '', o = {}) => new Promise(res => {
+  const p = popup(`<h4></h4>${o.input === false ? '' : '<input id="askIn" style="width:100%">'}<div class="row" style="margin-top:8px;justify-content:flex-end"><button id="askNo">Отмена</button><button id="askOk">${o.ok || 'OK'}</button></div>`, () => res(o.input === false ? false : null));
+  p.querySelector('h4').textContent = title;
+  const inp = p.querySelector('#askIn'), done = v => { if (p.hidden) return; p._onClose = null; p.hidden = true; p.innerHTML = ''; res(v); };
+  if (inp) { inp.value = value; setTimeout(() => { inp.focus(); inp.select(); }); inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') done(inp.value); if (e.key === 'Escape') done(null); }; }
+  else setTimeout(() => p.querySelector('#askOk').focus());
+  p.querySelector('#askOk').onclick = () => done(inp ? inp.value : true);
+  p.querySelector('#askNo').onclick = () => done(inp ? null : false);
+  p.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); done(inp ? null : false); } };
+});
+ED.confirm = (title, ok) => ED.ask(title, '', { input: false, ok });
 function menu() {
   const m = $('menu'), b = $('menuBtn').getBoundingClientRect();
   const items = [
@@ -421,7 +437,8 @@ async function versions() {
     const see = document.createElement('button'); see.textContent = '👁 открыть'; see.onclick = () => { location.search = `?key=${encodeURIComponent(ED.key)}&el=${ED.el}&ver=${v.v}`; };
     const mk = document.createElement('button'); mk.textContent = '↺ сделать рабочей копией';
     mk.onclick = async () => {
-      if (!confirm(`Рабочая копия станет как v${v.v}? Отменить можно Ctrl+Z.`)) return;
+      p.hidden = true;
+      if (!(await ED.confirm(`Рабочая копия станет как v${v.v}? Отменить можно Ctrl+Z.`, 'Сделать рабочей копией'))) return;
       try { const r = await api('/api/scene/restore', { key: ED.key, el: ED.el, v: v.v }); p.hidden = true; await reload('версия v' + v.v); ED.undo.push({ batch: r.batch, desc: `рабочая копия из v${v.v}`, ops: r.ops, undo: r.undo, at: Date.now() }); ED.msg(`↺ Рабочая копия = v${v.v}`); }
       catch (e) { ED.msg(e.message, 'err'); }
     };

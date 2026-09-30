@@ -223,7 +223,7 @@ export function initTimeline(ED) {
   cv.addEventListener('dblclick', e => {
     const hh = hitAt(at(e)); if (!hh) return;
     const r = refs(hh)[0];
-    if (r.kind === 'markers') { const m = (ED.doc.markers || []).find(x => x.id === r.kid); const n = prompt('Имя маркера:', m.name || ''); if (n != null) ED.commit([{ op: 'set', path: ['markers', m.id, 'name'], value: n.trim() }], `маркер «${n.trim()}»`); return; }
+    if (r.kind === 'markers') { const m = (ED.doc.markers || []).find(x => x.id === r.kid); ED.ask('Имя маркера', m.name || '').then(n => { if (n != null) ED.commit([{ op: 'set', path: ['markers', m.id, 'name'], value: n.trim() }], `маркер «${n.trim()}»`); }); return; }
     ED.setT(r.t0);
   });
   cv.addEventListener('wheel', e => {
@@ -284,10 +284,10 @@ export function initTimeline(ED) {
     });
     ED.commit(ops, `вставлены ключи (${ops.length}) на ${ED.t.toFixed(2)} с`);
   }
-  function addMarker() {
-    const n = prompt(`Маркер на ${ED.t.toFixed(2)} с — имя (будущий якорь к слову голоса):`, '');
+  async function addMarker() {
+    const t = ED.t, n = await ED.ask(`Маркер на ${t.toFixed(2)} с — имя (будущий якорь к слову голоса)`, '');
     if (n == null) return;
-    ED.commit([{ op: 'add', path: ['markers'], item: { id: newId('m'), t: +ED.t.toFixed(3), name: n.trim() } }], `маркер «${n.trim()}» на ${ED.t.toFixed(2)} с`);
+    ED.commit([{ op: 'add', path: ['markers'], item: { id: newId('m'), t: +t.toFixed(3), name: n.trim() } }], `маркер «${n.trim()}» на ${t.toFixed(2)} с`);
   }
   function addCut() {
     const c = ED.doc.camera || {};
