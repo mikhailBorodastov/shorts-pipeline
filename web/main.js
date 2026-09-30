@@ -49,6 +49,7 @@ const App = {
     }
     this.render({ top: true });
     StageEditor.follow(r);
+    MontagePreview.follow(r);                          // 🎞 предпросмотр монтажа — своё окно поверх страницы (S6)
   },
 
   banner(msg) { const b = $('#banner'); b.textContent = msg; b.classList.toggle('show', !!msg); },
@@ -79,6 +80,7 @@ const App = {
     }
     for (const [src, t] of playing) { const x = $$('audio').find(y => y.getAttribute('src') === src); if (x) { x.currentTime = t; x.play().catch(() => {}); } }
     requestAnimationFrame(() => $$('textarea.auto').forEach(autosize));
+    MontagePreview.follow(this.route);
     Sync.dirty();
   },
 

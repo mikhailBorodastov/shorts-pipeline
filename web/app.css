@@ -565,3 +565,46 @@ iframe.projframe { width: 100%; height: calc(100vh - 190px); border: 1px solid v
 @media (max-width: 900px) { .charsheet .cs-main { grid-template-columns: 1fr; } }
 
 .charsheet .cs-strip { width: 260px; height: 80px; object-fit: cover; object-position: left center; border-radius: 6px; cursor: pointer; background: #ece6da; }
+
+/* ---------- 🎞 Монтаж (S6, montage.js) ---------- */
+.mt-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; align-items: start; }
+.mt-left { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.mt-prevslot { width: 300px; height: 533px; border: 1px dashed var(--line); border-radius: 10px; display: grid; place-items: center; position: sticky; top: 8px; }
+.mt-preview { position: fixed; z-index: 50; background: #000; border-radius: 10px; overflow: hidden; box-shadow: 0 6px 24px #0008; }
+.mt-preview iframe { width: 100%; height: 100%; border: 0; display: block; }
+.mt-toolbar { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.mt-toolbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.mt-time { font: 600 13px/1 ui-monospace, Consolas, monospace; min-width: 64px; }
+.mt-tl { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.mt-scroll { overflow-x: auto; overflow-y: hidden; position: relative; }
+.mt-ruler { position: relative; height: 22px; border-bottom: 1px solid var(--line); cursor: ew-resize; background: var(--panel2); }
+.mt-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); padding-left: 3px; font-size: 10px; color: var(--dim); }
+.mt-rows { position: relative; }
+.mt-row { position: relative; border-bottom: 1px solid var(--line); }
+.mt-rowlabel { position: sticky; left: 0; z-index: 3; width: 112px; height: 100%; background: var(--panel); border-right: 1px solid var(--line); padding: 5px 8px; font-size: 12px; color: var(--dim); display: inline-block; }
+.mt-lane { position: absolute; inset: 0; }
+.mt-bar { position: absolute; height: 19px; border-radius: 5px; font-size: 11px; line-height: 19px; padding: 0 6px; overflow: hidden; white-space: nowrap; cursor: grab; box-sizing: border-box; border: 1px solid #0006; }
+.mt-bar::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.mt-bar.sfx::after { display: none; }
+.mt-bar span { pointer-events: none; }
+.mt-bar.unit { background: #3b5f8f; } .mt-bar.music { background: #7a4f9c; } .mt-bar.sfx { background: #2f7a6a; } .mt-bar.ov { background: #8f6a2f; }
+.mt-bar.sel { outline: 2px solid var(--key); z-index: 2; }
+.mt-cut { position: absolute; top: 2px; bottom: 2px; width: 0; border-left: 2px dashed #fff9; pointer-events: none; z-index: 1; }
+.mt-marker { position: absolute; top: 0; height: 100%; border-left: 2px solid var(--pin); z-index: 2; cursor: ew-resize; }
+.mt-marker span { position: absolute; left: 2px; top: -1px; font-size: 10px; color: var(--pin); white-space: nowrap; background: var(--panel); padding: 0 2px; border-radius: 3px; }
+.mt-marker.word { border-color: var(--ok); } .mt-marker.word span { color: var(--ok); }
+.mt-marker.pinned { border-color: var(--key); }
+.mt-lane.voice.off { opacity: .4; }
+.mt-word { position: absolute; top: 4px; height: 18px; background: var(--panel3); border-radius: 3px; font-size: 10px; line-height: 18px; overflow: hidden; white-space: nowrap; padding: 0 2px; box-sizing: border-box; }
+.mt-word.hot { background: var(--ok); color: #000; }
+.mt-playhead { position: absolute; top: -22px; bottom: 0; width: 0; border-left: 2px solid var(--red); pointer-events: none; z-index: 4; }
+.mt-end { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dotted var(--dim); pointer-events: none; }
+.mt-props { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.mt-propbox { display: flex; flex-direction: column; gap: 6px; }
+.mt-f { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--dim); }
+.mt-f input[type=number] { width: 64px; }
+.mt-lib { width: 180px; }
+.mt-map { display: flex; flex-wrap: wrap; gap: 6px; }
+.mt-pair { background: var(--panel2); border-radius: 6px; padding: 2px 6px; font-size: 12px; }
+.mt-pair .x { padding: 0 4px; margin-left: 4px; }
+.mt-text { width: 100%; }

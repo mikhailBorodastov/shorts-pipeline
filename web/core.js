@@ -1,6 +1,6 @@
 // Claude Studio — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
 'use strict';
-const API = 9;                      // must match ideas_api.API_VERSION
+const API = 10;                     // must match ideas_api.API_VERSION
 const REF = {};                     // web/ref.json, loaded at boot
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -182,7 +182,7 @@ const Claude = {
   on: false, jobs: {}, cbs: {},
   running(key, scope) { return Object.values(this.jobs).find(j => j.status === 'running' && j.key === key && j.scope === scope); },
   async run({ action, key, scope = action, params = {}, onResult, confirm: q }) {
-    const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch' }[action];
+    const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch', montagebuild: '/api/montage/build' }[action];
     if (!this.on && !local) return UI.toast('Claude Code не найден — кнопки ✨ не работают', 'err');
     if (q && !confirm(q)) return;
     Unread.ask();                                     // browser notifications: asked once, on a click (browsers require a gesture)
@@ -229,7 +229,7 @@ const Claude = {
 const Unread = {
   TAB: { ideas: 'ideas', beats: 'beats', q7: 'title', meanings: 'title', titles: 'title', strengthen: 'title', images: 'images',
     thumbs: 'thumbs', critique: 'thumbs', render: 'thumbs', structure: 'structure', produce: 'prod',
-    questions: 'qa', challenge: 'qa', elements: 'pre', element: 'pre', sound: 'pre', sndfetch: 'pre', assets: 'pre', assetfetch: 'pre', layout3d: 'pre', refparse: 'idea' },
+    questions: 'qa', challenge: 'qa', elements: 'pre', element: 'pre', sound: 'pre', sndfetch: 'pre', assets: 'pre', assetfetch: 'pre', layout3d: 'pre', refparse: 'idea', montagebuild: 'montage' },
   tabOf(kind, flow) { return flow === 'idea' && kind === 'beats' ? 'qa' : this.TAB[kind] || (flow === 'idea' ? 'idea' : 'ideas'); },
   get() { try { return JSON.parse(Local.get('unread') || '{}'); } catch { return {}; } },
   put(u) { Local.set('unread', JSON.stringify(u)); },

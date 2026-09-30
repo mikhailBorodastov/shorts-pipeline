@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 9
+API_VERSION = 10
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -87,11 +87,13 @@ LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "sce
 def _fresh(mod, tag):
     """A helper module, reloaded when its file changes."""
     m = os.path.getmtime(mod.__file__)
-    if _refc.get(tag) != m:
-        if tag in _refc:
+    seen = getattr(mod, "_fresh_mtime", None)        # отметка живёт на самом модуле: перезагрузка ideas_api её не сбрасывает (раньше модуль «залипал»)
+    if seen != m:
+        if seen is not None:
             importlib.reload(mod)
             print(mod.__name__, "перезагружен")
-        _refc[tag] = m
+        mod._fresh_mtime = m
+    _refc[tag] = m
     return mod
 
 

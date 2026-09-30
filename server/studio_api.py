@@ -354,8 +354,9 @@ def handle_post(A, h, p, body):
         if not vdir or not os.path.isfile(os.path.join(vdir, "review_server.py")):
             raise ValueError("у видео ещё нет проекта ролика — «🚀 Начать производство»")
         port = project_port(vdir)
-        page = "script" if body.get("page") == "script" else "review"
-        h._json({"port": port, "url": f"http://localhost:{port}/src/{page}.html", "dir": vdir}); return True
+        page = body.get("page") if body.get("page") in ("script", "preview") else "review"
+        url = f"http://localhost:{port}/src/index.html?preview" if page == "preview" else f"http://localhost:{port}/src/{page}.html"   # preview — плеер кадров для этапа «Монтаж» (S6)
+        h._json({"port": port, "url": url, "dir": vdir}); return True
     if p == "/api/lib/publish":
         j = A.start_job("libpublish", body.get("key", ""), f"libpublish:{body.get('el', '')}", {"el": body.get("el"), "as": body.get("as") or "new"})
         h._json({"job": j.info()}); return True

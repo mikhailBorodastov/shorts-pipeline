@@ -6,6 +6,7 @@ import glob, json, os, re, shutil, subprocess, sys, time
 import paths as P  # noqa: E402
 
 STUDIO_DIR = "assets/studio"
+ENGINE_SYNC = ("lib.js", "stage3d.js", "moves3d.js", "props3d.js", "rig.js", "scene.js", "paper.js")
 
 
 def now_ms():
@@ -74,11 +75,38 @@ def default(A, vid, doc):
     return {"units": units, "voice": {"on": has_vo}, "captions": {"on": has_vo}, "sfx": [], "music": [], "overlays": [], "len": round(max(at, (vo or {}).get("total") or 0) if has_vo else at, 3)}
 
 
+_LIBIDX = {}
+
+
+def lib_sounds():
+    """Библиотека пайплайна: [[id, длина, название]] — для выбора звука и длины полос на таймлайне."""
+    p = os.path.join(P.SFXLIB, "index.json")
+    m = os.path.getmtime(p) if os.path.isfile(p) else 0
+    if _LIBIDX.get("m") != m:
+        items = json.load(open(p, encoding="utf-8")).get("sounds", []) if m else []
+        _LIBIDX.update(m=m, list=[[s["id"], s.get("dur"), s.get("name", "")] for s in items])
+    return _LIBIDX["list"]
+
+
+def sources(doc):
+    """Звуки препродакшена видео с выбранным слоем: [{src: 'el:<id>', name, dur}]."""
+    import preprod
+    out = []
+    for e in doc.get("elements") or []:
+        if e.get("kind") != "sound" or e.get("status") == "drop":
+            continue
+        mix = preprod.el_mix(e)
+        if mix:
+            out.append({"src": "el:" + e["id"], "name": e.get("name", ""), "dur": round(max((m["at"] + float(m["s"].get("dur") or 0)) for m in mix), 2)})
+    return out
+
+
 def get(A, vid):
     doc = A.load("plan:" + vid)
     m = doc.get("montage") or default(A, vid, doc)
     return {"montage": m, "saved": bool(doc.get("montage")), "scenes": scenes(A, vid, doc), "voice": voice(vid), "project": has_project(vid),
-            "folder": vdir(vid), "out": sorted(glob.glob(os.path.join(vdir(vid) or "", "out", "*.mp4")), key=os.path.getmtime)[-1:] if vdir(vid) else []}
+            "sources": sources(doc), "lib": lib_sounds(), "generated": bool(vdir(vid)) and os.path.isfile(os.path.join(vdir(vid), "src", "montage.js")),
+            "folder": vdir(vid), "out": [os.path.basename(x) for x in sorted(glob.glob(os.path.join(vdir(vid) or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")][-1:] if vdir(vid) else []}
 
 
 # ---------------------------------------------------------------- генератор
@@ -160,6 +188,10 @@ def generate(A, vid, montage=None):
     lib = _lib_dir(A, vid)
     S = os.path.join(pd, STUDIO_DIR)
     os.makedirs(S, exist_ok=True)
+    for f in ENGINE_SYNC:                                     # проект собирается на том же движке, что показывал редактор сцены
+        src = os.path.join(P.STANDS if f == "paper.js" else P.ENGINE, f)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(pd, "src", f))
     vo = voice(vid)
     words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []
     report = {"copied": [], "units": [], "warn": []}

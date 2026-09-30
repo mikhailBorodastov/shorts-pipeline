@@ -276,10 +276,21 @@ if (location.search.includes('preview')) {
   let playing = false, t0 = 0, tStart = 0;
   const show = T => { renderFrame(T); tl.textContent = T.toFixed(2); };
   scrub.oninput = () => show(+scrub.value);
-  btn.onclick = () => { playing = !playing; btn.textContent = playing ? '❚❚' : '▶'; t0 = performance.now(); tStart = +scrub.value; };
+  btn.onclick = () => { playing = !playing; btn.textContent = playing ? '❚❚' : '▶'; t0 = performance.now(); tStart = +scrub.value; tell(tStart); };
   const loop = () => {
-    if (playing) { const T = tStart + (performance.now() - t0) / 1000; scrub.value = T; show(T); if (T >= TOTAL) playing = false; }
+    if (playing) { const T = tStart + (performance.now() - t0) / 1000; scrub.value = T; show(T); if (T >= TOTAL) playing = false; tell(T); }
     requestAnimationFrame(loop);
   };
-  READY.then(() => { show(0); loop(); });
+  // монтаж Claude Studio (S6): окно приложения управляет предпросмотром — {seek: t}, {play: true|false}; страница шлёт назад {studioT: t, playing}
+  const tell = T => { try { parent !== window && parent.postMessage({ studioT: T, playing }, '*'); } catch (e) {} };
+  const show0 = show;
+  const showT = T => { show0(T); tell(T); };
+  scrub.oninput = () => showT(+scrub.value);
+  addEventListener('message', ev => {
+    const m = ev.data || {};
+    if (typeof m.seek === 'number') { playing = false; btn.textContent = '▶'; scrub.value = m.seek; showT(m.seek); }
+    if (typeof m.play === 'boolean') { playing = m.play; btn.textContent = playing ? '❚❚' : '▶'; t0 = performance.now(); tStart = +scrub.value; tell(+scrub.value); }
+  });
+  const ht = location.hash.match(/t=([\d.]+)/);
+  READY.then(() => { scrub.value = ht ? +ht[1] : 0; showT(+scrub.value); loop(); });
 }
