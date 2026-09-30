@@ -104,6 +104,8 @@
 <!-- 3D-стенд препродакшена (сцена-диорама на stage3d.js шаблона). Отдаётся как /tpl/stand3d.html, чтобы vendor/… шаблона находились.
      Сцена: ?scene=/rscene/<plan>/<element>/v<N>/element.js&parts=element   (&view=1 — живой просмотр со свободной камерой)
             &edit=1&key=plan:<id>&el=<element>&base=<render id> — ещё и «✋ Двигать»: расстановка сохраняется новой версией (POST /api/layout3d)
+     Сцена из данных (редактор, S1): ?stage=/rscene/<plan>/<element>/work/scene.json[&prefabs=…/prefabs.js]&parts=element
+            prefabs.js рядом со scene.json по умолчанию; кадр = WORLD из scene.world + 2D-накладки (kind: 'overlay')
      Модель: ?model=/files/<plan>/assets/<id>/model.glb&view=1 — посмотреть glTF-ассет на полу со светом
      Контракт:  const PICS = { key: '/files/<plan>/7.png' };                картинки -> IMG.key (для spriteCard и вырезок)
                 const MODELS = { key: '/files/<plan>/assets/<id>/model.glb' };   glTF -> w.model(key, {h, pos, name})
@@ -121,6 +123,7 @@
 <script src="/render/paper.js"></script>
 <script src="/tpl/stage3d.js"></script>
 <script src="/tpl/moves3d.js"></script>
+<script src="/tpl/scene.js"></script>
 <script>
   const q = new URLSearchParams(location.search), VIEW = q.get('view') === '1', EDIT = VIEW && q.get('edit') === '1' && q.get('key') && q.get('el');
   if (VIEW) document.body.classList.add('view', 'loading');
@@ -143,9 +146,21 @@
     window.ELEMENT = { t: 0.6, len: 14, draw(ctx, T) { w.draw(ctx, T, 4, T); } };
   }
 
+  // ?stage=… — scene.json + prefabs.js (template/src/scene.js)
+  async function stageScene(url) {
+    await load(q.get('prefabs') || url.replace(/[^/]*$/, 'prefabs.js'));
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now());
+    if (!r.ok) throw new Error('scene.json не загрузился: ' + url);
+    window.SCENE = await r.json();
+    window.WORLD = sceneWorld(SCENE, typeof PREFABS !== 'undefined' ? PREFABS : {});
+    window.ELEMENT = { t: SCENE.t0 != null ? SCENE.t0 : 0.6, len: SCENE.len || 6,
+      draw(ctx, T) { WORLD.draw(ctx, T, 4, T); if (WORLD.S) drawSceneOverlays(WORLD.S, ctx, T); } };
+  }
+
   window.READY = (async () => {
     await window.THREE_READY;
-    if (q.get('model')) modelScene(q.get('model'));
+    if (q.get('stage')) await stageScene(q.get('stage'));
+    else if (q.get('model')) modelScene(q.get('model'));
     else await load(q.get('scene'));
     const P = typeof PICS !== 'undefined' ? PICS : {};   // pictures before the world is built: spriteCard reads IMG in build()
     await Promise.all(Object.entries(P).map(([k, s]) => pic(k, s)));
