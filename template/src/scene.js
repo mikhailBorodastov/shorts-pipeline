@@ -261,9 +261,11 @@ function applyScene(S, t) {
     const o = byId.get(id);
     if (!o) continue;
     const st = objectAt(o, t), h = rec.holder;
-    h.position.set(st.pos[0], st.pos[1], st.pos[2]);
-    h.rotation.set(st.rot[0], st.rot[1], st.rot[2], 'YXZ');
-    h.scale.set(st.scale[0], st.scale[1], st.scale[2]);
+    if (!(S.hold && S.hold.has(id))) {                     // the editor is dragging it: the pointer owns the transform until release
+      h.position.set(st.pos[0], st.pos[1], st.pos[2]);
+      h.rotation.set(st.rot[0], st.rot[1], st.rot[2], 'YXZ');
+      h.scale.set(st.scale[0], st.scale[1], st.scale[2]);
+    }
     h.visible = !st.hide && !(S.editHidden && S.editHidden.has(id));
     rec.hidden = st.hide;
     if (rec.tick && h.visible) rec.tick(t);
@@ -279,7 +281,7 @@ function applyScene(S, t) {
       continue;
     }
     const p = scnVec3(evalKeys(k.pos, t, L.pos || [0, 2, 0]), 0);
-    rec.holder.position.set(p[0], p[1], p[2]);
+    if (!(S.hold && S.hold.has(L.id))) rec.holder.position.set(p[0], p[1], p[2]);
     if (rec.obj) {
       rec.obj.k = on ? I / (rec.base || 1) : 0;
       const c = evalKeys(k.color, t, L.color);

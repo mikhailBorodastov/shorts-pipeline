@@ -65,7 +65,7 @@ VISUAL_ACTIONS = ("element", "render")
 TEXT_EFFORT = {"elements": "medium", "sound": "medium", "assets": "medium"}              # усилие для текстовых кнопок препродакшена; остальные — по умолчанию Claude Code
 VISUAL_EFFORT = os.environ.get("IDEAS_VISUAL_EFFORT", "")           # пусто — по умолчанию Claude Code
 MAX_JOBS = 3
-MIME = {".js": "text/javascript; charset=utf-8", ".pdf": "application/pdf", ".ttf": "font/ttf", ".png": "image/png", ".jpg": "image/jpeg",
+MIME = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".pdf": "application/pdf", ".ttf": "font/ttf", ".png": "image/png", ".jpg": "image/jpeg",
         ".webp": "image/webp", ".gif": "image/gif", ".json": "application/json; charset=utf-8", ".html": "text/html; charset=utf-8",
         ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".txt": "text/plain; charset=utf-8", ".mp4": "video/mp4",
         ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".svg": "image/svg+xml"}
@@ -1237,6 +1237,10 @@ def handle_get(h):
         h._json(aapi().search(q_, q.get("kind", ["3d"])[0], int(q.get("n", ["12"])[0]), data_dir=DATA)); return True
     if p == "/tpl/stand3d.html":              # 3D render stand lives next to the template src, so its vendor/… paths resolve
         _send_file(h, os.path.join(WEB, "render", "stand3d.html")); return True
+    if p == "/tpl/editor.html":               # the scene editor (S1 Claude Studio): same trick, vendor/… of the template
+        _send_file(h, os.path.join(WEB, "editor", "editor.html")); return True
+    if p.startswith("/editor/"):
+        return _static(h, os.path.join(WEB, "editor"), p[len("/editor/"):])
     if p.startswith("/tpl/"):                 # the video template: lib.js for the 2D stand, stage3d.js / moves3d.js / vendor for the 3D one
         return _static(h, TPL, p[len("/tpl/"):])
     if p.startswith("/sfxlib/"):              # the pipeline sound library: /sfxlib/<category>/<id>.wav

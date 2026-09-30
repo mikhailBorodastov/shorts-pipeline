@@ -12,3 +12,4 @@ ideas/.render_profile/
 animalese_cache/
 .render_profile/
 *.log
+.clip_profile_*/

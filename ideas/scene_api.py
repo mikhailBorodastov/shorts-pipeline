@@ -439,6 +439,24 @@ def version(A, job):
     job.summary = f"«{e.get('name', '')}» v{v}: версия сцены сохранена" + (" · есть ошибки страницы" if "[pageerror]" in out else "")
 
 
+def sound_cues(A, key, doc):
+    """scene.sounds -> [{file, url, t, gain, name}]: 'el:<id>' — the chosen layers of a sound element of the plan, 'lib:<id>' — the pipeline library."""
+    plan, out = A.load(key), []
+    for s in doc.get("sounds") or []:
+        src, t, g = str(s.get("src") or ""), float(s.get("t") or 0), float(1 if s.get("gain") is None else s.get("gain"))
+        if src.startswith("el:"):
+            e = A._by_id(plan.get("elements"), src[3:])
+            for m in (A.pr().el_mix(e) if e else []):
+                f = os.path.join(A.DATA, *m["s"]["file"].split("/"))
+                out.append({"id": s.get("id"), "file": f, "url": "/" + m["s"]["file"], "t": t + m["at"], "gain": g * m["gain"], "name": e.get("name", "")})
+        elif src.startswith("lib:"):
+            rel = src[4:].split("|")[0]
+            f = os.path.join(A.SFXLIB, *rel.split("/")) + ".wav"
+            if os.path.isfile(f):
+                out.append({"id": s.get("id"), "file": f, "url": f"/sfxlib/{rel}.wav", "t": t, "gain": g, "name": rel})
+    return out
+
+
 def clip(A, job):
     """🎞 клип сцены: кадры стенда -> work/clip.mp4 (render_clip.js)."""
     key, el = job.key, job.params.get("el")
@@ -449,7 +467,10 @@ def clip(A, job):
     url = stage_url(A._docs(key)["port"], rel)
     out = os.path.join(wd, "clip.mp4")
     job.summary = "снимаю кадры клипа…"
-    p = subprocess.Popen(["node", os.path.join(HERE, "render_clip.js"), url, out, str(doc.get("len") or 6), str(doc.get("fps") or 30)], cwd=HERE,
+    cues = [c for c in sound_cues(A, key, doc) if os.path.isfile(c["file"])]
+    sj = os.path.join(wd, "_clip_sounds.json")
+    A.write_text(sj, json.dumps(cues, ensure_ascii=False))
+    p = subprocess.Popen(["node", os.path.join(HERE, "render_clip.js"), url, out, str(doc.get("len") or 6), str(doc.get("fps") or 30), sj], cwd=HERE,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     job.proc = p
@@ -594,18 +615,44 @@ def _q1(q, k, d=""):
 def handle_get(A, h, p, q):
     key, el = _q1(q, "key"), _q1(q, "el")
     if p == "/api/scene":
-        if not exists(A, key, el):
+        ver = _q1(q, "ver")
+        if ver:                                                        # an old version, read-only
+            if not re.fullmatch(r"\d{1,4}", ver):
+                raise ValueError("плохая версия")
+            rel = f"{_pid(key)}/{el}/v{ver}"
+            f = os.path.join(A.RENDER, *rel.split("/"), "scene.json")
+            if not os.path.isfile(f):
+                raise ValueError(f"у v{ver} нет scene.json (это версия старого формата)")
+            doc = json.load(open(f, encoding="utf-8"))
+        elif not exists(A, key, el):
             h._json({"error": "сцена ещё не в редакторе", "missing": True}, 404); return True
-        doc = load_scene(A, key, el)
-        rel = f"{_pid(key)}/{el}/work"
+        else:
+            doc = load_scene(A, key, el)
+            rel = f"{_pid(key)}/{el}/work"
+        plan = A.load(key)
+        e = A._by_id(plan.get("elements"), el) or {}
+        sounds = [{"id": x["id"], "name": x.get("name", ""), "ready": bool(A.pr().el_mix(x))} for x in plan.get("elements") or [] if x.get("kind") == "sound" and x.get("status") != "drop"]
         h._json({"scene": doc, "rev": doc.get("rev", 0), "work": rel, "prefabs": f"/rscene/{rel}/prefabs.js", "history": history(A, key, el, 60),
-                 "locked": LOCKS.get(skey(key, el)), "limits": LIM})
+                 "locked": LOCKS.get(skey(key, el)), "limits": LIM, "cues": sound_cues(A, key, doc), "soundEls": sounds,
+                 "element": {"id": el, "name": e.get("name", ""), "stage": e.get("stage") or {}, "plan": plan.get("name", ""), "v": (e.get("stage") or {}).get("v"),
+                             "versions": [{"v": r.get("v"), "id": r.get("id"), "feedback": r.get("feedback", ""), "img": r.get("img", "")} for r in e.get("renders") or [] if r.get("stage")]},
+                 "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
+                 "clip": f"/rscene/{rel}/clip.mp4" if os.path.isfile(os.path.join(work_dir(A, _pid(key), el), "clip.mp4")) else ""})
         return True
     if p == "/api/scene/rev":
         rev = 0
         if exists(A, key, el):
             rev = A.rev_of(scene_path(A, key, el)) or 0
         h._json({"rev": rev, "locked": LOCKS.get(skey(key, el))}); return True
+    if p == "/api/scene/cues":
+        h._json({"cues": sound_cues(A, key, load_scene(A, key, el))}); return True
+    if p == "/api/scene/sfxlib":                                    # the pipeline sound library for «+ звук»: search by words
+        words = [w for w in _q1(q, "q").lower().split() if w]
+        idx = os.path.join(A.SFXLIB, "index.json")
+        rows = json.load(open(idx, encoding="utf-8")) if os.path.isfile(idx) else []
+        rows = rows if isinstance(rows, list) else rows.get("sounds") or rows.get("items") or []
+        hit = [r for r in rows if all(w in json.dumps(r, ensure_ascii=False).lower() for w in words)][:40]
+        h._json({"items": hit}); return True
     if p == "/api/scene/history":
         h._json({"history": history(A, key, el, int(_q1(q, "n", "200")))}); return True
     return False
@@ -618,6 +665,18 @@ def handle_post(A, h, p, body):
             h._json({"error": "Claude работает над сценой — подожди или отмени задачу", "locked": True}, 409); return True
         r = apply(A, key, el, body.get("ops"), by="author", desc=body.get("desc", ""), batch=body.get("batch"), kind=body.get("kind") or "edit",
                   undoes=body.get("undoes"))
+        h._json(r); return True
+    if p == "/api/scene/restore":                                   # a saved version becomes the working copy (one undoable batch)
+        v = int(body.get("v") or 0)
+        src = os.path.join(A.RENDER, _pid(key), el, f"v{v}")
+        if not os.path.isfile(os.path.join(src, "scene.json")):
+            raise ValueError(f"у v{v} нет scene.json")
+        old = json.load(open(os.path.join(src, "scene.json"), encoding="utf-8"))
+        wd = work_dir(A, _pid(key), el)
+        if os.path.isfile(os.path.join(src, "prefabs.js")):
+            shutil.copy2(os.path.join(src, "prefabs.js"), os.path.join(wd, "prefabs.js"))
+        ops = [{"op": "set", "path": [k], "value": old[k]} for k in ("name", "len", "fps", "world", "camera", "lights", "objects", "sounds", "markers", "comments") if k in old]
+        r = apply(A, key, el, ops, by="author", desc=f"↺ рабочая копия из v{v}", kind="restore")
         h._json(r); return True
     if p == "/api/scene/version":
         j = A.start_job("scenever", key, f"scenever:{el}", {"el": el, "note": body.get("note", ""), "by": body.get("by") or "editor"})

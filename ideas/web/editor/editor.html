@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Оформление сцены — Claude Studio</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/editor/editor.css">
+<!-- Редактор сцены (S1 Claude Studio). Отдаётся как /tpl/editor.html, чтобы vendor/… шаблона находились (как 3D-стенд).
+     ?key=plan:<id>&el=<element>   Модули — /editor/*.js (web/editor), движок — /tpl/scene.js + stage3d.js, предметы — prefabs.js сцены.
+     ТЗ — _pipeline/docs/studio/stage1-editor.md. -->
+</head>
+<body>
+<div id="app" class="loading">
+  <header id="top" role="toolbar" aria-label="Сцена">
+    <button id="back" title="Esc — назад в препродакшен">← Препродакшен</button>
+    <div id="title"><b id="sname">Сцена</b> <span id="sver" class="dim"></span> <span id="saved" class="dim" aria-live="polite"></span></div>
+    <div class="grow"></div>
+    <button id="autokey" aria-pressed="true" title="Автоключ: правка анимированного свойства ставит ключ на текущем времени">⏺ автоключ</button>
+    <button id="camkey" title="Ctrl+Alt+Numpad 0 — камера сцены = этот вид, ключ на курсоре">🎥 ключ с этого вида</button>
+    <button id="camview" aria-pressed="false" title="Numpad 0 — смотреть глазами камеры">👁 глазами камеры</button>
+    <button id="clip" title="Собрать mp4 сцены">🎞 клип</button>
+    <button id="version" title="Ctrl+S — сохранить версию сцены в препродакшен">💾 версия</button>
+    <button id="agentBtn" title="/ — просьба Claude">💬 агент</button>
+    <button id="menuBtn" aria-haspopup="true" aria-expanded="false" title="История, клавиши">☰</button>
+  </header>
+  <main id="main">
+    <section id="vp" aria-label="3D-вид">
+      <div id="vpHud" class="dim"></div>
+      <canvas id="ovl" aria-hidden="true"></canvas>
+      <div id="vpMsg" role="status"></div>
+    </section>
+    <div class="split v" data-split="right" title="Потяни — ширина панелей"></div>
+    <aside id="side">
+      <section id="tree" aria-label="Дерево объектов">
+        <div class="phead"><b>Дерево</b><input id="treeFind" type="search" placeholder="🔎 найти" aria-label="Найти объект"></div>
+        <div id="treeList" role="tree" tabindex="0" aria-label="Объекты сцены"></div>
+      </section>
+      <div class="split h" data-split="props" title="Потяни — высота свойств"></div>
+      <section id="props" aria-label="Свойства"></section>
+    </aside>
+    <aside id="agent" aria-label="Агент" hidden>
+      <div class="phead"><b>💬 Claude</b><span class="grow"></span>
+        <select id="agentModel" aria-label="Модель"><option value="sonnet">Sonnet</option><option value="opus">Opus</option></select>
+        <button id="agentClose" title="Закрыть (/)">✕</button></div>
+      <div id="agentFeed" aria-live="polite"></div>
+      <form id="agentForm">
+        <textarea id="agentAsk" rows="3" placeholder="Например: поставь лампу на стол и включи её потеплее" aria-label="Просьба Claude"></textarea>
+        <div class="row"><span class="dim" id="agentCtx"></span><span class="grow"></span><button type="submit" id="agentSend">Отправить ↵</button></div>
+      </form>
+    </aside>
+  </main>
+  <div class="split h" data-split="tl" title="Потяни — высота таймлайна"></div>
+  <footer id="tl" aria-label="Таймлайн">
+    <div id="tlBar" role="toolbar" aria-label="Время">
+      <button id="play" title="Пробел">▶</button>
+      <span id="tcur" class="mono">0:00.00</span><span class="dim">/</span>
+      <label class="dim">длина <input id="tlen" type="number" min="0.5" max="600" step="0.5" aria-label="Длина сцены, с"> с</label>
+      <span class="dim" id="twork"></span>
+      <span class="grow"></span>
+      <span class="dim">J K L · ← → кадр · ↑ ↓ ключ · M маркер · C склейка · I/O область</span>
+    </div>
+    <div id="tlBody">
+      <div id="tlNames" role="list" aria-label="Дорожки"></div>
+      <canvas id="tlCanvas" tabindex="0" aria-label="Ключи и дорожки"></canvas>
+    </div>
+  </footer>
+  <div id="menu" role="menu" hidden></div>
+  <div id="popup" hidden></div>
+  <div id="lockbar" hidden role="alert"><span>Claude работает над сценой… редактор только для просмотра</span> <button id="lockCancel">✕ отменить</button></div>
+  <div id="boot">Собираю сцену…</div>
+</div>
+
+<script>window.THREE_READY = new Promise(r => (window.__3dok = r));</script>
+<script type="module" src="vendor/boot3d.js"></script>
+<script src="/tpl/lib.js"></script>
+<script>
+  const IMG = {}, SEQ = {};
+  const seqFrame = () => null;
+</script>
+<script src="/render/paper.js"></script>
+<script src="/tpl/stage3d.js"></script>
+<script src="/tpl/moves3d.js"></script>
+<script src="/tpl/scene.js"></script>
+<script type="module" src="/editor/editor.js"></script>
+</body>
+</html>

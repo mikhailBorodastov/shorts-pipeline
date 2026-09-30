@@ -172,7 +172,7 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     ELEMENT.draw(ctx, t != null ? t : (ELEMENT.t != null ? ELEMENT.t : 0.6));
   };
-  window.shot = (kind, t) => { paint(t); return cv.toDataURL('image/png'); };
+  window.shot = (kind, t, fmt) => { paint(t); return fmt === 'jpg' ? cv.toDataURL('image/jpeg', 0.95) : cv.toDataURL('image/png'); };
 
   // ---------------- живой просмотр: петля по времени + свободная камера поверх камеры сценария ----------------
   const V = { free: false, playing: true, T: 0, len: 6, yaw: 0, pitch: 0.2, dist: 6, tgt: null, dirty: true, last: 0 };
