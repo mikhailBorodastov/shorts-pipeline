@@ -154,3 +154,131 @@ def cli(A, argv):
             save_skeleton(A, skeleton_hog())
         print(f"{r['ref']} — готово"); return True
     return False
+
+
+# ---------------------------------------------------------------- эмоции (emotions.json рядом с character.json — общие для всех версий)
+def emotions_path(ld, slug):
+    return os.path.join(ld, "characters", slug, "emotions.json")
+
+
+def load_emotions(ld, slug):
+    try:
+        return json.load(open(emotions_path(ld, slug), encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_emotions(A, ld, slug, em):
+    A.write_text(emotions_path(ld, slug), json.dumps(em, ensure_ascii=False, indent=1))
+
+
+def prefab_emotions(ld, slug, v):
+    """Эмоции, записанные в prefab.js версии (emotions: {...}) — для списка вместе с emotions.json."""
+    try:
+        src = open(os.path.join(ld, "characters", slug, f"v{v}", "prefab.js"), encoding="utf-8").read()
+    except OSError:
+        return {}
+    out = {}
+    m = re.search(r"emotions:\s*\{(.*?)\n\s*\},\n", src, re.S)
+    for name, body in re.findall(r"'([^']+)':\s*\{([^{}]*)\}", m.group(1) if m else ""):
+        out[name] = {"ok": "ok: true" in body, "src": "prefab"}
+    return out
+
+
+def sheet_info(A, slug, cid=None):
+    c, ld = lib(A, cid)
+    card = load_card(ld, slug)
+    if not card:
+        raise ValueError("нет такого персонажа")
+    r = latest_rigged(card)
+    sk = r and r.get("skeleton")
+    same = [x for x in chars(A, cid) if x.get("skeleton") == sk and x["slug"] != slug] if sk else []
+    em = prefab_emotions(ld, slug, r["v"]) if r else {}
+    em.update(load_emotions(ld, slug))
+    costumes = []
+    if r:
+        cd = os.path.join(ld, "characters", slug, f"v{r['v']}", "costumes")
+        for f in sorted(os.listdir(cd)) if os.path.isdir(cd) else []:
+            src = open(os.path.join(cd, f), encoding="utf-8").read()
+            m = re.search(r"id:\s*'([^']+)',\s*name:\s*'([^']+)'", src)
+            sl = re.search(r"slot:\s*'([^']+)'", src)
+            if m:
+                costumes.append({"id": m.group(1), "name": m.group(2), "slot": sl.group(1) if sl else ""})
+    try:
+        skel = json.load(open(os.path.join(ld, "skeletons", f"{sk}.json"), encoding="utf-8")) if sk else None
+    except (OSError, ValueError):
+        skel = None
+    return {"slug": slug, "channel": c["id"], "card": card, "rigged": r, "skeleton": sk, "skel": skel, "same": same, "emotions": em, "costumes": costumes,
+            "url": f"/api/lib/file/{c['id']}/characters/{slug}/v{r['v']}/prefab.js" if r else ""}
+
+
+def emotion_spec(A, info, want=""):
+    face = ("глаза eyes: open | half | closed; веко lid 0..1 (0 — открыты широко, 0.62 — сонные); рот mouth: o | flat | smile | sad | open; "
+            "брови brows: none | up | angry | sad | worried; взгляд look [x, y] от -1 до 1 (y > 0 — вниз); усталость tired: true")
+    have = "\n".join(f"- {k}{' (утверждена автором)' if v.get('ok') else ''}" for k, v in info["emotions"].items()) or "(пока нет)"
+    base = ["радость", "удивление", "грусть", "злость", "сонный", "испуг"]
+    miss = [b for b in base if b not in info["emotions"]]
+    ask = ("эмоции: " + want) if want else ("недостающие базовые эмоции: " + ", ".join(miss)) if miss else "ещё 2–3 эмоции, полезные для роликов канала (хитрый, растерянный, гордый…)"
+    prompt = f"""Персонаж «{info['card'].get('name')}» — бумажный ёжик из аппликации (скелет hog, лицо рисует drawHog по параметрам).
+Описание: {info['card'].get('desc', '')}
+Что умеет лицо: {face}.
+Уже есть эмоции:
+{have}
+Предложи {ask}.
+Каждая — набор параметров лица, узнаваемый с одного взгляда на маленьком ёжике в кадре 9:16 (крупные различия: брови, рот, веко, взгляд). Не повторяй уже имеющиеся.
+В ответе: emotions — список {{ name (по-русски, одно-два слова, строчными), eyes, lid, mouth, brows, look, tired, note (коротко, чем читается) }}."""
+    S = lambda props, req=None: {"type": "object", "properties": props, "required": req or list(props), "additionalProperties": False}
+    item = S({"name": {"type": "string"}, "eyes": {"type": "string", "enum": ["open", "half", "closed"]}, "lid": {"type": "number"},
+              "mouth": {"type": "string", "enum": ["o", "flat", "smile", "sad", "open"]}, "brows": {"type": "string", "enum": ["none", "up", "angry", "sad", "worried"]},
+              "look": {"type": "array", "items": {"type": "number"}}, "tired": {"type": "boolean"}, "note": {"type": "string"}})
+    return {"system": "Ты — аниматор бумажной аппликации. Отвечаешь только JSON по схеме.", "prompt": prompt, "schema": S({"emotions": {"type": "array", "items": item}}),
+            "model": A.TEXT_MODEL, "timeout": 300}
+
+
+def run_job(A, job):
+    if job.kind == "charemotions":
+        slug = job.params["slug"]
+        info = sheet_info(A, slug)
+        res = A.run_claude(job, emotion_spec(A, info, job.params.get("want", "")))
+        _, ld = lib(A)
+        em = load_emotions(ld, slug)
+        n = 0
+        for e in res.get("emotions") or []:
+            name = (e.get("name") or "").strip().lower()
+            if not name or name in info["emotions"]:
+                continue
+            em[name] = {k: e[k] for k in ("eyes", "lid", "mouth", "brows", "look", "tired") if k in e and e[k] is not None and e[k] is not False and e[k] != "none"}   # lid 0 — это «широко открыты», не «нет»
+            em[name].update({"ok": False, "by": "claude", "note": e.get("note", "")})
+            n += 1
+        save_emotions(A, ld, slug, em)
+        job.result = {"added": n}
+        job.summary = f"Claude предложил эмоций: {n} — «{info['card'].get('name')}», утверди в листе персонажа"
+        return True
+    return False
+
+
+def handle_get(A, h, p, q):
+    if p == "/api/char":
+        h._json(sheet_info(A, (q.get("slug") or [""])[0])); return True
+    if p == "/api/chars":
+        h._json({"items": chars(A)}); return True
+    return False
+
+
+def handle_post(A, h, p, body):
+    if p == "/api/char/emotion":                             # ✓ утвердить / ✗ убрать эмоцию
+        _, ld = lib(A)
+        slug, name, act = body["slug"], body["name"], body.get("act", "ok")
+        em = load_emotions(ld, slug)
+        if act == "drop":
+            em.pop(name, None)
+        else:
+            em.setdefault(name, {})["ok"] = act == "ok"
+            if act == "ok":
+                em[name]["by"] = em[name].get("by") or "author"
+        save_emotions(A, ld, slug, em)
+        h._json({"ok": True, "emotions": em}); return True
+    if p == "/api/char/emotions":                            # ✨ предложить эмоции (Claude, Sonnet)
+        j = A.start_job("charemotions", "char:" + body["slug"], "emotions", {"slug": body["slug"], "want": body.get("want", "")})
+        h._json({"job": j.info()}); return True
+    return False

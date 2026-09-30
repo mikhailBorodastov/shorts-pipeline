@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 6
+API_VERSION = 7
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -796,6 +796,8 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
+        elif job.kind.startswith("char"):
+            chapi().run_job(sys.modules[__name__], job)
         else:
             run_action(job)
         job.status = "done"
@@ -1183,6 +1185,12 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
+    if p == "/api/char" or p == "/api/chars":
+        try:
+            if chapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p.startswith("/api/scene"):
         try:
             if scapi().handle_get(sys.modules[__name__], h, p, q):
@@ -1290,6 +1298,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p.startswith("/api/char/") and chapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/scene/") and scapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p == "/api/claude":

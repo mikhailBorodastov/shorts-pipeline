@@ -168,6 +168,7 @@ async function loadSceneProps(refs, plan, load, into = {}) {
       await load(u);
       const def = (typeof PROPS3D !== 'undefined' && PROPS3D[u]) || (typeof CHAR_LAST !== 'undefined' && CHAR_LAST && CHAR_LAST.url === u ? CHAR_LAST : null) || PROP3D_LAST;
       for (const n of (def && def.needs) || []) await load(n);         // персонаж: его костюмы (costumes/*.js рядом)
+      if (def && def.extrasUrl && typeof rigLoadExtras === 'function') await rigLoadExtras(def);
       into[ref] = def;
     }
     catch (e) { console.warn('scene: пропс не загрузился', ref, e.message); }

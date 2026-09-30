@@ -57,11 +57,19 @@ function character(def) {
   def.url = src.replace(location.origin, '');
   def.needs = (def.costumes || []).map(c => (/^(\/|https?:)/.test(c) ? c : base + c).replace(location.origin, ''));
   def.skel = RIG.skeletons[def.skeleton] || null;
+  def.extrasUrl = base + '../emotions.json';                        // эмоции, утверждённые после публикации — общие для всех версий персонажа
   // префаб сцены: kind 'group' — engine/scene.js собирает его как 3D-пропс (S.lib), см. charCard
   def.kind = 'group';
   def.build = (w, o) => { const c = charCard(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.keyed(T); } }; };
   RIG.chars[def.id] = def; CHAR_LAST = def;
   if (typeof PROPS3D !== 'undefined') PROPS3D[def.url] = def;     // loadSceneProps находит его так же, как 3D-пропс
+  return def;
+}
+
+// эмоции из characters/<slug>/emotions.json поверх тех, что в prefab.js (загрузчики зовут после загрузки персонажа)
+async function rigLoadExtras(def) {
+  if (!def || !def.extrasUrl) return def;
+  try { const r = await fetch(def.extrasUrl + '?v=' + Date.now()); if (r.ok) def.emotions = Object.assign({}, def.emotions || {}, await r.json()); } catch (e) {}
   return def;
 }
 

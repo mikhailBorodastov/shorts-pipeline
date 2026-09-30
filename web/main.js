@@ -90,7 +90,7 @@ const App = {
       return d ? Plan.view(d, r.tab || defTab(d.flow), r.sub) : wait;
     }
     document.title = 'Claude Studio';
-    if (r.page === 'lib') return Pages.lib();
+    if (r.page === 'lib') return r.id === 'char' && r.tab ? CharSheet.view(r.tab) : Pages.lib();
     if (r.page === 'style') return Pages.style();
     if (r.page === 'help') return Pages.help();
     return Pages.home();

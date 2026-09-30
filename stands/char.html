@@ -15,7 +15,7 @@
 <canvas id="c" width="1080" height="1080"></canvas>
 <!-- Стенд персонажа со скелетом (S4, engine/rig.js).
      ?char=<url prefab.js персонажа>  &pose=<JSON позы>  &emotion=<имя>  &wear=<JSON {костюм: true|false}>  &skel=1 — кости поверх
-     &poses=1 — лист проверочных поз типа скелета (skeleton.poses)  &bg=<цвет>  &size=<W>x<H>
+     &poses=1 — лист проверочных поз типа скелета (skeleton.poses)  &emotions=1 — сетка эмоций (✓ — утверждена)  &bg=<цвет>  &size=<W>x<H>
      window.shot(kind, t) -> PNG (render_shot.js …&parts=element кладёт element.png) -->
 <script src="/tpl/lib.js"></script>
 <script>const IMG = {}, SEQ = {}; const seqFrame = () => null;</script>
@@ -32,6 +32,7 @@
     await load(q.get('char'));
     CH = CHAR_LAST;
     for (const u of CH.needs || []) await load(u);
+    await rigLoadExtras(CH);
     await Promise.all(['900 40px Rubik', '700 40px Caveat'].map(f => document.fonts.load(f).catch(() => {})));
   })();
 
@@ -66,6 +67,12 @@
     const W2 = cv.width, H2 = cv.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = q.get('bg') || '#ece6da'; ctx.fillRect(0, 0, W2, H2);
     const base = rigPose(CH.pose, q.get('emotion') ? rigEmotion(CH, q.get('emotion')) : null, { wear: js('wear', {}) }, js('pose', {}));
+    if (q.get('emotions') === '1') {                      // сетка эмоций: ✓ — утверждена автором
+      const E = Object.entries(CH.emotions || {}), n = E.length || 1, cols = Math.min(n, 4), rows = Math.ceil(n / cols);
+      const cwid = W2 / cols, rh = H2 / rows, h = Math.min(cwid * 0.95, rh * 0.8);
+      E.forEach(([name, e], i) => paintOne(ctx, rigPose(base, rigEmotion(CH, name)), cwid * (i % cols + 0.5), rh * (Math.floor(i / cols) + 1) - 60, h, T, (e.ok ? '✓ ' : '? ') + name));
+      return;
+    }
     if (q.get('poses') === '1') {                         // пять проверочных поз типа
       const P = Object.entries((CH.skel && CH.skel.poses) || {}), n = P.length || 1, cols = Math.min(n, 3), rows = Math.ceil(n / cols);
       const cwid = W2 / cols, rh = H2 / rows, h = Math.min(cwid * 0.8, rh * 0.62);
@@ -75,7 +82,7 @@
     paintOne(ctx, base, W2 / 2, H2 * 0.88, H2 * 0.62, T);
   }
   window.shot = (kind, t) => { paint(t || 0); return cv.toDataURL('image/png'); };
-  READY.then(() => { if (!navigator.webdriver) { const f = now => { paint(now / 1000); requestAnimationFrame(f); }; requestAnimationFrame(f); } }).catch(e => { ctx.fillStyle = '#a33'; ctx.font = '28px Rubik'; ctx.fillText(e.message, 20, 50); });
+  READY.then(() => { paint(0); if (!navigator.webdriver) { const f = now => { paint(now / 1000); requestAnimationFrame(f); }; requestAnimationFrame(f); } }).catch(e => { ctx.fillStyle = '#a33'; ctx.font = '28px Rubik'; ctx.fillText(e.message, 20, 50); });
 </script>
 </body>
 </html>
