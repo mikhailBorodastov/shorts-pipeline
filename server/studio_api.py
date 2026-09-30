@@ -76,6 +76,39 @@ def archive_video(A, vid):
     return {"ok": True, "to": dst}
 
 
+# ---------------------------------------------------------------- the video project's own pages (script.html, review.html)
+def project_port(vdir, start=True, wait=12):
+    """Port of the video project's review server (review_server.py): the running one, or start it (hidden) and wait for build/.review_port."""
+    import subprocess, sys, urllib.request
+    pf = os.path.join(vdir, "build", ".review_port")
+
+    def alive():
+        try:
+            p = int(open(pf).read().strip())
+            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/version", timeout=0.5) as r:
+                if json.loads(r.read()).get("root") == os.path.basename(vdir):
+                    return p
+        except Exception:
+            return None
+    p = alive()
+    if p or not start:
+        return p
+    try:
+        os.remove(pf)
+    except OSError:
+        pass
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen([sys.executable, "review_server.py"], cwd=vdir, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     creationflags=flags, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        time.sleep(0.3)
+        p = alive()
+        if p:
+            return p
+    raise RuntimeError("локальный скрипт ролика не запустился (review_server.py)")
+
+
 # ---------------------------------------------------------------- library
 def lib_dir(c):
     return os.path.join(c["dir"], "library")
@@ -263,6 +296,14 @@ def handle_post(A, h, p, body):
         os.makedirs(os.path.dirname(style_path(c)), exist_ok=True)
         A.write_text(style_path(c), body.get("text") or "")
         h._json({"ok": True}); return True
+    if p == "/api/studio/project":                          # open the video project's script / review page inside the stage
+        vid = body.get("id", "")
+        vdir = P.video(vid) or (P.project((A.load("plan:" + vid) or {}).get("project", "")) if vid else None)
+        if not vdir or not os.path.isfile(os.path.join(vdir, "review_server.py")):
+            raise ValueError("у видео ещё нет проекта ролика — «🚀 Начать производство»")
+        port = project_port(vdir)
+        page = "script" if body.get("page") == "script" else "review"
+        h._json({"port": port, "url": f"http://localhost:{port}/src/{page}.html", "dir": vdir}); return True
     if p == "/api/lib/publish":
         j = A.start_job("libpublish", body.get("key", ""), f"libpublish:{body.get('el', '')}", {"el": body.get("el"), "as": body.get("as") or "new"})
         h._json({"job": j.info()}); return True

@@ -1,5 +1,5 @@
 // «Штурм идей» — the planner of one video. Brainstorm (flow storm): Идеи → Биты → Название → Образы → Превью → Структура → В работу → Итоги.
-// «Есть идея» (flow idea): Идея → Вопросы и биты → Смыслы и название → Препродакшен → Обложка → В работу → Итоги; its own tabs live in idea.js.
+// Видео Claude Studio (flow idea): Идея → Вопросы → Название → Препродакшен → Сцены → Сценарий → Голос → Монтаж → Ревью → Упаковка (idea.js, studio.js).
 'use strict';
 
 const HINTS = {
@@ -26,8 +26,8 @@ const HINTS = {
   structS: `<p>Разложи оставленные биты по схеме: перетащи бит в блок или выбери его в списке. Начни с хука и сразу подбери ему пару в коде: они должны перекликаться словом или цифрой. Потом поставь главный поворот. Смена мысли — каждые 5–10 секунд. Схемы — из нашего стайл-гайда.</p>`,
   structL: `<p>Три акта нужны не всегда: видео до 20 минут можно строить как <b>инструкцию</b> — биты шаг за шагом от названия к выводу. Но открывающий образ нужен всегда: он удерживает зрителя. А кульминация и завершающий образ заставляют захотеть следующее видео.</p>
 <p>Порядок работы: открывающий образ → сразу парный ему завершающий → кульминация → остальное. У слота отметь, что в нём: сетап (вопрос) или панчлайн (ответ).</p>`,
-  titleIdea: `<p><b>Смыслы</b> — единицы, которые раскрывают суть ролика. Claude выделит их из идеи, ответов и битов. Принцип пещерного человека: самые простые слова, понятные первокласснику. Клик по смыслу: <b>●</b> «без этого никак» → <b>✕</b> вычеркнуть → обычный. Смыслы «без этого никак» ведут к названию и подсказывают, что обязано быть в кадре.</p>
-<p><b>Название</b> — через четыре угла атаки, усиливай сильными словами (💪). Отметь ★ одного–трёх финалистов: на следующем шаге им нужны обложки.</p>`,
+  titleIdea: `<p><b>Название</b> — через четыре угла атаки (число или сумма, сильный образ или эмоция, время или срочность, отрицание или противоречие), по 3 на угол; Claude берёт их из идеи, контекста и твоих ответов. Усиливай сильными словами (💪).</p>
+<p>Отметь ★ одного–трёх <b>финалистов</b>: под них — препродакшен, а в конце упаковка (обложка, описания).</p>`,
   prod: `<p>Перед запуском проверь: биты развёрнуты в пары «вопрос → ответ», новые идеи с превью добавлены в биты, выбрана связка «название + превью», есть открывающий и завершающий образ.</p>
 <p><b>🚀 Создать проект</b> заведёт папку проекта (как new.bat) и положит в неё весь штурм — <code>refs/штурм.md</code> и эскизы. Потом напиши Claude фразу из зелёной плашки: сценарий будет строиться по этому штурму.</p>`,
   results: `<p><b>Работу над ошибками</b> делай до публикации или сразу после, пока цифр ещё нет: без неё легко застрять и повторять одни и те же промахи. На вопрос «офигенно получилось?» ответь до цифр — потом сравним с реальностью.</p>
@@ -61,11 +61,11 @@ function progress(d) {
   const els = (d.elements || []).filter(e => e.status !== 'drop'), ready = els.filter(e => e.status === 'ok').length;
   return {
     idea: { t: (d.refs || []).length ? `реф. ${(d.refs || []).length}` : '', ok: !!(d.idea || '').trim() },
-    qa: { t: qa.length ? `${answered}/${qa.length} · биты ${kept}` : '', ok: answered >= Math.min(10, qa.length || 10) && kept >= M.keep[0] },
+    qa: isIdea(d) ? { t: qa.length ? `${answered}/${qa.length}` : '', ok: qa.length > 0 && answered === qa.length } : { t: qa.length ? `${answered}/${qa.length} · биты ${kept}` : '', ok: answered >= Math.min(10, qa.length || 10) && kept >= M.keep[0] },
     pre: { t: els.length ? `${ready}/${els.length}` : '', ok: els.length > 0 && ready === els.length },
     ideas: { t: `${ideas.length} · ★${ideas.filter(i => i.star).length}`, ok: !!d.chosen },
     beats: { t: `${kept}/${beats.length}`, ok: kept >= M.keep[0] },
-    title: { t: `${titles.length} · ★${titles.filter(t => t.star).length}`, ok: titles.filter(t => t.star).length >= 3 },
+    title: { t: `${titles.length} · ★${titles.filter(t => t.star).length}`, ok: titles.filter(t => t.star).length >= (isIdea(d) ? 1 : 3) },
     images: { t: need ? `${Math.min(filled, need)}/${need}` : '', ok: need > 0 && filled >= need },
     thumbs: { t: `${(d.thumbs || []).length}${d.final && d.final.thumb ? ' · 🏆' : ''}`, ok: !!(d.final && d.final.thumb) },
     structure: { t: slots ? String(slots) : '', ok: slots >= 3 },
@@ -121,7 +121,8 @@ const Plan = {
   extra: {},                                          // meaning id -> number of image cells the user opened with «+ образ»
   view(d, tab, sub) {
     const key = 'plan:' + d.id, M = REF.modes[d.mode] || REF.modes.short, tabs = tabsOf(d);
-    if (!tabs.some(t => t.key === tab)) tab = tabs[0].key;
+    if (!tabs.some(t => t.key === tab)) tab = tabs.some(t => t.key === d.stage) ? d.stage : tabs[0].key;
+    if (isIdea(d) && d.stage !== tab) setTimeout(() => Store.set(key, ['stage'], tab), 0);     // the last opened stage (the project screen shows it)
     return h('div.plan', this.head(d, key, M), this.tabbar(d, tab, M), h('div.tabbody', this[tab](d, key, M, sub)));
   },
 
@@ -130,20 +131,20 @@ const Plan = {
     return h('div.phead',
       h('span.mode', { class: d.mode }, M.icon + ' ' + M.label),
       h('input.name', { key: key + '|name', value: d.name, placeholder: 'Рабочее название', oninput: e => Store.set(key, ['name'], e.target.value) }),
-      sel(REF.genres.map(g => ({ value: g.key, label: g.label })), d.genre || 'news', v => {
+      !isIdea(d) && sel(REF.genres.map(g => ({ value: g.key, label: g.label })), d.genre || 'news', v => {
         Store.set(key, ['genre'], v);
         if (d.mode !== 'long') Store.set(key, ['structure', 'scheme'], v === 'story' ? 'S' : v === 'history' ? 'A' : 'V');
         App.render();
       }, { class: 'box', title: 'Жанр: от него зависят биты, хук, структура и все кнопки ✨' }),
-      sel([{ value: 'draft', label: '💡 штурм' }, { value: 'prod', label: '🛠 в работе' }, { value: 'out', label: '✅ вышло' }, { value: 'archived', label: '📦 архив' }],
-        d.status, v => Store.set(key, ['status'], v, true), { class: 'box', title: 'Статус штурма' }),
+      sel([{ value: 'draft', label: '💡 черновик' }, { value: 'prod', label: '🛠 в работе' }, { value: 'out', label: '✅ вышло' }, { value: 'archived', label: '📦 архив' }],
+        d.status, v => Store.set(key, ['status'], v, true), { class: 'box', title: 'Статус видео' }),
       h('label.row', { title: 'Claude ищет свежие новости и проверяет факты в интернете (дольше: 1–3 минуты)' },
         h('input', { type: 'checkbox', checked: !!d.web, onchange: e => Store.set(key, ['web'], e.target.checked, true) }), '🌐 Claude ищет в интернете'),
       h('button.icon', { title: `Сделать ${to === 'long' ? 'длинным видео' : 'шортсом'}`, onclick: () => {
         if (!confirm(`Сделать этот штурм ${to === 'long' ? 'длинным видео' : 'шортсом'}? Всё заполненное останется.`)) return;
         Store.set(key, ['mode'], to); Store.set(key, ['structure', 'scheme'], to === 'long' ? 'acts' : 'V', true);
       } }, '⇄'),
-      !isIdea(d) && h('button', { title: 'Перевести на путь «Есть идея»: выбранная идея станет идеей, появятся вопросы Claude и препродакшен (сцены, персонажи, пропсы, звуки). Образы и структура останутся в файле штурма.',
+      false && h('button', { title: 'Перевести на путь «Есть идея»: выбранная идея станет идеей, появятся вопросы Claude и препродакшен (сцены, персонажи, пропсы, звуки). Образы и структура останутся в файле штурма.',
         onclick: () => {
           if (!confirm('Перевести штурм на путь «Есть идея»? Выбранная идея станет идеей ролика, биты, название и обложки останутся. Вкладки «Идеи», «Образы» и «Структура» скроются (данные сохранятся).')) return;
           const c = (d.ideas || []).find(i => i.id === d.chosen);
@@ -152,9 +153,9 @@ const Plan = {
           Store.set(key, ['flow'], 'idea', true);
           go(`#/p/${d.id}/pre`);
         } }, '🎬 → препродакшен'),
-      h('button', { title: 'Очистить штурм и начать заново — тот же ролик, новый концепт', onclick: () => Plan.restart(d) }, '🧹 Начать заново'),
+      h('button', { title: 'Очистить видео и начать заново — тот же ролик, новый концепт', onclick: () => Plan.restart(d) }, '🧹 Начать заново'),
       (d.backups || []).length > 0 && h('button', { title: 'Вернуть штурм, каким он был до очистки', onclick: () => Plan.versions(d) }, '↶ Прошлые версии'),
-      h('button.icon.del', { title: 'Удалить штурм (уйдёт в _ideas/trash)', onclick: () => Plan.remove(d) }, '🗑'));
+      h('button.icon.del', { title: 'Убрать видео в архив (папка уйдёт в _archive/videos, ничего не удаляется)', onclick: () => Plan.remove(d) }, '🗑'));
   },
 
   tabbar(d, tab, M) {
@@ -228,7 +229,7 @@ const Plan = {
   },
 
   async remove(d) {
-    if (!confirm(`Удалить штурм «${d.name}»? Файл уйдёт в _ideas/trash, оттуда его можно вернуть вручную.`)) return;
+    if (!confirm(`Убрать видео «${d.name}» в архив? Папка целиком уйдёт в _archive/videos — оттуда её можно вернуть вручную.`)) return;
     await Store.flushAll();
     try {
       await api('POST', '/api/delete', { key: 'plan:' + d.id }); delete Store.docs['plan:' + d.id]; await App.refreshState();
@@ -363,16 +364,16 @@ const Plan = {
       ideaBanner(d),
       !idea && h('section.card', h('div.card-head', h('h3', 'Шаг 1 · Описываем идею'), h('span.sp'), Claude.btn({ label: 'Черновик ответов', action: 'q7', key, title: 'Claude заполнит только пустые ответы' })),
         h('div.q7', REF.q7.map(q => h('div.q', { class: q.wide ? 'wide' : '' }, h('label', q.label), h('small.dim', q.hint), area(key, ['q7', q.key], { ph: '…' }))))),
-      h('section.card', h('div.card-head', h('h3', `Шаг ${n0 + 1} · Выделяем смыслы`), h('span.dim', 'клик: ● без этого никак → ✕ вычеркнуть → обычный'), h('span.sp'),
+      !idea && h('section.card', h('div.card-head', h('h3', `Шаг ${n0 + 1} · Выделяем смыслы`), h('span.dim', 'клик: ● без этого никак → ✕ вычеркнуть → обычный'), h('span.sp'),
           Claude.btn({ label: 'Выделить смыслы', action: 'meanings', key })),
         (d.meanings || []).length ? h('div.chips', d.meanings.map(m => Plan.chip(key, m))) : h('p.dim', 'Пока пусто: пиши самыми простыми словами, через запятую.'),
         addLine('+ смыслы через запятую — Enter', t => { t.split(',').map(s => s.trim()).filter(Boolean).forEach(s => Store.add(key, ['meanings'], { id: uid('m'), text: s, mark: '', by: 'me' }, false)); App.render(); }, key + '|addm')),
-      h('section.card', h('div.card-head', h('h3', `Шаг ${n0 + 2} · Выбираем «угол атаки»`), h('span.dim', `название до ${M.titleMax} знаков`), h('span.sp'),
+      h('section.card', h('div.card-head', h('h3', idea ? 'Шаг 1 · Названия по углам атаки' : `Шаг ${n0 + 2} · Выбираем «угол атаки»`), h('span.dim', `название до ${M.titleMax} знаков`), h('span.sp'),
           Claude.btn({ label: 'По 3 на каждый угол', action: 'titles', key, params: { k: 3 } })),
         Plan.wordsBar(),
         h('div.circle', REF.angles.map(a => Plan.sector(d, key, M, a)),
           h('div.center', h('b', 'ИДЕЯ'), h('span', ch ? ch.text : idea ? 'запиши идею на вкладке «Идея»' : 'выбери идею на вкладке «Идеи»')))),
-      h('section.card', h('h3', `Шаг ${n0 + 3} · ${idea ? 'Финалисты (1–3)' : 'Три финалиста'}`), Plan.finalists(d)),
+      h('section.card', h('h3', idea ? 'Шаг 2 · Финалисты (1–3)' : `Шаг ${n0 + 3} · Три финалиста`), Plan.finalists(d)),
     ];
   },
 
@@ -712,15 +713,15 @@ const Plan = {
     const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.classList.add('curve');
     const add = (tag, a, text) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); if (text) e.textContent = text; svg.append(e); return e; };
-    add('line', { x1: px, y1: H - py + 14, x2: W - px, y2: H - py + 14, stroke: '#2e2a6e' });
-    add('text', { x: W / 2, y: H - 4, 'text-anchor': 'middle', fill: '#9a93d6', 'font-size': 12 }, 'время →');
+    add('line', { x1: px, y1: H - py + 14, x2: W - px, y2: H - py + 14, stroke: '#3a3a3e' });
+    add('text', { x: W / 2, y: H - 4, 'text-anchor': 'middle', fill: '#9a9aa2', 'font-size': 12 }, 'время →');
     add('path', { d: path, fill: 'none', stroke: '#ff5470', 'stroke-width': 4, 'stroke-linecap': 'round' });
     pts.forEach((p, i) => {
       const on = (slots[p.r.key] || []).length > 0;
-      add('circle', { cx: p.x, cy: p.y, r: 7, fill: on ? '#ff5470' : '#0b0a1f', stroke: '#ff5470', 'stroke-width': 3 });
+      add('circle', { cx: p.x, cy: p.y, r: 7, fill: on ? '#ff5470' : '#1d1d1f', stroke: '#ff5470', 'stroke-width': 3 });
       const edge = i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle';
       add('text', { x: p.x + (edge === 'start' ? -12 : edge === 'end' ? 12 : 0), y: i % 2 ? p.y + 24 : p.y - 14, 'text-anchor': edge,
-        fill: on ? '#ece9ff' : '#9a93d6', 'font-size': 12 }, p.r.label.replace(/ \(.*\)$/, ''));
+        fill: on ? '#e6e6e6' : '#9a9aa2', 'font-size': 12 }, p.r.label.replace(/ \(.*\)$/, ''));
     });
     return svg;
   },

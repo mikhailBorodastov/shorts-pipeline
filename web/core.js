@@ -1,6 +1,6 @@
-// «Штурм идей» — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
+// Claude Studio — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
 'use strict';
-const API = 4;                      // must match ideas_api.API_VERSION
+const API = 5;                      // must match ideas_api.API_VERSION
 const REF = {};                     // web/ref.json, loaded at boot
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -164,13 +164,13 @@ const Sync = {
       if (!this.ok) { this.ok = true; App.banner(''); }
       if (this.web == null) this.web = r.web;
       else if (r.web !== this.web && !Store.busy()) { await Store.flushAll(); location.reload(); return; }
-      if (r.api !== API) App.banner('⚠ Скрипт «Штурма» старой версии. Закрой его окно и запусти «Штурм идей.bat» заново.');
+      if (r.api !== API) App.banner('⚠ Локальный скрипт Studio старой версии. Закрой его окно и запусти «Claude Studio.bat» заново.');
       await Claude.update(r.jobs);
       const changed = await Store.sync(r.docs);
       const plans = await App.plansChanged(r.docs);
       if (changed || plans) App.render();
     } catch (e) {
-      if (this.ok) { this.ok = false; App.banner('⚠ Нет связи со скриптом «Штурма». Запусти «Штурм идей.bat» — правки, сделанные сейчас, не сохранятся.'); }
+      if (this.ok) { this.ok = false; App.banner('⚠ Нет связи с локальным скриптом Studio. Запусти «Claude Studio.bat» — правки, сделанные сейчас, не сохранятся.'); }
     }
     this.dirty();
   },

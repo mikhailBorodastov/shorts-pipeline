@@ -1,4 +1,4 @@
-// «Штурм идей» — app shell: boot, routing, rendering with focus kept across re-renders.
+// Claude Studio — app shell: boot, routing, rendering with focus kept across re-renders.
 'use strict';
 
 const App = {
@@ -8,9 +8,9 @@ const App = {
     try {
       Object.assign(REF, await (await fetch('/ref.json')).json());
       await this.refreshState();
-    } catch (e) { this.banner('⚠ Не удалось загрузить «Штурм»: ' + e.message + '. Запусти «Штурм идей.bat».'); return; }
+    } catch (e) { this.banner('⚠ Не удалось загрузить Claude Studio: ' + e.message + '. Запусти «Claude Studio.bat».'); return; }
     Claude.on = !!this.info.claude;
-    if (this.info.api !== API) this.banner('⚠ Скрипт «Штурма» старой версии. Закрой его окно и запусти «Штурм идей.bat» заново.');
+    if (this.info.api !== API) this.banner('⚠ Локальный скрипт Studio старой версии. Закрой его окно и запусти «Claude Studio.bat» заново.');
     window.addEventListener('hashchange', () => this.navigate());
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.render(); });   // back to the tab: clear what you now see
     window.addEventListener('beforeunload', e => { if (Store.busy()) { Store.flushAll(); e.preventDefault(); e.returnValue = ''; } });
@@ -41,7 +41,7 @@ const App = {
   async navigate() {
     this.route = route();
     const r = this.route;
-    const need = { home: ['bank', 'stats'], bank: ['bank'], brand: ['brand'], stats: ['stats'], p: ['plan:' + r.id, 'bank', 'stats', 'brand'] }[r.page] || [];
+    const need = { p: ['plan:' + r.id] }[r.page] || [];
     try { await Promise.all(need.map(k => Store.load(k))); }
     catch (e) {
       if (r.page === 'p' && !Store.get('plan:' + r.id)) { UI.toast('Такого штурма нет — возможно, его удалили', 'err'); go('#/'); return; }
@@ -86,13 +86,12 @@ const App = {
     const r = this.route, wait = h('div.empty', 'Загружаю…');
     if (r.page === 'p') {
       const d = Store.get('plan:' + r.id);
-      document.title = d ? `${d.name} — Штурм идей` : 'Штурм идей';
+      document.title = d ? `${d.name} — Claude Studio` : 'Claude Studio';
       return d ? Plan.view(d, r.tab || defTab(d.flow), r.sub) : wait;
     }
-    document.title = 'Штурм идей';
-    if (r.page === 'bank') return Store.get('bank') ? Pages.bank() : wait;
-    if (r.page === 'brand') return Store.get('brand') ? Pages.brand() : wait;
-    if (r.page === 'stats') return Store.get('stats') ? Pages.stats() : wait;
+    document.title = 'Claude Studio';
+    if (r.page === 'lib') return Pages.lib();
+    if (r.page === 'style') return Pages.style();
     if (r.page === 'help') return Pages.help();
     return Pages.home();
   },

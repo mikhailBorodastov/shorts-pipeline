@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 4
+API_VERSION = 5
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server

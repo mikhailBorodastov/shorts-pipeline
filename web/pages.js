@@ -1,248 +1,154 @@
-// «Штурм идей» — pages outside one planner: sidebar, штурмы, банк идей, лист проекта, просмотры, справочник.
+// Claude Studio — экраны вне одного видео: боковая панель (канал, видео), проект-канал (видео + библиотека), библиотека, ⚙ стиль, справочник.
 'use strict';
 
-const BANK_STATUS = [{ value: 'new', label: '💡 новая' }, { value: 'plan', label: '🧠 в штурме' }, { value: 'later', label: '⏳ отложена' },
-  { value: 'done', label: '✅ снята' }, { value: 'dropped', label: '🚫 не подошла' }];
-const SPEED = [{ value: '1', label: '⚡ за день' }, { value: '2', label: '🕐 неделя' }, { value: '3', label: '🗓 месяц+' }];
-const MODE_OPT = [{ value: 'any', label: 'любой' }, { value: 'short', label: '⚡ шортс' }, { value: 'long', label: '🎬 длинное' }];
-
-function stars(value, onSet, hot) {
-  return h('span.stars', { class: hot && value >= 3 ? 'hot' : '', title: 'Крутость: насколько горишь идеей (3 — «в разы круче»)' },
-    [1, 2, 3].map(n => h('span', { class: n <= value ? 'on' : '', onclick: () => onSet(n === value ? n - 1 : n) }, '★')));
-}
-function dots(p, flow) {
-  const half = (a, b) => (a ? true : b ? 'half' : false);
-  const s = flow === 'idea'
-    ? [p.chosen, half(p.qa && p.answered >= Math.min(10, p.qa) && p.kept > 0, p.qa > 0), p.finalists > 0, half(p.elements && p.ready === p.elements, p.elements > 0), half(p.win, p.thumbs > 0), p.project, p.out]
-    : [p.chosen, p.kept > 0, half(p.finalists >= 3, p.finalists > 0), p.images > 0, half(p.win, p.thumbs > 0), p.slots > 0, p.project, p.out];
-  const title = flow === 'idea' ? 'Идея · Вопросы и биты · Название · Препродакшен · Обложка · В работу · Итоги' : 'Идеи · Биты · Название · Образы · Превью · Структура · В работу · Итоги';
-  return h('span.dots', { title }, s.map(v => h('i', { class: v === true ? 'ok' : v === 'half' ? 'half' : '' })));
-}
+const STAGES = [['idea', '💡', 'Идея'], ['qa', '❓', 'Вопросы'], ['title', '🎯', 'Название'], ['pre', '🎬', 'Препродакшен'], ['scenes', '🎥', 'Сцены'],
+  ['script', '📝', 'Сценарий'], ['voice', '🎙', 'Голос'], ['montage', '🎞', 'Монтаж'], ['review', '👀', 'Ревью'], ['pack', '📦', 'Упаковка']];
+const STAGE_OF = Object.fromEntries(STAGES.map(([k, i, l]) => [k, { icon: i, label: l }]));
+const STATUS_L = { draft: '💡 черновик', prod: '🛠 в работе', out: '✅ вышло', archived: '📦 архив' };
+const LIB = { items: null, q: '', kind: '', cand: null, busy: false };
+const KIND_ICON = { char: '🧑', prop: '📦', sound: '🔊' };
 
 const Pages = {
   side() {
-    const r = App.route;
+    const r = App.route, C = App.info.channel || {}, cs = App.info.channels || [];
     const nav = (href, icon, label, on) => h('a', { href, class: on ? 'on' : '' }, icon, ' ', label);
-    const recent = App.plans.filter(p => p.status !== 'archived').slice(0, 10);
+    const recent = App.plans.filter(p => p.status !== 'archived').slice(0, 12);
     return [
-      h('a.logo', { href: '#/' }, h('span.l1', 'Штурм'), h('span.l2', 'идей')),
-      h('div.newbtns', h('button.new.short', { onclick: () => Pages.newPlan('short'), title: 'Есть идея: вопросы → биты → название → препродакшен → обложка' }, '⚡ Новый шортс'),
-        h('button.new.long', { onclick: () => Pages.newPlan('long'), title: 'Есть идея: вопросы → биты → название → препродакшен → превью' }, '🎬 Новое длинное видео'),
-        h('button.new.storm', { onclick: () => Pages.newPlan('short', { flow: 'storm' }), title: 'Идеи нет: 10 идей → ★3 → ●1 → биты → название → образы → превью → структура' }, '💡 Штурм идей')),
-      h('nav', nav('#/', '🏠', 'Штурмы', r.page === 'home'), nav('#/bank', '💡', 'Банк идей', r.page === 'bank'), nav('#/brand', '📋', 'Лист проекта', r.page === 'brand'),
-        nav('#/stats', '📈', 'Просмотры', r.page === 'stats'), nav('#/help', '📚', 'Справочник', r.page === 'help')),
-      recent.length > 0 && h('div', h('div.sec', 'Недавние'), recent.map(p => h('a.rp', { class: r.page === 'p' && r.id === p.id ? 'on' : '', href: `#/p/${p.id}`, title: p.name },
+      h('a.logo', { href: '#/' }, h('span.l1', 'Claude'), h('span.l2', 'Studio')),
+      cs.length > 0 && h('label.chan', { title: 'Канал (проект): у каждого свой стиль, библиотека и видео' },
+        sel(cs.map(c => ({ value: c.id, label: `${c.icon || '📺'} ${c.name}` })), C.id, v => Pages.useChannel(v), { class: 'box', 'aria-label': 'Канал' })),
+      h('div.newbtns',
+        h('button.new.short', { onclick: () => Pages.newPlan('short'), title: 'Идея → вопросы → название → препродакшен → сцены → сценарий → … → упаковка' }, '⚡ + шортс'),
+        h('button.new.long', { onclick: () => Pages.newPlan('long'), title: 'Длинное видео на 8–15 минут' }, '🎬 + длинное видео')),
+      h('nav', nav('#/', '🏠', 'Проект', r.page === 'home'), nav('#/lib', '📚', 'Библиотека', r.page === 'lib'), nav('#/style', '⚙', 'Стиль канала', r.page === 'style')),
+      recent.length > 0 && h('div', h('div.sec', 'Видео'), recent.map(p => h('a.rp', { class: r.page === 'p' && r.id === p.id ? 'on' : '', href: `#/p/${p.id}/${p.stage || 'idea'}`, title: p.name },
         (REF.modes[p.mode] || {}).icon + ' ' + p.name, dot(Unread.has(p.id))))),
       h('div.foot', h('span#saved', 'всё сохранено'), !App.info.claude && h('span.warn-small', 'Claude Code не найден — кнопки ✨ выключены'),
-        h('span', 'Данные: _ideas')),
+        App.info.legacy ? h('span.warn-small', 'Переезд ещё не сделан: данные в _ideas') : h('span', 'Канал: ' + (C.name || '—')),
+        h('a', { href: '#/help', class: 'dim' }, '📖 справочник')),
     ];
   },
 
-  async newPlan(mode, extra = {}) {
+  async useChannel(id) {
+    try { await api('POST', '/api/studio/use', { channel: id }); LIB.items = null; Pages._style = undefined; await App.refreshState(); go('#/'); App.render(); }
+    catch (e) { UI.toast(e.message, 'err'); }
+  },
+
+  async newPlan(mode) {
     try {
-      const name = extra.flow === 'storm' ? 'Штурм идей' : `Новый ${mode === 'long' ? 'длинный ролик' : 'шортс'}`;
-      const r = await api('POST', '/api/new', { mode, name: extra.bank ? '' : name, ...extra });
+      const r = await api('POST', '/api/new', { mode, name: `Новое ${mode === 'long' ? 'длинное видео' : 'видео'}`, channel: (App.info.channel || {}).id });
       await App.refreshState();
-      if (!extra.bank) App.focusName = true;          // rename right away (see App.render)
-      go(`#/p/${r.id}/${defTab(r.flow)}`);
+      App.focusName = true;                           // rename right away (see App.render)
+      go(`#/p/${r.id}/idea`);
     } catch (e) { UI.toast(e.message, 'err'); }
   },
 
-  // ---------------- штурмы ----------------
+  // ---------------- проект-канал: видео слева, библиотека справа ----------------
   home() {
-    const ps = App.plans, showArch = Local.get('arch') === '1';
-    const group = (st, label) => {
-      const list = ps.filter(p => p.status === st);
-      return list.length > 0 && [h('h2', label, h('span.badge', list.length)), h('div.plancards', list.map(Pages.card))];
-    };
-    const bank = Store.get('bank'), hot = bank ? bank.items.filter(i => ['new', 'later'].includes(i.status)).sort((a, b) => (b.cool || 0) - (a.cool || 0)).slice(0, 5) : [];
-    return h('div.home',
-      h('div.hero', h('h1', 'Штурм идей'),
-        h('p', 'Разработка ролика до сценария по методике «Мастер-планера»: идея → вопросы и биты → смыслы и название → препродакшен (сцены, персонажи, пропсы, звуки) → обложка → в работу → итоги. Кнопки ✨ — это Claude на твоей подписке Claude Code, без API-ключей. Всё сохраняется само в папку _ideas.')),
-      h('div.starts',
-        ...['short', 'long'].map(m => { const M = REF.modes[m]; return h('div.start', { class: m, onclick: () => Pages.newPlan(m) }, h('span.big', `${M.icon} Новый ${m === 'short' ? 'шортс' : 'длинный ролик'}`), h('span.dim', `есть идея · ${M.len} · ${M.about}`)); })),
-      h('div.start.storm', { onclick: () => Pages.newPlan('short', { flow: 'storm' }) }, h('span.big', '💡 Идеи нет — штурм идей'),
-        h('span.dim', 'напиши мысль, про что хочется снять, и Claude накидает 10 идей → ★3 → ●1 → биты → название → образы → превью → структура')),
-      h('div.flow',
-        h('div', h('b', '1. Есть идея (и референс)?'), 'Новый шортс → запиши идею, вставь чужой ролик-референс → Claude задаст 15–20 вопросов → биты и челлендж → смыслы и название.'),
-        h('div', h('b', '2. Препродакшен'), 'Сцены, персонажи, пропсы и звуки: накидываешь референсы, Claude рисует черновики нашим движком и подбирает звуки, ты правишь пинами. Потом обложка и первый кадр.'),
-        h('div', h('b', '3. Готово?'), 'Вкладка «В работу» → 🚀 Создать проект. Потом скажи мне: «Сценарий по штурму в папке …» — всё нарисованное и скачанное уже будет в проекте.')),
-      group('draft', '💡 В штурме'), group('prod', '🛠 В работе'), group('out', '✅ Вышли'),
-      showArch && group('archived', '📦 Архив'),
-      ps.some(p => p.status === 'archived') && h('p', h('a', { href: 'javascript:void 0', onclick: () => { Local.set('arch', showArch ? '0' : '1'); App.render(); } }, showArch ? 'Скрыть архив' : 'Показать архив')),
-      !ps.length && h('div.card.empty', 'Штурмов пока нет. Начни с кнопки выше — или загляни в банк идей.'),
-      hot.length > 0 && [h('h2', '💡 Горячее в банке идей', h('a', { href: '#/bank', style: { fontSize: '13px', fontWeight: 500 } }, 'весь банк →')),
-        h('div.card', hot.map(i => h('div.row', { style: { padding: '4px 0' } }, stars(i.cool || 0, () => {}), h('b.grow', i.title), h('span.dim', (REF.modes[i.mode] || {}).icon || ''),
-          h('button', { onclick: () => Pages.newPlan(i.mode === 'long' ? 'long' : 'short', { bank: i.id }) }, '🚀 В штурм'))))],
-      h('p.philo', '«Как было бы прикольно?» вместо «как правильно?». Резать лишнее будем на редактуре.'));
+    const C = App.info.channel || {}, ps = App.plans, showArch = Local.get('arch') === '1';
+    const group = (st, label) => { const list = ps.filter(p => p.status === st); return list.length > 0 && [h('div.sec', label + ` · ${list.length}`), list.map(Pages.card)]; };
+    if (!LIB.items && !LIB.busy) Pages.loadLib();
+    return h('div.project',
+      h('div.phead', h('h1', `${C.icon || '📺'} ${C.name || 'Claude Studio'}`), h('span.sp'),
+        h('a.btn', { href: '#/style', title: 'Стиль канала: стайл-гайд, по которому пишутся сценарии и рисуется всё' }, '⚙ стиль'),
+        h('button.primary', { onclick: () => Pages.newPlan('short') }, '+ видео')),
+      C.about && h('p.dim', C.about),
+      h('div.cols',
+        h('section.card.videos',
+          h('div.card-head', h('h3', '🎬 Видео'), h('span.dim', `${ps.length}`)),
+          ps.length ? [group('prod', '🛠 В работе'), group('draft', '💡 Черновики'), group('out', '✅ Вышли'), showArch && group('archived', '📦 Архив'),
+            ps.some(p => p.status === 'archived') && h('p', h('a', { href: 'javascript:void 0', onclick: () => { Local.set('arch', showArch ? '0' : '1'); App.render(); } }, showArch ? 'Скрыть архив' : 'Показать архив'))]
+            : h('div.empty', 'Видео пока нет. «+ видео» — идея, вопросы Claude, название, препродакшен…')),
+        h('section.card.libside', Pages.libPanel(true))));
   },
 
   card(p) {
-    const M = REF.modes[p.mode] || REF.modes.short;
-    return h('a.pc', { href: `#/p/${p.id}` },
-      h('div.row', h('span.mode', { class: p.mode }, M.icon + ' ' + M.label), p.flow !== 'idea' && h('span.dim', { style: { fontSize: '12px' } }, '💡 штурм'), h('span.sp'), dots(p.p, p.flow)),
-      h('span.t', p.name, dot(Unread.has(p.id))),
-      p.final ? h('span.f', '🏆 ' + p.final) : p.chosen && h('span.c', '● ' + p.chosen),
-      h('div.row', h('span.dim', { style: { fontSize: '12px' } }, 'обновлён ' + fmtDate(p.updated)), p.project && h('span.dim', { style: { fontSize: '12px' } }, '· проект «' + p.project + '»')));
+    const M = REF.modes[p.mode] || REF.modes.short, st = STAGE_OF[p.stage] || STAGE_OF.idea;
+    return h('a.vrow', { href: `#/p/${p.id}/${p.stage || 'idea'}` },
+      h('span.mode', { class: p.mode }, M.icon), h('span.t.grow', p.name, dot(Unread.has(p.id))),
+      h('span.stage', { title: 'Этап, на котором остановились' }, st.icon + ' ' + st.label),
+      h('span.dim.small', STATUS_L[p.status] || p.status), h('span.dim.small', fmtDate(p.updated)));
   },
 
-  // ---------------- банк идей ----------------
-  bank() {
-    const key = 'bank', b = Store.get(key);
-    const fm = Local.get('bankMode') || 'all', fs = Local.get('bankStatus') || 'live', srt = Local.get('bankSort') || 'cool';
-    let items = b.items.filter(i => (fm === 'all' || i.mode === fm || i.mode === 'any') && (fs === 'all' || (fs === 'live' ? ['new', 'later'].includes(i.status) : i.status === fs)));
-    const cmp = { cool: (x, y) => (y.cool || 0) - (x.cool || 0) || (y.created || 0) - (x.created || 0), new: (x, y) => (y.created || 0) - (x.created || 0),
-      fresh: (x, y) => String(y.fresh || '').localeCompare(String(x.fresh || '')), speed: (x, y) => (x.speed || 2) - (y.speed || 2) };
-    items = items.slice().sort(cmp[srt] || cmp.cool);
-    const focus = h('input.box', { key: 'bank|focus', placeholder: 'тема для Claude (можно пусто)', value: Local.get('bankFocus') || '', oninput: e => Local.set('bankFocus', e.target.value), style: { width: '220px' } });
+  // ---------------- 📚 библиотека канала ----------------
+  async loadLib() {
+    LIB.busy = true;
+    try { const j = await api('GET', `/api/lib?q=${encodeURIComponent(LIB.q)}&kind=${LIB.kind}`); LIB.items = j.items; LIB.kinds = j.kinds; LIB.channel = j.channel; }
+    catch (e) { LIB.items = []; LIB.err = e.message; }
+    LIB.busy = false; App.render();
+  },
+  libPanel(compact) {
+    const items = LIB.items || [], K = LIB.kinds || {};
+    const q = h('input.box.grow', { key: 'libq', placeholder: '🔎 ёжик, стол, гул…', value: LIB.q, oninput: e => { LIB.q = e.target.value; clearTimeout(LIB.t); LIB.t = setTimeout(() => Pages.loadLib(), 250); } });
+    return [
+      h('div.card-head', h('h3', '📚 Библиотека'), h('span.dim', compact ? 'утверждённое ✓ из видео' : 'персонажи, пропсы, 3D-модели и звуки канала'), h('span.sp'), compact && h('a', { href: '#/lib' }, 'вся →')),
+      h('div.row', q, h('div.seg', [['', 'всё'], ...Object.entries(K)].map(([k, l]) => h('button', { class: LIB.kind === k ? 'sel' : '', onclick: () => { LIB.kind = k; Pages.loadLib(); } }, l)))),
+      LIB.items === null ? h('p.dim', 'Загружаю…') : items.length ? h('div.libgrid', { class: compact ? 'compact' : '' }, items.map(Pages.libCard))
+        : h('p.dim', LIB.q || LIB.kind ? 'Ничего не нашлось.' : 'Пока пусто. Утверждённые ✓ персонажи, пропсы и звуки из препродакшена публикуются сюда: «📚 в библиотеку» на странице библиотеки.'),
+    ];
+  },
+  libCard(it) {
+    const src = it.preview ? `/api/lib/file/${LIB.channel}/${it.preview}` : '';
+    return h('div.libcard', { title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : '') },
+      src ? h('img', { src, alt: '', onclick: () => UI.lightbox(src) }) : h('div.noimg', it.kind === 'sounds' ? '🔊' : '📦'),
+      h('b', it.name), h('span.dim.small', `lib:${it.id}@${it.latest}`));
+  },
+  lib() {
+    if (!LIB.items && !LIB.busy) Pages.loadLib();
+    if (!LIB.cand && !LIB.cbusy) { LIB.cbusy = true; api('GET', '/api/lib/candidates').then(j => { LIB.cand = j.items; LIB.cbusy = false; App.render(); }).catch(() => { LIB.cand = []; LIB.cbusy = false; }); }
+    const cand = (LIB.cand || []).filter(x => x.ready);
     return h('div',
-      h('div.phead', h('h1', '💡 Банк идей'), h('span.counter', `${b.items.length} всего · ${b.items.filter(i => ['new', 'later'].includes(i.status)).length} живых`)),
-      hint('bank', `<p>Сюда попадает всё, что не прошло отбор, и всё, что пришло в голову просто так. Плохих идей нет — есть неподходящие сейчас. Прежде чем выкинуть, спроси себя: точно не подходит? как её изменить, чтобы подошла? может, дело не в идее, а в формате канала или в том, что мы сами себе врём, о чём ролик?</p>
-<p><b>Крутость</b> ★ — насколько горишь идеей: три звезды (красные) значат «в разы круче». <b>Скорость</b> — сколько готовить: за день, неделю или месяц сбора материала. <b>Свежесть</b> — дата инфоповода: новости стареют быстро.</p>`),
-      h('div.toolbar',
-        sel([{ value: 'all', label: 'все форматы' }, { value: 'short', label: '⚡ шортсы' }, { value: 'long', label: '🎬 длинные' }], fm, v => { Local.set('bankMode', v); App.render(); }, { class: 'box' }),
-        sel([{ value: 'live', label: 'живые' }, { value: 'all', label: 'все статусы' }, ...BANK_STATUS], fs, v => { Local.set('bankStatus', v); App.render(); }, { class: 'box' }),
-        sel([{ value: 'cool', label: 'сначала крутые' }, { value: 'new', label: 'сначала новые' }, { value: 'fresh', label: 'по свежести' }, { value: 'speed', label: 'сначала быстрые' }], srt, v => { Local.set('bankSort', v); App.render(); }, { class: 'box' }),
-        h('span.sp'),
-        h('label.row', { title: 'Claude ищет свежие новости (1–3 минуты)' }, h('input', { type: 'checkbox', checked: !!b.web, onchange: e => Store.set(key, ['web'], e.target.checked, true) }), '🌐 свежие новости'),
-        focus,
-        Claude.btn({ label: '10 идей в банк', action: 'bank', key, params: () => ({ n: 10, focus: focus.value }) })),
-      Pages.autoNews(b),
-      h('div.card', items.length ? h('table.grid.bank',
-        h('tr', h('th', '★'), h('th', 'Идея и описание'), h('th', 'Формат'), h('th', 'Скорость'), h('th', 'Свежесть'), h('th', 'Источник'), h('th', 'Статус'), h('th')),
-        items.map(i => h('tr',
-          h('td', stars(i.cool || 0, n => Store.set(key, ['items', i.id, 'cool'], n, true), true)),
-          h('td.t', area(key, ['items', i.id, 'title'], { ph: 'идея' }), area(key, ['items', i.id, 'desc'], { ph: 'описание, крючок…', cls: 'dim' }),
-            i.by === 'claude' && h('small.dim', i.auto ? '📰 из новостей · ' + fmtDate(i.created) : '🤖 Claude')),
-          h('td', sel(MODE_OPT, i.mode || 'any', v => Store.set(key, ['items', i.id, 'mode'], v, true), { class: 'box' })),
-          h('td', sel(SPEED, String(i.speed || 2), v => Store.set(key, ['items', i.id, 'speed'], Number(v), true), { class: 'box' })),
-          h('td', line(key, ['items', i.id, 'fresh'], { ph: 'дата / вечно', cls: 'box' })),
-          h('td', line(key, ['items', i.id, 'src'], { ph: 'ссылка', cls: 'box' }), /^https?:/.test(i.src || '') && h('a', { href: i.src, target: '_blank', rel: 'noopener' }, '🔗')),
-          h('td', sel(BANK_STATUS, i.status || 'new', v => Store.set(key, ['items', i.id, 'status'], v, true), { class: 'box' }), i.plan && h('div', h('a', { href: `#/p/${i.plan}` }, 'к штурму'))),
-          h('td', h('button', { title: 'Новый штурм по этой идее', onclick: () => Pages.newPlan(i.mode === 'long' ? 'long' : 'short', { bank: i.id }) }, '🚀'),
-            h('button.icon.del', { title: 'Удалить', onclick: () => confirm('Удалить идею из банка?') && Store.del(key, ['items'], i.id) }, '×')))))
-        : h('div.empty', 'Тут пусто. Добавь идею ниже или попроси Claude.'),
-        addLine('+ идея — Enter', title => Store.add(key, ['items'], { id: uid('k'), title, desc: '', mode: fm === 'all' ? 'any' : fm, cool: 1, speed: 2, fresh: '', src: '', status: 'new', by: 'me', created: Date.now() }), 'bank|add')));
+      h('div.phead', h('h1', '📚 Библиотека канала'), h('span.dim', (App.info.channel || {}).name || '')),
+      h('section.card', Pages.libPanel(false)),
+      h('section.card',
+        h('div.card-head', h('h3', '✓ Утверждено в видео'), h('span.dim', 'опубликуй в библиотеку, чтобы брать в другие ролики (новой версией, если уже есть)')),
+        !LIB.cand ? h('p.dim', 'Смотрю видео…') : !cand.length ? h('p.dim', 'Утверждённых ✓ персонажей, пропсов и звуков с черновиком пока нет.')
+          : h('div.cands', cand.map(x => h('div.row.cand',
+            h('span', KIND_ICON[x.kind] || '•'), h('b', x.name), h('span.dim.small', 'из «' + x.videoName + '»'), h('span.sp'),
+            x.lib && h('span.dim.small', `уже: lib:${x.lib.id}@${x.lib.v}`),
+            h('button', { onclick: () => Pages.publish(x, x.lib ? x.lib.id : 'new') }, x.lib ? '⬆ новая версия' : '📚 в библиотеку'))))));
+  },
+  async publish(x, as) {
+    try {
+      const r = await api('POST', '/api/lib/publish', { key: 'plan:' + x.video, el: x.el, as });
+      UI.toast('Публикую «' + x.name + '»…');
+      const poll = async () => {
+        const j = await api('GET', '/api/job?id=' + r.job.id);
+        if (j.status === 'running') return setTimeout(poll, 800);
+        if (j.status === 'done') { UI.toast('📚 ' + j.summary); LIB.items = null; LIB.cand = null; App.render(); } else UI.toast(j.error || j.status, 'err');
+      };
+      poll();
+    } catch (e) { UI.toast(e.message, 'err'); }
   },
 
-  // news sites -> fresh ideas on a timer (ideas_api.auto_tick, while the script window is open)
-  autoNews(b) {
-    const key = 'bank', A = b.auto || {}, srcs = b.sources || [];
-    const opt = list => list.map(n => ({ value: String(n), label: String(n) }));
-    return h('section.card',
-      h('div.card-head', h('h3', '📰 Автообновление из новостей'),
-        h('label.row', h('input', { type: 'checkbox', checked: !!A.on, onchange: e => Store.set(key, ['auto', 'on'], e.target.checked, true) }), 'включено'),
-        h('span.row', 'каждые', sel(opt([3, 6, 12, 24, 48]), String(A.hours || 12), v => Store.set(key, ['auto', 'hours'], Number(v), true), { class: 'box' }), 'ч'),
-        h('span.row', 'по', sel(opt([3, 5, 10]), String(A.n || 5), v => Store.set(key, ['auto', 'n'], Number(v), true), { class: 'box' }), 'идей'),
-        h('span.sp'),
-        Claude.btn({ label: 'Обновить сейчас', action: 'bank', key, scope: 'auto', params: () => ({ auto: true, n: A.n || 5 }) })),
-      h('p.dim', A.last ? `Последнее обновление: ${new Date(A.last).toLocaleString('ru-RU')}${A.summary ? ' — ' + A.summary : ''}. ` : 'Ещё не запускалось. ',
-        'Claude открывает эти сайты, находит самые обсуждаемые новости последних дней и добавляет в банк подходящие каналу идеи с пометкой 📰. ',
-        'Работает, пока открыто окно «Штурм идей.bat»; если компьютер был выключен, обновится через минуту после запуска. Один прогон — 1–3 минуты.'),
-      srcs.map(s => h('div.row', { style: { margin: '3px 0' } },
-        line(key, ['sources', s.id, 'url'], { cls: 'box', ph: 'https://…' }),
-        line(key, ['sources', s.id, 'note'], { cls: 'box', ph: 'что там брать (необязательно): «только игры», «раздел Tech»…' }),
-        /^https?:/.test(s.url || '') && h('a', { href: s.url, target: '_blank', rel: 'noopener' }, '🔗'),
-        h('button.icon.del', { title: 'Убрать сайт', onclick: () => Store.del(key, ['sources'], s.id) }, '×'))),
-      !srcs.length && h('p.dim', 'Сайтов пока нет — тогда Claude ищет новости по тематике канала сам.'),
-      addLine('+ сайт с новостями: ссылка — Enter', url => Store.add(key, ['sources'], { id: uid('s'), url, note: '' }), 'bank|addsrc'));
-  },
-
-  // ---------------- лист проекта ----------------
-  brand() {
-    const key = 'brand', b = Store.get(key);
-    const f = (path, label, ph) => h('div.q', h('label', label), area(key, path, { ph }));
-    return h('div',
-      h('div.phead', h('h1', '📋 Лист проекта')),
-      hint('brand', `<p>Всё про канал: что несём зрителю, чем отличаемся, главная фишка и чего не делаем никогда. Если можешь коротко и чётко объяснить, о чём канал, зритель тоже это считает — и запомнит. Иначе выйдет ещё один безликий канал из тех, что видел у конкурентов.</p>
-<p>Проговори это вслух: другу, родственнику или себе на запись — и послушай со стороны. Claude опирается на этот лист в каждой кнопке ✨. План по часам помогает выходить регулярно; в «Итогах» каждого ролика его сравнишь с тем, сколько вышло на самом деле.</p>`),
-      h('section.card', h('div.q', h('label', 'Название проекта'), line(key, ['name'], { ph: 'канал', cls: 'box' })),
-        h('div', { style: { marginTop: '10px' } }, h('label', h('b', 'Участники (имя — роль)')),
-          (b.team || []).map(t => h('div.row', { style: { margin: '4px 0' } }, line(key, ['team', t.id, 'name'], { ph: 'имя', cls: 'box' }), '—', line(key, ['team', t.id, 'role'], { ph: 'роль', cls: 'box' }),
-            h('button.icon.del', { onclick: () => Store.del(key, ['team'], t.id) }, '×'))),
-          addLine('+ участник: имя — роль — Enter', t => { const [n, ...r] = t.split(/[—-]/); Store.add(key, ['team'], { id: uid('p'), name: n.trim(), role: r.join('—').trim() }); }, 'brand|team'))),
-      h('section.card', h('div.q7', f(['bring'], 'Что мы несём зрителям?', 'польза, эмоция, картина мира…'), f(['differ'], 'Чем отличаемся от конкурентов?', '…'),
-        f(['killer'], 'Наша убийственная фишка', '…'), f(['never'], 'Чего не делаем ни в коем случае?', '…'), f(['ritual'], 'Наш ритуал перед стартом', 'как команда заряжается перед роликом'))),
-      h('section.card', h('h3', 'План по часам на один ролик'), h('p.dim', 'Пусто — берётся значение по умолчанию (серым).'),
-        h('table.grid', h('tr', h('th', 'Этап'), h('th', '⚡ Шортс, ч'), h('th', '🎬 Длинное, ч')),
-          REF.stages.map(s => h('tr', h('td', s.label), h('td.num', line(key, ['hours', s.key, 'short'], { type: 'number', num: true, ph: String(s.short), cls: 'box' })),
-            h('td.num', line(key, ['hours', s.key, 'long'], { type: 'number', num: true, ph: String(s.long), cls: 'box' })))))),
-      h('p.philo', 'Мы ручаемся по мере сил регулярно делать лучшие видео для нашего зрителя. ', (b.team || []).map(t => t.name).filter(Boolean).join(', ')));
-  },
-
-  // ---------------- просмотры ----------------
-  stats() {
-    const key = 'stats', s = Store.get(key);
-    const table = mode => {
-      const rows = s.items.filter(r => (r.mode || 'short') === mode), cols = [...REF.views, ...REF.viewsExtra[mode]];
-      return h('section.card',
-        h('div.card-head', h('h3', `${REF.modes[mode].icon} ${REF.modes[mode].label}`), h('span.counter', `${rows.length} ${plural(rows.length, 'ролик', 'ролика', 'роликов')}`)),
-        rows.length ? h('div.scrollx', h('table.grid.stats', h('tr', h('th', '#'), h('th', 'Ролик'), h('th', 'Вышел'), h('th', 'Офигенно?'), cols.map(c => h('th', c.label)), h('th')),
-          rows.map((r, n) => h('tr', h('td', n + 1),
-            h('td', line(key, ['items', r.id, 'name'], { cls: 'box' }), h('div.row', r.plan && h('a', { href: `#/p/${r.plan}`, style: { fontSize: '12px' } }, 'штурм'),
-              /^https?:/.test(r.url || '') && h('a', { href: r.url, target: '_blank', rel: 'noopener', style: { fontSize: '12px' } }, 'ролик'))),
-            h('td', line(key, ['items', r.id, 'date'], { type: 'date', cls: 'box' })),
-            h('td', sel([{ value: '', label: '—' }, { value: 'Да', label: 'да' }, { value: 'Средне', label: 'средне' }, { value: 'Нет', label: 'нет' }], r.awesome || '', v => Store.set(key, ['items', r.id, 'awesome'], v, true), { class: 'box' })),
-            cols.map(c => h('td.num', line(key, ['items', r.id, c.key], { cls: 'box' }))),
-            h('td', h('button.icon.del', { title: 'Удалить строку', onclick: () => confirm('Удалить строку?') && Store.del(key, ['items'], r.id) }, '×'))))))
-          : h('p.dim', 'Строки появятся, когда отметишь ролик «вышел» в его штурме, — или добавь вручную.'),
-        addLine('+ ролик вручную — Enter', name => Store.add(key, ['items'], { id: uid('r'), name, mode, date: '', awesome: '' }), 'stats|add' + mode),
-        h('h3', { style: { margin: '14px 0 6px' } }, 'Выводы'),
-        h('div.concl', REF.checkpoints.map(cp => h('div', { class: rows.length >= Number(cp) ? '' : 'off' },
-          h('div.card-head', h('b', `После ${cp}-го ролика`), h('span.sp'),
-            Claude.btn({ label: 'Выводы', action: 'conclusions', key, scope: `concl:${mode}:${cp}`, params: { mode, cp }, cls: 'mini',
-              onResult: (r, job) => { if (/уже написан/.test(job.summary || '')) UI.modal('Вариант Claude', h('div', h('ul', (r.points || []).map(p => h('li', p))), h('p', 'Вывод: ' + r.verdict))); } })),
-          area(key, ['conclusions', mode, cp], { ph: 'зря или не зря, что меняем…' })))));
+  // ---------------- ⚙ стиль канала ----------------
+  style() {
+    const C = App.info.channel || {};
+    if (Pages._style === undefined) { Pages._style = null; api('GET', '/api/studio/style').then(j => { Pages._style = j; App.render(); }).catch(e => { Pages._style = { text: '', err: e.message }; App.render(); }); }
+    const S = Pages._style;
+    const ta = h('textarea.box.styleedit', { key: 'styletext', spellcheck: false, placeholder: '# Стайл-гайд канала…' });
+    if (S) ta.value = S.text;
+    const save = async () => {
+      try { await api('POST', '/api/studio/style', { channel: C.id, text: ta.value }); Pages._style.text = ta.value; UI.toast('Стиль сохранён'); }
+      catch (e) { UI.toast(e.message, 'err'); }
     };
+    ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') { e.preventDefault(); save(); } });
+    const ckey = 'channel:' + C.id;
+    if (C.id && !Store.get(ckey) && !Pages._ch) { Pages._ch = true; Store.load(ckey).then(() => App.render()).catch(() => {}); }
     return h('div',
-      h('div.phead', h('h1', '📈 Трекер просмотров'), h('span.sp'), h('button', { onclick: () => Pages.importProjects() }, '➕ Готовые ролики из рабочей папки')),
-      Pages.youtube(s),
-      hint('stats', `<p>Заполняй после каждого выхода — нельзя терять общую картину. «Офигенно?» — это твоя оценка ДО прихода цифр. Выводы делай после 1-го, 3-го, 5-го и 10-го ролика: к пятому уже видно, работает ли гипотеза.</p>
-<p>Всё мимо — закрываем гипотезу и берём следующую. Туговато, но есть надежда — корректируемся и едем дальше. Туго и после десятого — сворачиваем и не тратим силы. Что считать «хорошо» и «плохо», у каждого проекта своё.</p>
-<p class="dim">Вопросы для выводов: ${REF.statsQ.join(' · ')}</p>`),
-      table('short'), table('long'));
+      h('div.phead', h('h1', '⚙ Стиль канала'), h('span.dim', C.name || ''), h('span.sp'), h('button.primary', { onclick: save, title: 'Ctrl+S' }, '💾 Сохранить')),
+      h('section.card',
+        h('div.card-head', h('h3', 'Канал')),
+        Store.get(ckey) ? h('div.chanform',
+          h('label', 'Название', line(ckey, ['name'], { cls: 'box' })), h('label', 'Иконка', line(ckey, ['icon'], { cls: 'box' })),
+          h('label.wide', 'О канале (одной строкой — Claude читает её во всех кнопках ✨)', line(ckey, ['about'], { cls: 'box' })))
+          : h('p.dim', 'Загружаю…')),
+      h('section.card',
+        h('div.card-head', h('h3', '📝 Стайл-гайд'), h('span.dim.small', S && S.path ? S.path : ''), h('span.sp'), h('span.dim.small', 'markdown · Ctrl+S — сохранить')),
+        S ? ta : h('p.dim', 'Загружаю…')),
+      h('p.dim', 'По стайл-гайду Claude пишет сценарии (темп, хук, подача) и держит стиль картинок. Интервью по стилю для нового канала — этап S9.'));
   },
 
-  // YouTube Data + Analytics API (youtube.py): login once, then sync by hand or every 6 h
-  youtube(s) {
-    const st = App.info.yt || {}, yt = s.yt || {};
-    const after = () => App.refreshState().then(() => App.render());
-    let body;
-    if (!st.client) body = [h('p', 'Чтобы цифры подтягивались сами, нужен ключ Google: положи файл ', h('code', 'youtube_client.json'), ' в папку ', h('code', '_ideas'),
-      ' (инструкция — в чате у Claude: проект в Google Cloud → YouTube Data API v3 + YouTube Analytics API → OAuth-клиент «Desktop app»).'),
-      h('button', { onclick: after }, '🔄 Я положил файл')];
-    else if (!st.token) body = [h('p', 'Ключ на месте. Войди в Google-аккаунт канала и разреши доступ только на чтение — откроется окно браузера. «Приложение не проверено» → «Дополнительно» → «Перейти».'),
-      Claude.btn({ label: 'Войти в Google', icon: '🔑', action: 'ytlogin', key: 'stats', scope: 'ytlogin', noClaude: true, onResult: after })];
-    else body = [h('div.row',
-        h('span', '✅ Подключено', yt.channel ? h('b', ' — «' + yt.channel + '»') : ''),
-        h('span.dim', yt.last ? '· обновлено ' + new Date(yt.last).toLocaleString('ru-RU') : '· ещё не обновлялось'),
-        h('span.sp'),
-        Claude.btn({ label: 'Подтянуть из YouTube', icon: '📥', action: 'ytsync', key: 'stats', scope: 'ytsync', noClaude: true }),
-        Claude.btn({ label: 'Войти заново', icon: '🔑', action: 'ytlogin', key: 'stats', scope: 'ytlogin', noClaude: true, cls: 'ghost', onResult: after })),
-      yt.summary && h('p.dim', yt.summary),
-      h('p.dim', 'Обновляется само раз в 6 часов, пока открыто окно «Штурм идей.bat». Analytics отдаёт данные с задержкой 2–3 дня и по дням: «сутки» ≈ день выхода и следующий, «1 час» и CTR превью API не даёт — их вписывай руками. Новые ролики канала добавляются строками сами.')];
-    return h('section.card', h('div.card-head', h('h3', '▶ YouTube')), body);
-  },
-
-  async importProjects() {
-    let list = [];
-    try { list = await api('GET', '/api/projects'); } catch (e) { return UI.toast(e.message, 'err'); }
-    const s = Store.get('stats'), have = new Set(s.items.map(r => r.project || r.name));
-    list = list.filter(p => p.video && !have.has(p.name));
-    if (!list.length) return UI.toast('Все собранные ролики уже в трекере');
-    const picked = new Set(list.map(p => p.name));
-    const close = UI.modal('Готовые ролики из рабочей папки', h('div',
-      h('p.dim', 'Отметь те, что уже вышли. Цифры заполнишь потом, по YouTube Studio.'),
-      h('div.pick', list.map(p => h('label', h('input', { type: 'checkbox', checked: true, onchange: e => (e.target.checked ? picked.add(p.name) : picked.delete(p.name)) }),
-        h('b.grow', p.name), h('span.dim', 'собран ' + fmtDate(p.built))))),
-      h('div.row', { style: { marginTop: '10px' } }, h('span.sp'), h('button.primary', { onclick: () => {
-        for (const p of list.filter(x => picked.has(x.name)))
-          Store.add('stats', ['items'], { id: uid('r'), name: p.name, project: p.name, mode: 'short', date: new Date(p.built).toISOString().slice(0, 10), awesome: '' }, false);
-        close(); App.render();
-      } }, 'Добавить'))));
-  },
-
-  // ---------------- справочник ----------------
   help() {
     const T = REF.thumbTypes, Z = Object.fromEntries(REF.thumbZones.map(z => [z.key, z]));
     const zone = k => h('div.zonebox', { class: k }, h('h3', Z[k].icon + ' ' + Z[k].label), h('div.dim', Z[k].sub),
