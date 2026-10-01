@@ -1289,6 +1289,8 @@ def handle_get(h):
     p, q = u.path, parse_qs(u.query)
     if p.startswith("/api/") and not trusted(h):
         h.send_error(403); return True
+    if p == "/api/script/state":                       # 📝 вкладка «Сценарий»: открытые правки раскадровки, заглушка ли script.md
+        h._json(mnapi().script_state(q.get("video", [""])[0])); return True
     if p == "/api/imgsearch":                          # 🔎 поиск картинок для референсов: Яндекс (без ключа) | свободные (Openverse + Commons)
         try:
             h._json({"items": _fresh(__import__("imgsearch"), "imgsearch").search(q.get("q", [""])[0], q.get("src", ["ya"])[0], int(q.get("p", ["0"])[0] or 0))})
@@ -1638,6 +1640,8 @@ def cli(argv):
         return chnapi().cli(sys.modules[__name__], a)
     if cmd == "montage":
         return mnapi().cli(sys.modules[__name__], a)
+    if cmd == "script":
+        return mnapi().script_cli(sys.modules[__name__], a)
     if cmd == "char":
         return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":

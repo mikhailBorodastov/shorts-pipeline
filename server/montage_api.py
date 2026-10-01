@@ -582,3 +582,51 @@ def cli(A, argv):
         build(A, j)
         print(j.summary, j.result["file"]); return True
     return False
+
+
+# ---------------------------------------------------------------- 📝 правки сценария (раскадровка src/script.html -> review/script_notes.json)
+TEMPLATE_TITLE = "# Зачем ежу иголки"                       # заглушка шаблона: сценарий ещё не писали
+
+
+def script_state(vid):
+    """Для вкладки «Сценарий»: открытые правки раскадровки и не заглушка ли script.md."""
+    pd = vdir(vid)
+    if not pd or not has_project(vid):
+        return {"project": False, "open": 0, "notes": [], "template": False}
+    try:
+        notes = json.load(open(os.path.join(pd, "review", "script_notes.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        notes = []
+    op = [n for n in notes if n.get("status", "open") == "open"]
+    try:
+        head = open(os.path.join(pd, "script.md"), encoding="utf-8").read(400)
+    except OSError:
+        head = ""
+    return {"project": True, "open": len(op), "notes": [{k: n.get(k) for k in ("id", "action", "sceneName", "field", "quote", "text")} for n in op],
+            "template": not head.strip() or head.lstrip().startswith(TEMPLATE_TITLE)}
+
+
+def script_cli(A, argv):
+    """script notes VID — открытые правки раскадровки (review/script_notes.md)
+    script reply VID N "ответ" [--done] [--field VO --from "старый кусок" --to "новый"] — ответ на правку (как review_server.py script-reply)"""
+    if len(argv) < 2:
+        print(script_cli.__doc__); return True
+    cmd, vid = argv[0], argv[1]
+    pd = vdir(vid)
+    if not pd or not has_project(vid):
+        print("у видео нет проекта ролика — studio.py produce " + vid); return True
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if cmd == "notes":
+        st = script_state(vid)
+        p = os.path.join(pd, "review", "script_notes.md")
+        print(open(p, encoding="utf-8").read() if os.path.isfile(p) else "правок нет")
+        print(f"\nОткрытых: {st['open']}" + (" · script.md — ещё заглушка шаблона, сценарий не писали" if st["template"] else ""))
+        return True
+    if cmd == "reply":
+        r = subprocess.run([sys.executable, "review_server.py", "script-reply", *argv[2:]], cwd=pd, env=env, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60, creationflags=cf)
+        print((r.stdout + r.stderr).strip()[-2000:] or "ok")
+        return True
+    print(script_cli.__doc__)
+    return True

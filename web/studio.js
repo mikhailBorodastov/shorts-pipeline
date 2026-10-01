@@ -42,6 +42,27 @@ Object.assign(Plan, {
         st.clip && h('a.btn', { href: '/' + st.clip.file.replace(/^render\//, 'rscene/'), target: '_blank', rel: 'noopener' }, '🎞 клип')));
   },
 
+  // ✨ сценарий агентом (режим «📝 сценарий», server/agent.py): написать заново по видео / ответить на правки раскадровки
+  scriptBtns(d) {
+    const S = Plan.scriptSt[d.id];
+    if (!S || Date.now() - S.at > 8000) {
+      Plan.scriptSt[d.id] = Object.assign(S || {}, { at: Date.now() });
+      api('GET', '/api/script/state?video=' + d.id).then(r => { const old = JSON.stringify((Plan.scriptSt[d.id] || {}).r); Plan.scriptSt[d.id].r = r; if (old !== JSON.stringify(r)) App.render(); }).catch(() => {});
+    }
+    const r = (S && S.r) || {}, n = r.open || 0;
+    const run = (text, title) => { AgentPanel.toggle(true); AgentPanel.say(text, { mode: 'script', model: 'opus' }); UI.toast(title); };
+    return [
+      h('button' + (r.template ? '.primary' : ''), { title: 'Claude (Opus) напишет сценарий заново по видео: идея, твои ответы, название, препродакшен, сцены редактора; проверит по гайду и озвучит. 5–15 минут.',
+        onclick: () => { if (!r.template && !confirm('Написать сценарий заново? Текущий script.md будет заменён (старый — в истории git проекта / можно попросить вернуть).')) return;
+          run('📝 Напиши сценарий заново по этому видео' + (n ? ' и учти открытые правки раскадровки (ответь на каждую)' : '') + '. Потом montage check и montage tts.', '📝 Claude пишет сценарий — шаги в панели справа'); } },
+        r.template ? '✨ Написать сценарий' : '✨ Написать заново'),
+      n > 0 && h('button.primary', { title: 'Claude ответит на каждую правку раскадровки: фактчек — таблицей, переписать — заменой (применишь кнопкой), «весь сценарий» и картинку — поправит сам; потом проверка и голос.',
+        onclick: () => run(`✍️ Отработай правки раскадровки (${n}): script notes, ответь на каждую (script reply), правь script.md. Потом montage check и montage tts.`, '✍️ Claude разбирает правки — шаги в панели справа') },
+        `✍️ Исправить по правкам (${n})`),
+    ];
+  },
+  scriptSt: {},
+
   // ---------------- 📝 Сценарий и 👀 Ревью: страницы проекта ролика ----------------
   projectPage(d, key, page) {
     if (!d.project) return Plan.startProduction(d, key);
@@ -54,6 +75,7 @@ Object.assign(Plan, {
     return [
       page === 'script' && hint('script', HINTS3.script),
       h('div.row.projbar', h('b', page === 'script' ? '📝 Раскадровка сценария' : '👀 Ревью видео'), h('span.dim.small', `проект «${d.project || d._folder || d.name}»`), h('span.sp'),
+        page === 'script' && Plan.scriptBtns(d),
         P.url && h('a.btn', { href: P.url, target: '_blank', rel: 'noopener' }, '↗ отдельным окном'),
         h('button', { onclick: () => { Plan.proj[d.id + page] = null; App.render(); }, title: 'Перезапустить страницу проекта' }, '↻')),
       P.err ? h('div.badline', '⚠ ' + P.err) : P.url ? h('iframe.projframe', { src: P.url, title: page === 'script' ? 'Раскадровка сценария' : 'Ревью видео' })

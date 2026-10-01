@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 8                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 9                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -74,6 +74,8 @@ def system_prompt(A, vid, mode):
 - python {sp} montage brief {vid}                          — монтаж: юниты, сцены (маркеры, склейки, длина), слова голоса с номерами, звуки, музыка
 - python {sp} montage gen {vid} | montage build {vid}      — файлы проекта из монтажа / собрать mp4 (долго, 1–3 мин)
 - python {sp} montage tts {vid} | montage check {vid} | montage snap {vid} 1.5,4,8   — голос по script.md / проверка сценария по гайду / кадры ролика (PNG → Read)
+- python {sp} script notes {vid}                           — правки автора к сценарию из раскадровки (фактчек, переписать, картинка, весь сценарий)
+- python {sp} script reply {vid} N "ответ (markdown)" [--done] [--field VO --from "точный старый кусок" --to "новый"]  — ответ на правку N
 - python {sp} char list | char show SLUG                   — персонажи библиотеки (скелет, костюмы, эмоции, клипы типа)
 - python {sp} lib list | lib show KIND/SLUG                — библиотека канала (KIND: props | characters | sounds)
 - python {sp} lib fork KIND/SLUG@N [--as "Новое имя"] --note "что меняю"  — НОВАЯ версия копией (с --as — новый предмет) → папка для правки
@@ -109,6 +111,18 @@ def system_prompt(A, vid, mode):
 
 {C.SCENE_RULES}"""
     build = ""
+    if mode == "script":
+        build = f"""
+
+Режим «📝 Сценарий» — сценарий проекта {vdir.replace(chr(92), '/')}/script.md, как Claude Code по _studio/CLAUDE.md (шаг 0 и раздел D), но без викторины:
+- ПЕРЕД правкой всегда перечитай script.md (автор правит его в раскадровке — его правки не затирай, кроме случая «напиши заново»).
+- Пишешь заново: прочитай видео (show — идея, ответы автора, название, финалисты, препродакшен) и сцены редактора (scene brief), _studio/prompts/scriptwriter.md
+  и стайл-гайды (_studio/prompts/style-guide.md, style/style-guide.md канала). Формат сценариста: ### 0:00–0:04 — НАЗВАНИЕ, **Картинка:** (сценами редактора и элементами
+  препродакшена по их названиям), **Текст:**, **VO:** + строки «> …»; шапка — voice / rate / произношение, если нужно. Факты — только из видео и его источников.
+- По правкам (script notes): 🔎 фактчек — ответь таблицей «утверждение → ✅/⚠️/❌ → как на самом деле»; нужна правка текста — предложи заменой (--field VO --from --to),
+  БЕЗ --done (автор применит кнопкой); ✍️ переписать — лучший вариант заменой, другие — списком в ответе; «весь сценарий», 🎨 картинка, 💬 заметка — правь script.md сам
+  и отвечай с --done. Отвечай на КАЖДУЮ открытую правку (script reply).
+- Потом: montage check — исправь всё ❌; montage tts — голос и тайминги для раскадровки. В ответе — что изменилось и что автору послушать."""
     if mode == "build":
         build = f"""
 
@@ -416,7 +430,7 @@ def get_session(A, vid, model, mode):
             raise RuntimeError("агент ещё работает — дождись или останови")
         s.close()
     s = SESS[vid] = Session(A, vid, model, mode)
-    s.add("note", f"новая сессия · {model}" + (" · ✨ сборка" if mode == "build" else ""))
+    s.add("note", f"новая сессия · {model}" + (" · ✨ сборка" if mode == "build" else " · 📝 сценарий" if mode == "script" else ""))
     return s
 
 
