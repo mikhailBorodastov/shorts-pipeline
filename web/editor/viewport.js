@@ -249,8 +249,8 @@ export function initViewport(ED) {
     if (tc.dragging || (tc.axis && e.button === 0)) return;
     const nav = e.button === 1 || (e.button === 0 && e.altKey && !e.shiftKey) || e.button === 2;
     if (nav) {
-      if (ED.view === 'camera') { ED.setView('free'); }
-      drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2 };
+      // правый щелчок без протяжки — меню «💬 Claude» по предмету (S7); протянул — камера (вид «глазами камеры» уходит в свободный при первом сдвиге)
+      drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, btn: e.button, moved: false, pan: e.shiftKey || e.button === 2 };
       cv.setPointerCapture(e.pointerId);
       e.preventDefault();
       return;
@@ -264,6 +264,12 @@ export function initViewport(ED) {
   cv.addEventListener('pointermove', e => {
     if (VP.modal) { modalMove(e); return; }
     if (!drag) return;
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
+      drag.moved = true; drag.x = e.clientX; drag.y = e.clientY;
+      if (ED.view === 'camera') ED.setView('free');
+      return;
+    }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
     if (drag.pan) {
       const k = orbit.dist * 0.0018, right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
@@ -271,7 +277,10 @@ export function initViewport(ED) {
     } else { orbit.yaw -= dx * 0.007; orbit.pitch = Math.max(-1.5, Math.min(1.5, orbit.pitch + dy * 0.006)); }
     place(); ED.dirty = true;
   });
-  const up = () => { drag = null; };
+  const up = e => {
+    if (drag && drag.btn === 2 && !drag.moved && e && e.type === 'pointerup' && ED.objMenu) ED.objMenu(e, pick(e));
+    drag = null;
+  };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
   cv.addEventListener('wheel', e => {
     e.preventDefault();

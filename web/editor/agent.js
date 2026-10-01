@@ -1,5 +1,5 @@
 // Простой агент (S1): одна просьба -> задача sceneagent (claude -p, Sonnet; переключатель Opus) -> одна пачка операций, её можно отменить.
-// Пока задача идёт, сцена только для просмотра (плашка «Claude работает… ✕»). Живой лог, реплики посреди работы — S7.
+// Пока задача идёт, сцена только для просмотра (плашка «Claude работает… ✕»). S7: в приложении просьбы уходят в общую панель агента (web/agent.js), здесь — меню «💬 Claude» по предмету.
 export function initAgent(ED) {
   const $ = id => document.getElementById(id);
   const box = $('agent'), feed = $('agentFeed'), form = $('agentForm'), ask = $('agentAsk'), model = $('agentModel');
@@ -88,8 +88,45 @@ export function initAgent(ED) {
     } catch (err) { setLock(null); wait.className = 'msg err'; wait.textContent = '⚠ ' + err.message; }
   };
 
+  // S7: панель агента живёт в окне приложения (справа, на всех этапах) — редактор отдаёт ей просьбы и контекст; без приложения — старая панель S1
+  const host = () => { try { return window.parent !== window && window.parent.AgentPanel ? window.parent.AgentPanel : null; } catch { return null; } };
+  const name = id => id === 'camera' ? 'камера' : ((ED.doc.objects || []).concat(ED.doc.lights || []).find(o => o.id === id) || {}).name || id;
+
+  // правый щелчок по предмету (или Ctrl+/): «💬 Claude, сделай…» / «📌 пометка на потом» — комментарий на объекте в моменте курсора
+  function commentBox(x, y, target) {
+    document.querySelectorAll('.cmtbox').forEach(b => b.remove());
+    const b = document.createElement('div'); b.className = 'cmtbox';
+    b.style.left = Math.min(x, innerWidth - 330) + 'px'; b.style.top = Math.min(y, innerHeight - 170) + 'px';
+    b.innerHTML = `<div class="dim">💬 ${target ? '«' + name(target) + '»' : 'сцена'} · ${ED.t.toFixed(2)} с</div><textarea rows="3" placeholder="Например: пусть тут испуганно отпрыгнет"></textarea>
+      <div class="row"><button class="do" title="Enter">✨ Сделать сейчас</button><button class="note" title="Ctrl+Enter — пометка для сборки, агент прочитает её потом">📌 Пометка</button><span class="grow"></span><button class="x">✕</button></div>`;
+    document.body.append(b);
+    const ta = b.querySelector('textarea'); ta.focus();
+    const done = () => b.remove();
+    const send = mode => {
+      const text = ta.value.trim(); if (!text) return done();
+      if (mode === 'note') {
+        ED.commit([{ op: 'add', path: ['comments'], item: { id: 'n' + Math.random().toString(36).slice(2, 8), target: target || null, t: +ED.t.toFixed(2), text, by: 'author', status: 'open', mode: 'note', ts: Date.now() } }],
+          `📌 пометка: ${text.slice(0, 60)}`);
+        ED.msg('📌 Пометка сохранена — агент увидит её при сборке и в «scene brief»');
+      } else {
+        const H = host();
+        if (H) H.ask(text, { target: target ? `${target} «${name(target)}»` : null });
+        else { open((target ? `«${name(target)}»: ` : '') + text); }
+      }
+      done();
+    };
+    b.querySelector('.do').onclick = () => send('do');
+    b.querySelector('.note').onclick = () => send('note');
+    b.querySelector('.x').onclick = done;
+    ta.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') done(); if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e.ctrlKey ? 'note' : 'do'); } });
+  }
+  ED.objMenu = (e, id) => { if (ED.readonly) return; if (id) ED.select([id]); commentBox(e.clientX, e.clientY, id); };
+  // контекст для панели приложения: что открыто, где курсор, что выбрано
+  window.agentCtx = () => ({ el: ED.el, t: +ED.t.toFixed(2), sel: [...ED.sel].map(id => `${id} «${name(id)}»`) });
+
   return {
     open, close, setLock,
-    toggle() { if (box.hidden) open(); else close(); },
+    toggle() { const H = host(); if (H) { H.toggle(); return; } if (box.hidden) open(); else close(); },
+    comment() { const r = document.getElementById('vp').getBoundingClientRect(); commentBox(r.left + r.width / 2 - 150, r.top + 60, ED.active && ED.active !== 'camera' ? ED.active : null); },
   };
 }

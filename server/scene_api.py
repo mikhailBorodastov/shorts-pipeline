@@ -355,6 +355,14 @@ def _log(A, key, el, rec):
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def _agent_run():
+    try:
+        import agent
+        return agent.current_run()
+    except Exception:
+        return None
+
+
 def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edit", undoes=None, prefabs=None):
     """One batch under the lock: apply, validate (schema + ids), authored, rev, history. -> {rev, prev, undo, batch, warn}."""
     if not isinstance(ops, list) or not ops:
@@ -386,7 +394,9 @@ def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edi
                 keep = os.path.join(work_dir(A, _pid(key), el), "_prefabs", f"{batch or 'undo'}-{now_ms()}.js")
                 shutil.copy2(cur, keep); shutil.copy2(prev_b["prefabs"], cur)
                 prefabs = keep                                  # and redo of this undo brings the new look back
+        run = _agent_run() if by == "claude" else None      # S7: пачка агента помнит свой запуск — «↺ отменить» откатит его целиком
         _log(A, key, el, {"ts": now_ms(), "by": by, "desc": (desc or "правка")[:300], "ops": done, "undo": undo, "rev": work["rev"], "batch": batch, "kind": kind,
+                              **({"run": run} if run else {}),
                               **({"undoes": undoes} if undoes else {}), **({"prefabs": prefabs} if prefabs else {})})
         return {"rev": work["rev"], "prev": prev, "undo": undo, "ops": done, "batch": batch, "warn": limits(work)}
 
@@ -878,7 +888,7 @@ def run_job(A, job):
 
 # ---------------------------------------------------------------- CLI (python ideas_server.py scene …)
 def cli(A, argv):
-    """scene show PLAN EL | scene ops PLAN EL '<JSON>' --desc "…" [--by claude|author] | scene history PLAN EL [n]
+    """scene show PLAN EL | scene brief PLAN EL | scene frame PLAN EL t[,t2] | scene ops PLAN EL '<JSON>' --desc "…" [--by claude|author] | scene history PLAN EL [n]
     | scene undo PLAN EL | scene version PLAN EL ["заметка"] | scene clip PLAN EL | scene validate PLAN EL | scene finish PLAN EL"""
     if not argv:
         print(cli.__doc__); return True
@@ -914,6 +924,33 @@ def cli(A, argv):
         if not last:
             sys.exit("нечего отменять")
         print(apply(A, key, el, last["undo"], by="author", desc="↺ отмена: " + last.get("desc", ""), kind="undo", undoes=last.get("batch")))
+        return True
+    if cmd == "brief":                         # S7: всё о сцене для агента — объекты, свет, камера, префабы, authored, комментарии
+        d = load_scene(A, key, el)
+        info = prefab_info(os.path.join(work_dir(A, key[5:], el), "prefabs.js"))
+        print(f"EL={el} · файл {os.path.join(work_dir(A, key[5:], el), 'scene.json')}")
+        print(A.capi()._scene_summary(d, info))
+        au = d.get("authored") or {}
+        names = {o["id"]: o.get("name") for o in (d.get("objects") or []) + (d.get("lights") or [])}
+        print("Правил руками автор (authored):", "; ".join(f"{names.get(k, k)} ({k}): {', '.join(v)}" for k, v in au.items()) or "—")
+        cm = [c for c in d.get("comments") or [] if c.get("status", "open") == "open"]
+        print("Комментарии автора:", "; ".join(f"[{c.get('mode', 'note')}] {names.get(c.get('target'), c.get('target') or 'сцена')} t={c.get('t')}: {c.get('text')} (id {c.get('id')})" for c in cm) or "—")
+        print("Последние правки:", "; ".join(f"{'автор' if h_.get('by') == 'author' else 'Claude'}: {h_.get('desc')}" for h_ in history(A, key, el, 12)) or "—")
+        return True
+    if cmd == "frame":                         # S7: кадр сцены в момент t (или несколько через запятую) -> пути PNG
+        wd = os.path.join(work_dir(A, key[5:], el), "_agent")
+        os.makedirs(wd, exist_ok=True)
+        ts = a[2] if len(a) > 2 else "0"
+        tl = [str(round(float(x), 2)) for x in ts.split(",") if x.strip()]
+        for f in os.listdir(wd):
+            if f.startswith("element_") and f.endswith(".png"):
+                os.remove(os.path.join(wd, f))
+        out = shoot(A, key, stage_url(A._docs(key)["port"], f"{key[5:]}/{el}/work"), wd, ",".join(tl))
+        files = [os.path.join(wd, f"element_{t}.png") for t in tl]
+        ok = [f for f in files if os.path.isfile(f)]
+        print("\n".join(f.replace("\\", "/") for f in ok) or ("кадр не снялся: " + out[-400:]))
+        if "[pageerror]" in out:
+            print("ошибки страницы:", out[-600:])
         return True
     if cmd == "validate":
         d = load_scene(A, key, el)

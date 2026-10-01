@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 10
+API_VERSION = 11
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -65,6 +65,7 @@ import preprod  # noqa: E402  модель элементов препродак
 import assets  # noqa: E402  поиск и скачивание бесплатных 3D / 2D ассетов
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
 import char_api  # noqa: E402  персонажи со скелетом (S4): библиотека, позы, версии
+import agent  # noqa: E402  агент S7: живая сессия Claude, лог, отмена запуска
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 KINDS = preprod.KINDS
@@ -115,6 +116,10 @@ def aapi():
 
 def chapi():
     return _fresh(char_api, "chr")
+
+
+def agapi():
+    return _fresh(agent, "agt")
 
 
 def mnapi():
@@ -682,6 +687,23 @@ def flat(rel):
 
 
 # ---------------- Claude ----------------
+def _journal_set(run, key, path, desc):
+    """S7: обратная операция для set из CLI агента — прежнее значение пути."""
+    doc = load(key)
+    cur, ok = doc, True
+    for p in path:
+        if isinstance(cur, list):
+            cur = next((x for x in cur if isinstance(x, dict) and x.get("id") == p), None)
+        elif isinstance(cur, dict):
+            cur = cur.get(p)
+        else:
+            cur = None
+        if cur is None:
+            ok = False
+            break
+    agapi().journal(run, {"key": key, "inverse": [{"op": "set", "path": path, "value": cur if ok else None}], "desc": desc})
+
+
 def claude_bin():
     """The native claude.exe (the npm .cmd shim would push Russian prompts through cmd.exe and mangle them)."""
     env = os.environ.get("CLAUDE_BIN")
@@ -1194,6 +1216,12 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
+    if p == "/api/agent":
+        try:
+            if agapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p == "/api/montage":
         try:
             if mnapi().handle_get(sys.modules[__name__], h, p, q):
@@ -1313,6 +1341,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p.startswith("/api/agent/") and agapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/montage/") and mnapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/char/") and chapi().handle_post(sys.modules[__name__], h, p, body):
@@ -1329,6 +1359,11 @@ def handle_post(h):
                     h._json({"job": j.info()}); return True
             j = start_job(body.get("action", ""), body.get("key", ""), body.get("scope", ""), prm)
             h._json({"job": j.info()}); return True
+        if p == "/api/job/cancel" and q.get("id", [""])[0].startswith("agent:"):   # замок сцены от агента S7: «✕» в редакторе останавливает агента
+            s = agapi().SESS.get(q["id"][0][6:])
+            if s:
+                s.stop()
+            h._json({"ok": bool(s)}); return True
         if p == "/api/job/cancel":
             j = JOBS.get(q.get("id", [""])[0])
             if j and j.status == "running":
@@ -1425,6 +1460,9 @@ def cli(argv):
             val = json.loads(raw)
         except ValueError:
             val = raw
+        run = agapi().current_run()
+        if run:                                   # агент S7: запомнить, как было, — «↺ отменить» вернёт
+            _journal_set(run, key, path, "set " + ".".join(map(str, path)))
         print(apply_ops(key, [{"op": "set", "path": path, "value": val}]))
         return True
     if cmd == "op":                           # op KEY '[{"op": "add", "path": ["items"], "item": {...}}, …]'
@@ -1432,7 +1470,19 @@ def cli(argv):
         if key.startswith("plan:"):
             _plan_key(key[5:])
         ops = json.loads(a[1])
-        print(apply_ops(key, ops if isinstance(ops, list) else [ops]))
+        ops = ops if isinstance(ops, list) else [ops]
+        run = agapi().current_run()
+        if run:
+            inv = []
+            for o in ops:
+                if o.get("op") == "set":
+                    _journal_set(run, key, o["path"], "set " + ".".join(map(str, o["path"])))
+                elif o.get("op") == "add":
+                    o.setdefault("item", {}).setdefault("id", new_id("x"))
+                    inv.append({"op": "del", "path": o["path"], "id": o["item"]["id"]})
+            if inv:
+                agapi().journal(run, {"key": key, "inverse": inv, "desc": "добавлено в видео"})
+        print(apply_ops(key, ops))
         return True
     if cmd == "scene":
         return scapi().cli(sys.modules[__name__], a)

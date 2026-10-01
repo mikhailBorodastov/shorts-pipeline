@@ -236,7 +236,7 @@ const ACT = {
   work_in: () => { ED.work = [ED.t, ED.work ? Math.max(ED.t + 0.1, ED.work[1]) : ED.doc.len]; ED.tlDirty = ED.uiDirty = true; },
   work_out: () => { ED.work = [ED.work ? Math.min(ED.work[0], ED.t - 0.1) : 0, ED.t]; ED.tlDirty = ED.uiDirty = true; },
   undo: () => ED.undoLast(), redo: () => ED.redoLast(), save: () => saveVersion(),
-  comment: () => ED.agent.open(ED.active ? `«${(find(ED.doc, ED.active) || { name: 'камера' }).name}»: ` : ''),
+  comment: () => ED.agent.comment(),
   marker: () => ED.tl.addMarker(), cut: () => ED.tl.addCut(), rename: () => ED.panels.rename(),
   copy_keys: () => ED.tl.copy(), paste_keys: () => ED.tl.paste(), del_keys: () => ED.tl.delKeys(),
 };

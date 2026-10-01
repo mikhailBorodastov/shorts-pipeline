@@ -444,6 +444,39 @@ def cli(A, argv):
     if len(argv) < 2:
         print(cli.__doc__); return True
     cmd, vid = argv[0], argv[1]
+    if cmd == "brief":                                       # S7: монтаж для агента — коротко, со словами голоса по номерам
+        g = get(A, vid)
+        M, vo = g["montage"], g["voice"] or {}
+        print(f"Проект: {g['folder']} ({'есть' if g['project'] else 'нет — studio.py produce'}) · монтаж {'сохранён' if g['saved'] else 'по умолчанию'} · длина {M.get('len')} с")
+        print("Монтаж:", json.dumps({k: M.get(k) for k in ("units", "voice", "captions", "sfx", "music", "overlays", "len")}, ensure_ascii=False))
+        for s in g["scenes"]:
+            print(f"Сцена EL={s['el']} «{s['name']}» {s['len']} с · склейки {s['cuts']} · маркеры {[(m['t'], m['name']) for m in s['markers']]} · звуков {s['sounds']}")
+        W = [w for w in vo.get("words") or []] if not vo.get("studio") else []
+        print(f"Голос: {'нет (python tts.py / montage tts)' if not W else str(vo.get('total')) + ' с'}")
+        if W:
+            print("Слова (номер:слово@время): " + " ".join(f"{w['i']}:{w['w']}@{w['t']}" for w in W))
+        print("Звуки препродакшена:", "; ".join(f"{s['src']} «{s['name']}» {s['dur']} с" for s in g["sources"]) or "—")
+        print("Собранный ролик:", (g["out"] or ["ещё нет"])[0])
+        return True
+    if cmd in ("tts", "check", "snap"):                      # S7: голос, проверка сценария, кадры ролика — в папке проекта
+        pd = vdir(vid)
+        if not has_project(vid):
+            print("у видео нет проекта ролика — studio.py produce " + vid); return True
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if cmd == "snap":                                    # кадры ролика: страница проекта через его локальный скрипт ревью
+            ts = argv[2] if len(argv) > 2 else "1,3,5"
+            env["REVIEW_PORT"] = str(A.stapi().project_port(pd))
+            out = os.path.join(pd, "build", "snap_agent.png")
+            r = subprocess.run(["node", "render.js", "snap", ts, "build/snap_agent.png"], cwd=pd, env=env, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=300, creationflags=cf)
+            err = [ln for ln in (r.stdout + r.stderr).splitlines() if "pageerror" in ln or "Error" in ln]
+            print(out.replace("\\", "/") if os.path.isfile(out) else "кадры не снялись", *err[:5], sep="\n")
+            return True
+        script = "tts.py" if cmd == "tts" else "check_script.py"
+        r = subprocess.run([sys.executable, script], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600, creationflags=cf)
+        print((r.stdout + r.stderr)[-4000:])
+        return True
     if cmd == "show":
         print(json.dumps(get(A, vid), ensure_ascii=False, indent=1)); return True
     if cmd == "gen":

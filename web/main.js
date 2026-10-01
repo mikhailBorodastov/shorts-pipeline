@@ -5,6 +5,7 @@ const App = {
   info: {}, plans: [], planSig: null, route: route(),
 
   async boot() {
+    AgentPanel.init();                                 // 💬 панель агента справа (S7)
     try {
       Object.assign(REF, await (await fetch('/ref.json')).json());
       await this.refreshState();
@@ -50,6 +51,7 @@ const App = {
     this.render({ top: true });
     StageEditor.follow(r);
     MontagePreview.follow(r);                          // 🎞 предпросмотр монтажа — своё окно поверх страницы (S6)
+    AgentPanel.follow(r);
   },
 
   banner(msg) { const b = $('#banner'); b.textContent = msg; b.classList.toggle('show', !!msg); },
@@ -81,6 +83,7 @@ const App = {
     for (const [src, t] of playing) { const x = $$('audio').find(y => y.getAttribute('src') === src); if (x) { x.currentTime = t; x.play().catch(() => {}); } }
     requestAnimationFrame(() => $$('textarea.auto').forEach(autosize));
     MontagePreview.follow(this.route);
+    AgentPanel.follow(this.route);
     Sync.dirty();
   },
 

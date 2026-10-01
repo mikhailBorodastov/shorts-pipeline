@@ -103,6 +103,7 @@ const Montage = {
           h('button', { onclick: () => this.regen(), title: 'Пересобрать файлы проекта и перезагрузить предпросмотр' }, '↻ предпросмотр'),
           Claude.btn({ label: 'Собрать', icon: '🔨', action: 'montagebuild', key, scope: 'montage', params: { video: d.id }, noClaude: true,
             title: 'Кадры, звук и mp4 (build.sh) — 1–3 минуты', onResult: () => { this.load(d, true); UI.toast('Ролик собран — смотри «Ревью»'); } }),
+          h('button.claude', { onclick: () => AgentPanel.build(), title: 'Агент (Opus) сам напишет сценарий, озвучит, смонтирует и соберёт — шаги видны в панели справа' }, '✨ Собрать агентом'),
           out && h('a.btn', { href: `#/p/${d.id}/review`, title: out }, '👀 Ревью →'))),
       h('div.mt-layout',
         h('div.mt-left', this.toolbar(d, key, M), h('div.mt-tl', this.timeline(d, M)), h('div.mt-props', this.props(d, M))),
