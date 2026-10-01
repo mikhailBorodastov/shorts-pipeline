@@ -105,6 +105,12 @@ export function initTimeline(ED) {
       } else if (r.kind === 'thing' || r.kind === 'prop') {
         const o = find(ED.doc, r.id); if (!o) return;
         if (r.kind === 'thing') {
+          for (const l of o.links || []) {                 // 🔗 привязка: полоса от «с» до «до» под ромбами
+            const x1 = X(l.from), x2 = X(l.until != null ? l.until : L);
+            g.fillStyle = 'rgba(111,224,255,0.35)'; g.fillRect(x1, y + ROWH - 5, Math.max(2, x2 - x1), 3);
+            g.fillStyle = '#6fe0ff'; g.fillRect(x1 - 1, y + 3, 2, ROWH - 6);
+            const to = find(ED.doc, l.to); g.font = '10px Inter, system-ui, sans-serif'; g.fillText('🔗 ' + ((to && to.name) || l.to), x1 + 4, y + ROWH - 7);
+          }
           // collapsed: one diamond per moment (all props), selecting it selects all of them
           const by = new Map();
           for (const { prop, key } of allKeys(o)) { const kt = +key.t.toFixed(4); if (!by.has(kt)) by.set(kt, []); by.get(kt).push({ prop, key }); }

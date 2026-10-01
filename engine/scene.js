@@ -114,6 +114,51 @@ function sceneObjectAt(o, t) {
   };
 }
 
+// ---------------------------------------------------------------- привязки (links): «как Parent в After Effects / Child Of в Blender», но с момента
+// o.links = [{ id, to: <id объекта>, from: t0, until?: t1 }] — с t0 объект едет за `to`: всё, что `to` сделал после t0, добавляется поверх своих ключей объекта
+// (свои ключи и клипы работают как раньше). В t0 ничего не прыгает; после until набранный сдвиг остаётся (объект не телепортируется назад), следующая
+// привязка добавляется сверху. Мир объекта = D · G · L: L — свои ключи, G — группа-родитель, D — произведение сдвигов привязок.
+function scnLocalMatrix(o, t) {
+  const st = sceneObjectAt(o, t);
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(st.rot[0], st.rot[1], st.rot[2], 'YXZ'));
+  return new THREE.Matrix4().compose(new THREE.Vector3(st.pos[0], st.pos[1], st.pos[2]), q, new THREE.Vector3(st.scale[0], st.scale[1], st.scale[2]));
+}
+function sceneLinksActive(o) { return (o.links || []).filter(l => l && l.to && typeof l.from === 'number'); }
+function scnLinkDelta(byId, o, t, memo, stack) {
+  const D = new THREE.Matrix4();
+  for (const l of sceneLinksActive(o).filter(l => l.from <= t).sort((a, b) => a.from - b.from)) {
+    if (!byId.get(l.to) || stack.has(l.to)) continue;                     // нет такого или цикл — пропустить
+    const end = l.until != null ? Math.min(t, l.until) : t;
+    const Pa = scnWorldAt(byId, l.to, end, memo, stack), Pf = scnWorldAt(byId, l.to, l.from, memo, stack);
+    D.premultiply(Pa.clone().multiply(Pf.clone().invert()));
+  }
+  return D;
+}
+function scnWorldAt(byId, id, t, memo, stack = new Set()) {
+  const k = id + '@' + t;
+  if (memo.has(k)) return memo.get(k);
+  const o = byId.get(id);
+  if (!o) return new THREE.Matrix4();
+  stack.add(id);
+  const G = o.parent && byId.get(o.parent) && !stack.has(o.parent) ? scnWorldAt(byId, o.parent, t, memo, stack) : new THREE.Matrix4();
+  const W = scnLinkDelta(byId, o, t, memo, stack).multiply(G).multiply(scnLocalMatrix(o, t));
+  stack.delete(id);
+  memo.set(k, W);
+  return W;
+}
+// матрица узла привязки в пространстве группы-родителя: G⁻¹ · D · G
+function scnPivotMatrix(byId, o, t, memo) {
+  if (!sceneLinksActive(o).some(l => l.from <= t)) return null;
+  const stack = new Set([o.id]);
+  const D = scnLinkDelta(byId, o, t, memo, stack);
+  const G = o.parent && byId.get(o.parent) ? scnWorldAt(byId, o.parent, t, memo, new Set([o.id])) : new THREE.Matrix4();
+  return G.clone().invert().multiply(D).multiply(G);
+}
+// мир объекта в момент t (для редактора: «где он сейчас», привязать без прыжка)
+function sceneWorldMatrixAt(scene, id, t) {
+  return scnWorldAt(new Map((scene.objects || []).map(o => [o.id, o])), id, t, new Map());
+}
+
 // parents before children (a group is built before what is inside it); broken parent links fall back to the root
 function sceneOrder(objects) {
   const byId = new Map(objects.map(o => [o.id, o])), out = [], seen = new Set();
@@ -238,15 +283,19 @@ function scnMakeObject(w, S, o) {
   holder.name = o.name || o.id;
   holder.rotation.order = 'YXZ';
   holder.userData.sid = o.id;
+  // узел привязки (links): между родителем-группой и holder — «едет вместе с креслом» поверх своих ключей; без привязок — единичная матрица
+  const pivot = new THREE.Group();
+  pivot.name = 'link:' + (o.name || o.id); pivot.userData.pivotOf = o.id; pivot.matrixAutoUpdate = false;
+  pivot.add(holder);
   const r = o.type === 'group' ? {} : scnBuildPrefab(w, S, o, holder);
-  const rec = { id: o.id, holder, tick: r.tick || null, overlay: r.overlay || null, prefab: o.src && o.src.prefab, parent: o.parent || null };
+  const rec = { id: o.id, holder, pivot, tick: r.tick || null, overlay: r.overlay || null, prefab: o.src && o.src.prefab, parent: o.parent || null };
   S.objects.set(o.id, rec);
   return rec;
 }
 
 function scnAttach(S, rec) {
   const p = rec.parent && S.objects.get(rec.parent);
-  (p ? p.holder : S.w.scene).add(rec.holder);
+  (p ? p.holder : S.w.scene).add(rec.pivot || rec.holder);
 }
 
 function scnMakeLight(w, S, L) {
@@ -285,8 +334,8 @@ function syncScene(S, rebuild = []) {
   for (const [id, rec] of [...S.objects]) {
     if (!ids.has(id) || rebuild.includes(id)) {
       // children of a removed group are re-parented below; take them out first so they are not lost
-      for (const ch of [...rec.holder.children]) if (ch.userData && ch.userData.sid && ch.userData.sid !== id) w.scene.add(ch);
-      rec.holder.removeFromParent(); S.objects.delete(id);
+      for (const ch of [...rec.holder.children]) if (ch.userData && ((ch.userData.sid && ch.userData.sid !== id) || ch.userData.pivotOf)) w.scene.add(ch);
+      (rec.pivot || rec.holder).removeFromParent(); S.objects.delete(id);
     }
   }
   for (const o of sceneOrder(objs)) {
@@ -294,7 +343,8 @@ function syncScene(S, rebuild = []) {
     if (!rec) rec = scnMakeObject(w, S, o);
     rec.parent = o.parent && ids.has(o.parent) ? o.parent : null;
     const want = rec.parent ? S.objects.get(rec.parent).holder : w.scene;
-    if (rec.holder.parent !== want) want.add(rec.holder);
+    const node = rec.pivot || rec.holder;
+    if (node.parent !== want) want.add(node);
   }
   const lids = new Set((S.scene.lights || []).map(l => l.id));
   for (const [id, rec] of [...S.lights]) if (!lids.has(id) || rebuild.includes(id)) { rec.holder.removeFromParent(); if (rec.obj && rec.obj.isLight) rec.obj.removeFromParent(); S.lights.delete(id); }
@@ -306,7 +356,7 @@ function applyScene(S, t) {
   S.t = t;
   const w = S.w, scene = S.scene;
   for (const f of S.env) f(t);
-  const byId = new Map((scene.objects || []).map(o => [o.id, o]));
+  const byId = new Map((scene.objects || []).map(o => [o.id, o])), memo = new Map();
   for (const [id, rec] of S.objects) {
     const o = byId.get(id);
     if (!o) continue;
@@ -318,6 +368,11 @@ function applyScene(S, t) {
     }
     h.visible = !st.hide && !(S.editHidden && S.editHidden.has(id));
     rec.hidden = st.hide;
+    if (rec.pivot) {                                         // привязки (links): сдвиг «за родителем» поверх своих ключей
+      const M = o.links && o.links.length ? scnPivotMatrix(byId, o, t, memo) : null;
+      if (M) rec.pivot.matrix.copy(M); else rec.pivot.matrix.identity();
+      rec.pivot.matrixWorldNeedsUpdate = true;
+    }
     if (rec.tick && h.visible) rec.tick(t);
   }
   for (const L of scene.lights || []) {
@@ -369,5 +424,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { scenePropRefs, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
+  module.exports = { sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

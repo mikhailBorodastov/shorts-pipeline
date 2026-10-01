@@ -434,6 +434,35 @@ def props3d_choices(A, key, plan):
     return out
 
 
+def props_rev(A, key, doc):
+    """Время правки файлов 3D-пропсов и персонажей сцены (lib: / el:) — агент поправил prefab.js / модель версии -> редактор перезагружает страницу."""
+    pid = _pid(key)
+    dirs = set()
+    for o in doc.get("objects") or []:
+        ref = (o.get("src") or {}).get("prefab") or ""
+        m = re.match(r"^lib:([a-z]+)/([a-z0-9-]+)@(\d+)$", ref)
+        if m:
+            try:
+                c = A.stapi().channel_dir(P.index()["videos"].get(pid, {}).get("channel"))
+                dirs.add(os.path.join(A.stapi().lib_dir(c), m.group(1), m.group(2), "v" + m.group(3)))
+            except Exception:
+                pass
+            continue
+        m = re.match(r"^el:([A-Za-z0-9_-]+)@v?(\d+)$", ref)
+        if m:
+            dirs.add(P.resolve(f"render/{pid}/{m.group(1)}/v{m.group(2)}"))
+    best = 0
+    for d in dirs:
+        for sub in ("", "costumes"):
+            try:
+                for f in os.scandir(os.path.join(d, sub)):
+                    if f.is_file() and f.name.endswith((".js", ".json", ".glb")):
+                        best = max(best, int(f.stat().st_mtime * 1000))
+            except OSError:
+                pass
+    return best
+
+
 def prefabs_rev(A, key, el):
     """Время правки prefabs.js рабочей копии (агент или автор поменяли вид предметов -> редактор перезагружает страницу)."""
     try:
@@ -831,6 +860,7 @@ def handle_get(A, h, p, q):
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
                  "prefabInfo": prefab_info(os.path.join(P.resolve("render/" + rel), "prefabs.js")),
                  "prefabsRev": prefabs_rev(A, key, el) if not ver else 0,
+                 "propsRev": props_rev(A, key, doc) if not ver else 0,
                  "props3d": props3d_choices(A, key, plan),
                  "chars3d": chars3d_choices(A, key, plan),
                  "style3d": ((P.channel(P.index()["videos"].get(_pid(key), {}).get("channel")) or {}).get("style3d")) or "paper",
@@ -840,7 +870,8 @@ def handle_get(A, h, p, q):
         rev = 0
         if exists(A, key, el):
             rev = A.rev_of(scene_path(A, key, el)) or 0
-        h._json({"rev": rev, "locked": LOCKS.get(skey(key, el)), "prefabsRev": prefabs_rev(A, key, el)}); return True
+        h._json({"rev": rev, "locked": LOCKS.get(skey(key, el)), "prefabsRev": prefabs_rev(A, key, el),
+                 "propsRev": props_rev(A, key, load_scene(A, key, el)) if exists(A, key, el) else 0}); return True
     if p == "/api/scene/cues":
         h._json({"cues": sound_cues(A, key, dict(load_scene(A, key, el), _el=el))}); return True
     if p == "/api/scene/env":                                       # липсинк (S5): громкость звука сцены по id — {t0, fps, env}

@@ -139,3 +139,10 @@ input[type=number] { width: 64px; }
 .addsec { margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
 #popup .addi { display: flex; align-items: center; gap: 10px; }
 .addi img, .addi .addic { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; flex: none; display: grid; place-items: center; background: #2c2c30; font-size: 18px; }
+
+/* 🔗 привязка */
+.links { margin: 6px 0; padding: 6px; border: 1px solid var(--line, #3a3a3e); border-radius: 6px; display: flex; flex-direction: column; gap: 4px; }
+.links .lhead { font-weight: 600; }
+.links .lrow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.links .lt { padding: 0 4px; font-variant-numeric: tabular-nums; }
+.links select { width: 100%; }

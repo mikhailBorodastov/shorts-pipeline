@@ -1778,6 +1778,10 @@ OP_SCHEMA = {"type": "object", "properties": {
 SCENE_RULES = """Сцена — документ scene.json (формат — _pipeline/docs/studio/architecture.md §3.3). Единицы — метры, y вверх, камера смотрит вдоль −z.
 - objects[]: {id, name, src: {prefab, el}, params, pos [x,y,z], rot [x,y,z] (радианы, порядок YXZ; обычно меняется только rot[1] — поворот по Y), scale (число), hide, locked, parent (id группы или null), keys}.
   Группа — объект с type: "group"; координаты детей — относительно группы. Предметы стоят нижней точкой: pos.y = 0 — на полу.
+- links [{id, to: <id объекта>, from: t0, until?: t1}] — привязка «как Parent в After Effects», но с момента: с t0 объект едет и крутится за `to`
+  (поверх своих keys и клипов — их не трогай, свои ключи двигают его относительно `to`), в t0 не прыгает; после until набранный сдвиг остаётся.
+  «Ёжик сел в кресло и едет с ним» — ёжику links [{to: кресло, from: момент посадки}] (ключи pos ёжика, которые повторяли путь кресла, тогда убери);
+  «клавиатура и мышь на выдвижной полке» — им links [{to: полка, from: 0}]. Ставь операцией set по пути ["objects", id, "links"] целиком.
 - keys.<pos|rot|scale|hide>[] = {id, t, v, ease}; ease у ЛЕВОГО ключа — кривая до следующего: linear | io (плавно, по умолчанию) | in | out | hold.
   Нет ключей — работает статичное значение (pos / rot / scale). Есть ключи — статичное значение не работает, меняй ключи.
 - lights[]: {id, name, type: lamp|point|ambient|sun, pos, color, intensity, dist, keys: {intensity, pos}}. Свет внутри предмета (лампа на столе) — в его префабе, управляется его params.

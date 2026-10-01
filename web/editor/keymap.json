@@ -39,6 +39,12 @@
  "add": [
   "shift+a"
  ],
+ "link": [
+  "ctrl+p"
+ ],
+ "unlink": [
+  "alt+p"
+ ],
  "delete": [
   "x",
   "delete"

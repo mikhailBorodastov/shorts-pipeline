@@ -124,7 +124,7 @@ async function reload(why) {
   for (const o of nu.objects || []) { const p = oldBy.get(o.id); if (p && sig(p) !== sig(o)) rebuild.push(o.id); }
   const oldL = new Map((old.lights || []).map(o => [o.id, JSON.stringify(Object.assign({}, o, { pos: 0, intensity: 0, keys: 0 }))]));
   for (const l of nu.lights || []) if (oldL.has(l.id) && oldL.get(l.id) !== JSON.stringify(Object.assign({}, l, { pos: 0, intensity: 0, keys: 0 }))) rebuild.push(l.id);
-  if (j.prefabsRev && ED.prefabsRev && j.prefabsRev !== ED.prefabsRev && !ED.readonly) {   // поменялся вид предметов (prefabs.js): PREFABS — const, только перезагрузкой
+  if (!ED.readonly && ((j.prefabsRev && ED.prefabsRev && j.prefabsRev !== ED.prefabsRev) || (j.propsRev && ED.propsRev && j.propsRev > ED.propsRev))) {   // поменялись файлы пропсов / персонажей сцены — тоже   // поменялся вид предметов (prefabs.js): PREFABS — const, только перезагрузкой
     ED.reloadPage('вид предметов поменялся (prefabs.js)' + (why ? ' · ' + why : ''));
     return j;
   }
@@ -228,7 +228,7 @@ const ACT = {
   reset_pos: () => ED.vp.reset('translate'), reset_rot: () => ED.vp.reset('rotate'), reset_scale: () => ED.vp.reset('scale'),
   gizmo_move: () => ED.vp.setMode('translate'), gizmo_rotate: () => ED.vp.setMode('rotate'), gizmo_scale: () => ED.vp.setMode('scale'),
   duplicate: () => duplicate(), delete: () => del(), hide: () => hide(), unhide_all: () => unhideAll(), add: () => addMenu(),
-  group: () => group(), ungroup: () => ungroup(),
+  group: () => group(), ungroup: () => ungroup(), link: () => linkSel(), unlink: () => unlinkSel(),
   key: () => { const ops = [...ED.sel].flatMap(id => id === 'camera' ? camKeyNow() : keyAllOps(ED.doc, id, ED.t)); if (ops.length) ED.commit(ops, `ключ на ${ED.t.toFixed(2)} с: ${names([...ED.sel])}`); else ED.msg('Выбери объект, камеру или свет'); },
   unkey: () => { const ops = [...ED.sel].flatMap(id => id === 'camera' ? (ED.doc.camera.keys || []).filter(k => Math.abs(k.t - ED.t) < EPS).map(k => ({ op: 'del', path: ['camera', 'keys'], id: k.id })) : delKeysAtOps(ED.doc, id, ED.t)); if (ops.length) ED.commit(ops, `ключи на ${ED.t.toFixed(2)} с удалены: ${names([...ED.sel])}`); else ED.msg('На этом времени ключей нет'); },
   frame_sel: () => ED.vp.frameSel(), frame_all: () => ED.vp.frameAll(),
@@ -264,6 +264,31 @@ ED.setView = v => {
   if (v === 'free' && prev === 'camera') ED.vp.fromScene();      // Blender: navigating out of the camera view starts from where the camera is
   ED.dirty = ED.uiDirty = true;
 };
+
+// ---- 🔗 привязка (Ctrl+P / Alt+P): выбранные едут за активным с курсора, как Parent в After Effects (engine/scene.js links)
+function linkSel() {
+  const to = ED.active, ids = [...ED.sel].filter(id => id !== to && find(ED.doc, id));
+  if (!to || !find(ED.doc, to) || !ids.length) return ED.msg('Выбери, что привязать (ёжика), и последним — к чему (кресло): Ctrl+клик, потом Ctrl+P', 'err');
+  const t = +ED.t.toFixed(3), ops = [];
+  for (const id of ids) {
+    const o = find(ED.doc, id);
+    if ((o.links || []).some(l => l.to === to && l.from <= t && (l.until == null || l.until > t))) continue;
+    ops.push({ op: 'set', path: ['objects', id, 'links'], value: (o.links || []).concat([{ id: newId('l'), to, from: t }]) });
+  }
+  if (!ops.length) return ED.msg('Уже привязаны');
+  ED.commit(ops, `привязать к «${find(ED.doc, to).name}» с ${t.toFixed(2)} с: ${names(ids)}`);
+  ED.msg(`🔗 С ${t.toFixed(2)} с ${names(ids)} едет за «${find(ED.doc, to).name}»`);
+}
+function unlinkSel() {
+  const t = +ED.t.toFixed(3), ops = [];
+  for (const id of ED.sel) {
+    const o = find(ED.doc, id); if (!o || !(o.links || []).length) continue;
+    const list = o.links.map(l => (l.from < t && (l.until == null || l.until > t) ? Object.assign({}, l, { until: t }) : l));
+    if (JSON.stringify(list) !== JSON.stringify(o.links)) ops.push({ op: 'set', path: ['objects', id, 'links'], value: list });
+  }
+  if (!ops.length) return ED.msg('На курсоре у выбранного нет привязки');
+  ED.commit(ops, `отвязать на ${t.toFixed(2)} с: ${names([...ED.sel])}`);
+}
 
 // ---- ＋ добавить (Shift+A): предмет из префабов этой сцены, 3D-пропс или персонаж (видео / библиотека канала), пустая группа
 function addMenu() {
@@ -492,7 +517,7 @@ async function history() {
 }
 function keysHelp() {
   const L = { select_all: 'выбрать всё', deselect_all: 'снять выбор', grab: 'двигать', rotate: 'вращать', scale: 'масштаб', reset_pos: 'сбросить позицию', reset_rot: 'сбросить поворот', reset_scale: 'сбросить масштаб',
-    gizmo_move: 'гизмо: сдвиг', gizmo_rotate: 'гизмо: поворот', gizmo_scale: 'гизмо: масштаб', duplicate: 'дублировать', add: 'добавить предмет', delete: 'удалить', hide: 'скрыть', unhide_all: 'показать всё', group: 'сгруппировать', ungroup: 'разгруппировать',
+    gizmo_move: 'гизмо: сдвиг', gizmo_rotate: 'гизмо: поворот', gizmo_scale: 'гизмо: масштаб', duplicate: 'дублировать', add: 'добавить предмет', link: 'привязать к активному', unlink: 'отвязать на курсоре', delete: 'удалить', hide: 'скрыть', unhide_all: 'показать всё', group: 'сгруппировать', ungroup: 'разгруппировать',
     key: 'ключ на текущем времени', unkey: 'удалить ключи на времени', frame_sel: 'показать выбранное', frame_all: 'показать всё', cam_view: 'вид камеры', cam_key: 'камера на этот вид (ключ)',
     props: 'панель свойств', tree: 'дерево', agent: 'агент', play: 'воспроизведение', shuttle_back: 'назад (J)', stop: 'стоп (K)', shuttle_fwd: 'вперёд (L)', frame_prev: 'кадр назад', frame_next: 'кадр вперёд',
     frame_prev5: '5 кадров назад', frame_next5: '5 кадров вперёд', key_prev: 'к прошлому ключу', key_next: 'к следующему ключу', start: 'в начало', end: 'в конец', work_in: 'начало рабочей области', work_out: 'конец рабочей области',
@@ -662,7 +687,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
       if (e.data && e.data.missing) { $('boot').textContent = 'Эта сцена ещё в старом формате.\nПереведи её в редактор кнопкой в карточке сцены («Перевести в редактор»).'; return; }
       throw e;
     }
-    ED.doc = j.scene; ED.rev = j.rev; ED.hist = j.history; ED.cues = j.cues; ED.info = j; ED.readonly = !!ED.ver; ED.prefabsRev = j.prefabsRev || 0;
+    ED.doc = j.scene; ED.rev = j.rev; ED.hist = j.history; ED.cues = j.cues; ED.info = j; ED.readonly = !!ED.ver; ED.prefabsRev = j.prefabsRev || 0; ED.propsRev = j.propsRev || 0;
     ED.locked = j.locked || null;
     ED.fix = q.get('fix') ? { vt: +q.get('vt') || 0, ops: [] } : null;     // ✋ правка из ревью (S8)
     if (ED.fix) ED.locked = null;
@@ -706,7 +731,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
       try {
         const r = await api(`/api/scene/rev?key=${encodeURIComponent(ED.key)}&el=${ED.el}`);
         ED.agent.setLock(r.locked);
-        if (!ED.readonly && ((r.rev > ED.rev) || (r.prefabsRev && ED.prefabsRev && r.prefabsRev !== ED.prefabsRev))) await reload('rev ' + r.rev);
+        if (!ED.readonly && ((r.rev > ED.rev) || (r.prefabsRev && ED.prefabsRev && r.prefabsRev !== ED.prefabsRev) || (r.propsRev && ED.propsRev && r.propsRev > ED.propsRev))) await reload('rev ' + r.rev);
       } catch {}
     }, 1500);
     try {                                                        // back after a reload for new prefabs: the same moment, selection and undo stack

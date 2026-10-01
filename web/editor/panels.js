@@ -1,7 +1,7 @@
 // Дерево объектов (виртуальный список, группы, перетаскивание в группу, F2, 👁 и 🔒) и свойства выбранного
 // (числа с колёсиком и перетаскиванием по подписи, ◆ ключи, источник, параметры префаба; камера, свет, сцена целиком).
 import { find, kindOf, setOps, valueAt, track, keyAt, animated, camKeyOps, EPS } from './keys.js';
-import { clone } from './ops.js';
+import { clone, newId } from './ops.js';
 
 const ROW = 22;
 const RAD = Math.PI / 180;
@@ -159,6 +159,7 @@ export function initPanels(ED) {
     row.append(check('видимость', !valueAt(o, 'hide', ED.t), v => ED.commit(setOps(d, id, 'hide', !v, ED.t, ED.autokey), `${v ? 'показать' : 'скрыть'}: ${o.name}`)),
       check('блок 🔒', !!o.locked, v => ED.commit([{ op: 'set', path: ['objects', id, 'locked'], value: v }], `${v ? 'заблокировать' : 'разблокировать'}: ${o.name}`)));
     props.append(row);
+    props.append(linkBox(o));
     if (o.type !== 'group') params(o);
     const src = o.src || {}, els = (ED.info.elNames || {});
     const s = div('src');
@@ -223,6 +224,44 @@ export function initPanels(ED) {
       sel.onchange = () => ED.commit(setOps(d, o.id, 'emotion', sel.value || null, t, true, true), `${o.name}: эмоция «${sel.value || 'как в поведении'}» с ${t.toFixed(2)} с`);
       box.append(Object.assign(div('prop'), {}), sel);
     }
+    return box;
+  }
+
+  // 🔗 привязка (links, engine/scene.js): с момента объект едет за другим поверх своих ключей — «ёжик сел в кресло», «клавиатура на выдвижной полке»
+  function linkBox(o) {
+    const d = ED.doc, box = div('links');
+    const nm = id => ((find(d, id) || {}).name) || id;
+    const links = (o.links || []).slice().sort((a, b) => a.from - b.from);
+    const set = (list, desc) => ED.commit([{ op: 'set', path: ['objects', o.id, 'links'], value: list.length ? list : null }], `${o.name}: ${desc}`);
+    const head = div('lhead'); head.textContent = '🔗 Привязка' + (links.length ? '' : ' — едет сам по себе'); box.append(head);
+    for (const l of links) {
+      const r = div('lrow');
+      const tb = (t, title) => { const b = document.createElement('button'); b.className = 'lt'; b.textContent = t.toFixed(2) + ' с'; b.title = title; b.onclick = () => ED.setT(t); return b; };
+      r.append(Object.assign(document.createElement('span'), { textContent: `за «${nm(l.to)}» с ` }), tb(l.from, 'к моменту привязки'),
+        Object.assign(document.createElement('span'), { textContent: l.until != null ? ' до ' : ' — до конца' }));
+      if (l.until != null) r.append(tb(l.until, 'к моменту отвязки'));
+      const cut = document.createElement('button'); cut.textContent = '✂ отвязать здесь'; cut.title = 'Alt+P — с курсора объект больше не едет за ним (сдвиг, который успел набрать, остаётся)';
+      cut.disabled = !(ED.t > l.from + EPS && (l.until == null || ED.t < l.until - EPS));
+      cut.onclick = () => set(links.map(x => (x.id === l.id ? Object.assign({}, x, { until: +ED.t.toFixed(3) }) : x)), `отвязать от «${nm(l.to)}» на ${ED.t.toFixed(2)} с`);
+      const del = document.createElement('button'); del.className = 'icon'; del.textContent = '✕'; del.title = 'Убрать привязку совсем';
+      del.onclick = () => set(links.filter(x => x.id !== l.id), `убрать привязку к «${nm(l.to)}»`);
+      r.append(cut, del);
+      box.append(r);
+    }
+    // к кому можно: не к себе, не к своим группам-родителям и не к тем, кто сам (через цепочку) привязан к этому объекту
+    const ups = new Set(); for (let x = o; x && x.parent; x = find(d, x.parent)) ups.add(x.parent);
+    const dependsOn = (id, seen = new Set()) => { if (id === o.id) return true; if (seen.has(id)) return false; seen.add(id); const x = find(d, id); return !!x && ((x.links || []).some(l => dependsOn(l.to, seen)) || (x.parent && dependsOn(x.parent, seen))); };
+    const opts = (d.objects || []).filter(x => x.id !== o.id && !ups.has(x.id) && !dependsOn(x.id));
+    const sel = document.createElement('select');
+    sel.append(Object.assign(document.createElement('option'), { value: '', textContent: `+ привязать к… (с ${ED.t.toFixed(2)} с)` }));
+    for (const x of opts) sel.append(Object.assign(document.createElement('option'), { value: x.id, textContent: (x.type === 'group' ? '▢ ' : '') + x.name }));
+    sel.onchange = () => {
+      if (!sel.value) return;
+      const t = +ED.t.toFixed(3);
+      set(links.concat([{ id: newId('l'), to: sel.value, from: t }]), `привязать к «${nm(sel.value)}» с ${t.toFixed(2)} с`);
+    };
+    box.append(sel);
+    box.append(Object.assign(div('hint'), { textContent: 'С этого момента объект едет и крутится вместе с тем, к кому привязан; его ключи и клипы работают как раньше (можно двигать поверх). Ctrl+P — привязать выбранное к активному (выбери ёжика, потом кресло), Alt+P — отвязать на курсоре.' }));
     return box;
   }
 
