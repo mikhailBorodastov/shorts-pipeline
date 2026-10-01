@@ -130,6 +130,9 @@ const StageEditor = {
     document.body.append(this.frame);
   },
 };
+addEventListener('message', ev => {                  // 🛠 «Мастерская предмета» из меню объекта в редакторе сцены
+  if (ev.origin === location.origin && ev.data && ev.data.type === 'editor-ws') wsOpen({ src: ev.data.src, key: ev.data.key });
+});
 addEventListener('message', ev => {
   if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'editor-close') return;
   const r = App.route;

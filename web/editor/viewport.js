@@ -278,7 +278,11 @@ export function initViewport(ED) {
     place(); ED.dirty = true;
   });
   const up = e => {
-    if (drag && drag.btn === 2 && !drag.moved && e && e.type === 'pointerup' && ED.objMenu) ED.objMenu(e, pick(e));
+    if (drag && drag.btn === 2 && !drag.moved && e && e.type === 'pointerup') {   // ПКМ без сдвига: по предмету — меню предмета, мимо — пометка для Claude
+      const id = pick(e), obj = id && find(ED.doc, id);
+      if (obj && ED.objCtx) { if (!ED.sel.has(id)) ED.select([id]); ED.objCtx(e.clientX, e.clientY, id); }
+      else if (ED.objMenu) ED.objMenu(e, id);
+    }
     drag = null;
   };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);

@@ -32,7 +32,8 @@ const LibItem = {
     return h('div.libitem',
       back,
       h('div.phead', h('h1', (KIND_ICON[{ characters: 'char', props: 'prop', sounds: 'sound' }[kind]] || '📦') + ' ' + C.name), h('span.dim', `lib:${id}@${C.latest} — основная`),
-        h('span.sp'), (kind === 'characters' || is3d) && h('button.primary', { onclick: () => wsOpen({ src: `lib:${id}@${LI.v}` }), title: 'Мастерская: скелет, позы, анимации (клипы), предметы в руках — в служебной сцене редактора' }, '🛠 Мастерская'),
+        h('span.sp'), kind !== 'sounds' && kind !== 'media' && h('button.primary', { onclick: () => LibItem.edit(), title: 'Все инструменты препродакшена на рабочей копии этой версии: нарисовать заново, правки пинами, 🖥 TRELLIS, 🦴 собрать / починить скелет, эмоции, ассеты. Потом «📚 В библиотеку» — новая версия.' }, '✏️ Править'),
+        (kind === 'characters' || is3d) && h('button', { onclick: () => wsOpen({ src: `lib:${id}@${LI.v}` }), title: 'Мастерская: скелет, позы, анимации (клипы), предметы в руках — в служебной сцене редактора' }, '🛠 Мастерская'),
         kind === 'characters' && h('a.btn', { href: '#/lib/char/' + slug }, '🦴 Лист персонажа')),
       h('div.li-main',
         h('div.li-view', LibItem.viewer(kind, ver, is3d)),
@@ -40,7 +41,8 @@ const LibItem = {
           LibItem.versions(C),
           LibItem.meta(C),
           is3d ? LibItem.fixBox(C, ver, running) : h('p.dim.small', kind === 'sounds' ? 'Звук правится в препродакшене видео (слои, кусок) и публикуется новой версией.'
-            : 'Это 2D-предмет (рисунок кодом): правки — в препродакшене видео, оттуда «⬆ новая версия». Сделать его объёмным — «🖥 TRELLIS» у пропса в препродакшене.'),
+            : kind === 'media' ? 'Видео кадрами для экранов: в сцене — ключ ch.screen у пропса с экраном. Новый кусок — «🎞 + видео по ссылке…» в редакторе.'
+            : 'Это 2D-предмет (рисунок кодом): «✏️ Править» — пины, «Поправить», нарисовать заново, сделать объёмным (🖥 TRELLIS); потом «📚 В библиотеку».'),
           LibItem.dupBox(C, ver, is3d),
           LibItem.usageBox(C),
           LibItem.archiveBox(C, ver))));
@@ -82,6 +84,15 @@ const LibItem = {
   },
   async setMeta(body, msg) {
     try { LI.card = await api('POST', '/api/lib/meta', Object.assign({ id: LI.id }, body)); LIB.items = null; UI.toast(msg); App.render(); } catch (e) { UI.toast(e.message, 'err'); }
+  },
+
+  // ✏️ править: рабочая копия версии в служебном видео канала -> полная карточка препродакшена (ws_api.lib_element)
+  async edit() {
+    try {
+      UI.toast('Открываю рабочую копию…');
+      const r = await api('POST', '/api/ws/workcopy', { id: LI.id, v: LI.v, channel: LibItem.chan() });
+      go(`#/p/${r.video}/pre/${r.el}`);
+    } catch (e) { UI.toast(e.message, 'err'); }
   },
 
   // ✏️ правка: пины на модели + «в целом» -> Claude (Opus) делает новую версию, превью, она становится основной

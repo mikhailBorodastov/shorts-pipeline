@@ -359,6 +359,9 @@ function duplicate() {
     o.id = map[sid];
     if (sid === id) o.name = uniq(o.name); else o.parent = map[o.parent] || o.parent;
     for (const list of Object.values(o.keys || {})) for (const k of list || []) k.id = newId('k');
+    for (const k of o.pose || []) k.id = newId('p');                  // ключи позы, клипы, привязки — свои id (id в сцене уникальны)
+    for (const c of o.clips || []) c.id = newId('c');
+    for (const l of o.links || []) { l.id = newId('l'); if (map[l.to]) l.to = map[l.to]; }   // привязан к тому, что дублируется вместе с ним — к его дублю
     const at = all.findIndex(x => x.id === (subtree(id).slice(-1)[0])) + 1 + fresh.length;
     ops.push({ op: 'add', path: ['objects'], item: o, at });
     fresh.push(o.id);
@@ -367,6 +370,31 @@ function duplicate() {
   ED.select(ids.map(id => map[id]));
   requestAnimationFrame(() => ED.vp.startModal('translate'));        // Blender: Shift+D goes straight into G
 }
+// контекстное меню объекта (ПКМ в 3D-виде без сдвига, ПКМ в дереве): как Object Context Menu в Blender
+ED.objCtx = (x, y, id) => {
+  const ids = selObjs(); if (!ids.length) return;
+  const one = ids.length === 1 ? find(ED.doc, ids[0]) : null;
+  const items = [
+    !ED.readonly && ED.objMenu && ['💬 Пометка для Claude…', () => ED.objMenu({ clientX: x, clientY: y }, id || ids[0])],   // S7 (agent.js)
+    ['⧉ Дублировать — Shift+D / Ctrl+D', duplicate],
+    one && one.src && !(ED.info.ws && one.id === 'asset') && /^(lib|el):/.test(one.src.prefab || '') && ['🛠 Мастерская предмета', () => parent.postMessage({ type: 'editor-ws', src: one.src.prefab, key: ED.key }, location.origin)],
+    ids.length > 1 && ['▢ Сгруппировать — Ctrl+G', group],
+    one && one.type === 'group' && ['⊟ Разгруппировать — Ctrl+Shift+G', ungroup],
+    ED.active && ids.length > 1 && ['🔗 Привязать к активному — Ctrl+P', linkSel],
+    ['🙈 Скрыть — H', hide],
+    ['🗑 Удалить — Delete', del],
+  ].filter(Boolean);
+  const m = $('menu');
+  m.innerHTML = ''; m.hidden = false;
+  for (const [t, fn] of items) { const b = document.createElement('button'); b.textContent = t; b.setAttribute('role', 'menuitem'); b.onclick = () => { close(); fn(); }; m.append(b); }
+  m.style.left = Math.min(x, innerWidth - 260) + 'px'; m.style.top = Math.min(y, innerHeight - items.length * 30 - 16) + 'px';
+  const off = e => { if (!m.contains(e.target)) close(); };
+  const close = () => { m.hidden = true; removeEventListener('pointerdown', off, true); };
+  setTimeout(() => addEventListener('pointerdown', off, true));
+  m.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  m.querySelector('button').focus();
+};
+ED.duplicate = () => duplicate();
 function uniq(name) {
   const base = name.replace(/\s*\d+$/, ''), used = new Set((ED.doc.objects || []).map(o => o.name));
   for (let k = 2; ; k++) if (!used.has(`${base} ${k}`)) return `${base} ${k}`;

@@ -34,7 +34,8 @@
   "t"
  ],
  "duplicate": [
-  "shift+d"
+  "shift+d",
+  "ctrl+d"
  ],
  "add": [
   "shift+a"

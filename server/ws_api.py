@@ -49,20 +49,26 @@ def asset_ref(e):
     return f"el:{e['id']}@v{r['v']}", r
 
 
+def lib_element(A, lid, v=None, channel=None):
+    """Рабочая копия предмета библиотеки (lid@v) в служебном видео канала -> (key, element). Есть — та же (с её черновиками и правками), нет — импорт.
+    Правится всеми инструментами препродакшена; «📚 В библиотеку» (publish) делает новую версию того же предмета."""
+    SA = A.stapi()
+    c = SA.channel_dir(channel)
+    key = "plan:" + service_video(A, c["id"])
+    _, card = SA._card(c, lid)
+    v = int(v or card["latest"])
+    d = A.load(key)
+    e = next((x for x in d.get("elements") or [] if (x.get("lib") or {}).get("id") == lid and (x.get("lib") or {}).get("v") == v and x.get("status") != "drop" and not x.get("ws")), None)
+    if not e:
+        r = SA.import_to_video(A, key, lid, v, "правка библиотечного предмета (рабочая копия)", "")
+        e = A._by_id(A.load(key).get("elements"), r["el"])
+    return key, e
+
+
 def open_ws(A, src, key=None):
     if src.startswith("lib:"):
         lid, _, v = src[4:].partition("@")
-        SA = A.stapi()
-        c = SA.channel_dir(None if not key else P.index()["videos"].get(key[5:], {}).get("channel"))
-        vid = service_video(A, c["id"])
-        key = "plan:" + vid
-        _, card = SA._card(c, lid)
-        v = int(v or card["latest"])
-        d = A.load(key)
-        e = next((x for x in d.get("elements") or [] if (x.get("lib") or {}).get("id") == lid and (x.get("lib") or {}).get("v") == v and x.get("status") != "drop"), None)
-        if not e:
-            r = SA.import_to_video(A, key, lid, v, "мастерская: правка библиотечного предмета", "")
-            e = A._by_id(A.load(key).get("elements"), r["el"])
+        key, e = lib_element(A, lid, v or None, None if not key else P.index()["videos"].get(key[5:], {}).get("channel"))
     else:
         if not key:
             raise ValueError("нужно видео (key) для элемента")
@@ -283,6 +289,9 @@ def grips_save(A, key, asset, grips):
 
 
 def handle_post(A, h, p, body):
+    if p == "/api/ws/workcopy":                                    # ✏️ править предмет библиотеки всеми инструментами препродакшена
+        key, e = lib_element(A, body.get("id", ""), body.get("v") or None, body.get("channel") or None)
+        h._json({"video": key[5:], "el": e["id"]}); return True
     if p == "/api/ws/grips":
         if "grips" in body:
             h._json(grips_save(A, body.get("key", ""), body.get("asset", ""), body.get("grips") or {})); return True

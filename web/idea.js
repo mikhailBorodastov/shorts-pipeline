@@ -410,7 +410,7 @@ Object.assign(Plan, {
     const same = (d.elements || []).filter(x => x.kind === e.kind), i = same.indexOf(e);
     const nav = (x, label) => (x ? h('a.btn', { href: `#/p/${d.id}/pre/${x.id}`, title: x.name }, label) : null);
     return [
-      h('div.row.elnav', h('a.btn', { href: `#/p/${d.id}/pre` }, '← Все элементы'), h('span.dim', `${K.icon} ${K.label} · ${i + 1} из ${same.length}`), h('span.sp'),
+      !d.service && h('div.row.elnav', h('a.btn', { href: `#/p/${d.id}/pre` }, '← Все элементы'), h('span.dim', `${K.icon} ${K.label} · ${i + 1} из ${same.length}`), h('span.sp'),
         nav(same[i - 1], '← ' + (same[i - 1] || {}).name), nav(same[i + 1], (same[i + 1] || {}).name + ' →')),
       h('div.eldetail', h('div.elleft',
         h('section.card.elinfo',

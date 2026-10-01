@@ -86,6 +86,7 @@ export function initPanels(ED) {
     }
     d.ondragover = e => { if (!P.drag || P.drag === r.id) return; if (r.kind === 'group' || r.kind === 'object') { e.preventDefault(); if (P.dropOn !== r.id) { P.dropOn = r.id; P.sig = ''; ED.uiDirty = true; } } };
     d.ondrop = e => { e.preventDefault(); e.stopPropagation(); if (P.drag) reparent(P.drag, r.kind === 'group' ? r.id : (find(ED.doc, r.id) || {}).parent || null); };
+    if (r.kind === 'object' || r.kind === 'group') d.oncontextmenu = e => { e.preventDefault(); if (!ED.sel.has(r.id)) ED.select([r.id]); ED.objCtx && ED.objCtx(e.clientX, e.clientY, r.id); };
     d.onclick = e => {
       if (r.kind === 'folder') { toggleOpen(r.id); return; }
       P.cursor = i;
@@ -157,7 +158,8 @@ export function initPanels(ED) {
     scale(o);
     const row = div('grp');
     row.append(check('видимость', !valueAt(o, 'hide', ED.t), v => ED.commit(setOps(d, id, 'hide', !v, ED.t, ED.autokey), `${v ? 'показать' : 'скрыть'}: ${o.name}`)),
-      check('блок 🔒', !!o.locked, v => ED.commit([{ op: 'set', path: ['objects', id, 'locked'], value: v }], `${v ? 'заблокировать' : 'разблокировать'}: ${o.name}`)));
+      check('блок 🔒', !!o.locked, v => ED.commit([{ op: 'set', path: ['objects', id, 'locked'], value: v }], `${v ? 'заблокировать' : 'разблокировать'}: ${o.name}`)),
+      Object.assign(document.createElement('button'), { textContent: '⧉ Дублировать', title: 'Копия рядом со всеми ключами, клипами и параметрами — Shift+D или Ctrl+D (сразу двигается мышью), ПКМ по предмету (в 3D или в дереве) — меню', onclick: () => ED.duplicate() }));
     props.append(row);
     props.append(linkBox(o));
     if (o.type !== 'group') params(o);

@@ -123,7 +123,29 @@ const Plan = {
     const key = 'plan:' + d.id, M = REF.modes[d.mode] || REF.modes.short, tabs = tabsOf(d);
     if (!tabs.some(t => t.key === tab)) tab = tabs.some(t => t.key === d.stage) ? d.stage : tabs[0].key;
     if (isIdea(d) && d.stage !== tab) setTimeout(() => Store.set(key, ['stage'], tab), 0);     // the last opened stage (the project screen shows it)
+    if (d.service === 'workshop') return h('div.plan', this.libHead(d, key, sub), h('div.tabbody', this.pre(d, key, M, sub)));   // рабочие копии библиотеки
     return h('div.plan', this.head(d, key, M), this.tabbar(d, tab, M), h('div.tabbody', this[tab](d, key, M, sub)));
+  },
+
+  // служебное видео канала (🛠 Мастерская): здесь правятся предметы библиотеки всеми инструментами препродакшена, «📚 В библиотеку» — новая версия
+  libHead(d, key, sub) {
+    const e = sub && (d.elements || []).find(x => x.id === sub), L = e && e.lib;
+    const pub = async () => {
+      try {
+        if (e.status !== 'ok') Store.set(key, ['elements', e.id, 'status'], 'ok', true);
+        await Store.flushAll();
+        const r = await api('POST', '/api/ws/publish', { key, asset: e.id });
+        LIB.items = null; if (window.LibItem) LI.card = null;
+        UI.toast('📚 ' + r.summary);
+        await Store.load(key, true); App.render();
+      } catch (er) { UI.toast(er.message, 'err'); }
+    };
+    return h('div.phead.libhead',
+      h('a.btn', { href: L ? '#/lib/item/' + L.id : '#/lib' }, L ? '← в библиотеку' : '← библиотека'),
+      h('b', '📚 ' + (e ? e.name : 'Рабочие копии библиотеки')),
+      L && h('span.dim', `рабочая копия lib:${L.id}@${L.v} — правь как в препродакшене, сцены и библиотека не меняются, пока не сохранишь`),
+      h('span.sp'),
+      L && h('button.primary', { onclick: pub, title: 'Текущий черновик этой карточки -> новая версия предмета в библиотеке (она станет основной; сцены держат свою @N)' }, '📚 В библиотеку: новая версия'));
   },
 
   head(d, key, M) {
