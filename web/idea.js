@@ -470,14 +470,37 @@ Object.assign(Plan, {
   finalBox(d, key, e) {
     const F = ['elements', e.id, 'final'], fin = e.final || [];
     return h('section.card.finalcard', { class: e.status === 'ok' ? 'ok' : '' },
-      h('div.card-head', h('h3', '🎬 Для финала'), h('span.dim.small', 'черновик — не финал: что должно быть в готовом ассете. Это ТЗ для сборки ролика; @ — сослаться на другой элемент')),
-      fin.length ? h('div.finlist', fin.map((f, i) => h('div.finrow',
-        h('span.fnum', { class: f.x != null ? 'pinned' : '', title: f.x != null ? 'Пин на картинке черновика' : '' }, i + 1),
-        area(key, [...F, f.id, 'text'], { cls: 'box', ph: e.kind === 'sound' ? '«в финале — эхо шахты, хвост 2 с»' : '«снег падает хлопьями и налипает на @[Табличка трассы]»' }),
+      h('div.card-head', h('h3', '🎬 Для финала'), h('span.dim.small', 'что должно быть в готовой сцене / ассете — ТЗ: агент делает это в редакторе сцены и отмечает ✓; @ — сослаться на другой элемент')),
+      fin.length ? h('div.finlist', fin.map((f, i) => h('div.finrow', { class: f.done ? 'done' : '' },
+        h('span.fnum', { class: f.x != null ? 'pinned' : '', title: f.x != null ? 'Пин на картинке черновика' : '' }, f.done ? '✓' : i + 1),
+        h('div.grow', area(key, [...F, f.id, 'text'], { cls: 'box', ph: e.kind === 'sound' ? '«в финале — эхо шахты, хвост 2 с»' : '«снег падает хлопьями и налипает на @[Табличка трассы]»' }),
+          f.done && f.reply && h('div.small.dim', '✓ ' + f.reply)),
+        h('button.icon', { title: f.done ? 'Вернуть в работу' : 'Отметить сделанным', onclick: () => Store.set(key, [...F, f.id, 'done'], !f.done, true) }, f.done ? '↺' : '✓'),
         f.x != null && h('button.icon', { title: 'Убрать пин с картинки (текст останется)', onclick: () => { Store.set(key, [...F, f.id, 'x'], null); Store.set(key, [...F, f.id, 'y'], null, true); } }, '📍×'),
         h('button.icon.del', { title: 'Удалить пункт', onclick: () => Store.del(key, F, f.id) }, '×'))))
         : h('p.dim.small', e.kind === 'sound' ? 'Пока пусто.' : e.status === 'ok' ? 'Пока пусто. Кликни по черновику — поставишь пин «для финала», или напиши ниже.' : 'Пока пусто. Когда утвердишь черновик, клик по нему будет ставить пины «для финала».'),
-      addLine('+ для финала: что должно быть в готовом ассете — Enter (можно @элемент)', t => Store.add(key, F, { id: uid('f'), text: t }), key + '|addfin|' + e.id));
+      addLine('+ для финала: что должно быть в готовом ассете — Enter (можно @элемент)', t => Store.add(key, F, { id: uid('f'), text: t }), key + '|addfin|' + e.id),
+      Plan.finalDo(d, key, e));
+  },
+  // 🎬 «для финала» в работу: сцена в редакторе — агент делает пункты в ней (и пункты её состава) и закрывает; пропс / персонаж — в правку черновика («Поправить»)
+  finalDo(d, key, e) {
+    const open = (e.final || []).filter(f => !f.done && (f.text || '').trim());
+    if (!open.length || e.kind === 'sound') return null;
+    if (e.kind === 'scene') {
+      const ok = e.stage && e.stage.work;
+      return h('div.row', h('span.dim.small', ok ? `открытых: ${open.length} — агент сделает их прямо в сцене редактора и отметит ✓` : 'Сначала сцена должна быть в редакторе (🎬) — пункты делаются там'), h('span.sp'),
+        ok && h('button.claude', { title: 'Агент (Opus) откроет сцену, сделает пункты (и «для финала» персонажей и пропсов этой сцены), проверит кадрами и отметит сделанное', onclick: () => {
+          AgentPanel.toggle(true);
+          AgentPanel.say(`🎬 Сделай в сцене «${e.name}» (EL ${e.id}) пункты «для финала» — её и её состава (список в scene brief):\n` + open.map((f, i) => `${i + 1}. [${f.id}] ${f.text}`).join('\n')
+            + `\nПроверь кадрами, закрой сделанное: scene final-done ${d.id} ${e.id} ID,ID "что сделано". Что не получилось — не закрывай и скажи почему.`, { model: 'opus', ctx: { el: e.id } });
+        } }, `✨ Сделать в сцене (${open.length})`));
+    }
+    return h('div.row', h('span.dim.small', `открытых: ${open.length} — в сценах агент видит их сам; поменять сам ассет — через правку черновика`), h('span.sp'),
+      h('button', { title: 'Перенести открытые пункты в «правку черновика» — потом «Поправить» сделает новую версию с ними', onclick: () => {
+        const P = ['elements', e.id, 'fx', 'main', 'notes'];
+        for (const f of open) Store.add(key, P, { id: uid('n'), text: f.text });
+        UI.toast('✏️ Пункты — в правке черновика: нажми «Поправить»');
+      } }, '→ в правку черновика'));
   },
 
   elRefs(d, key, e) {

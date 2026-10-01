@@ -722,3 +722,6 @@ body.agent-open .stage-editor { right: 380px; }
 .is-item.busy { opacity: .5; }
 .is-item.done { border-color: #3fbf6a; }
 .is-item.done::after { content: '✓'; position: absolute; top: 4px; right: 6px; background: #3fbf6a; color: #fff; border-radius: 50%; width: 22px; height: 22px; line-height: 22px; text-align: center; font-weight: 700; }
+
+.finrow.done textarea { text-decoration: line-through; opacity: .6; }
+.finrow.done .fnum { background: #3fbf6a; color: #fff; }

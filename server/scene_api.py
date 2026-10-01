@@ -402,6 +402,30 @@ def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edi
 
 
 # ---------------------------------------------------------------- prefabs.js: what things there are and their parameters
+def scene_finals(A, key, el):
+    """🎬 «Для финала» — ТЗ автора к готовому ролику: пункты самой сцены и её состава (персонажи, пропсы), ещё не сделанные."""
+    plan = A.load(key)
+    els = {e["id"]: e for e in plan.get("elements") or []}
+    sc = els.get(el)
+    if not sc:
+        return []
+    out = []
+    for e in [sc] + [x for x, _ in A.pr().cast_of(sc, plan)]:
+        for f in e.get("final") or []:
+            if (f.get("text") or "").strip() and not f.get("done"):
+                out.append({"id": f["id"], "el": e["id"], "elName": e.get("name", ""), "kind": e.get("kind"), "text": f["text"].strip(), "own": e is sc})
+    return out
+
+
+def finals_brief(A, key, el):
+    F = scene_finals(A, key, el)
+    if not F:
+        return "Для финала (ТЗ автора): —"
+    L = ["Для финала (ТЗ автора к готовому ролику — сделай в этой сцене: предметы, поведение, экраны, свет; закрой сделанное: scene final-done PLAN EL ID[,ID] \"что сделано\"):"]
+    L += [f"  [{f['id']}] {'сцена' if f['own'] else f['elName']}: {f['text']}" for f in F]
+    return "\n".join(L)
+
+
 def prefab_file(A, key, ref):
     """lib:<kind>/<slug>@N | el:<id>@vN -> путь prefab.js (или None)."""
     m = re.match(r"^lib:([a-z]+/[a-z0-9-]+)@(\d+)$", ref or "")
@@ -1032,7 +1056,8 @@ def run_job(A, job):
 def cli(A, argv):
     """scene show PLAN EL | scene brief PLAN EL | scene frame PLAN EL t[,t2] | scene ops PLAN EL '<JSON>' --desc "…" [--by claude|author] | scene history PLAN EL [n]
     | scene undo PLAN EL | scene version PLAN EL ["заметка"] | scene clip PLAN EL | scene validate PLAN EL | scene finish PLAN EL
-    | scene done PLAN EL NOTE_ID[,ID2…] ["что сделано"] — закрыть пометки автора (📌) как исправленные"""
+    | scene done PLAN EL NOTE_ID[,ID2…] ["что сделано"] — закрыть пометки автора (📌) как исправленные
+    | scene final-done PLAN EL FINAL_ID[,ID2…] ["что сделано"] — пункты «🎬 для финала» сделаны"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
@@ -1055,6 +1080,24 @@ def cli(A, argv):
         ops = json.loads(a[2])
         print(apply(A, key, el, ops if isinstance(ops, list) else [ops], by=A._opt(a, "--by", "claude"), desc=A._opt(a, "--desc", ""),
                     allow=(A._opt(a, "--allow", "") or "").split(",") if A._opt(a, "--allow") else ()))
+        return True
+    if cmd == "final-done":                    # 🎬 пункты «для финала» сделаны (в видео: elements[].final[].done + что сделано)
+        plan = A.load(key)
+        ids = [i for i in a[2].split(",") if i.strip()]
+        what = a[3] if len(a) > 3 and not a[3].startswith("--") else ""
+        ops, found = [], set()
+        for e in plan.get("elements") or []:
+            for f in e.get("final") or []:
+                if f.get("id") in ids:
+                    found.add(f["id"])
+                    ops.append({"op": "set", "path": ["elements", e["id"], "final", f["id"], "done"], "value": True})
+                    if what:
+                        ops.append({"op": "set", "path": ["elements", e["id"], "final", f["id"], "reply"], "value": what})
+        miss = [i for i in ids if i not in found]
+        if miss:
+            raise ValueError("нет пунктов «для финала»: " + ", ".join(miss) + " (открытые — в scene brief)")
+        A.apply_ops(key, ops)
+        print(f"🎬 сделано: {len(found)}")
         return True
     if cmd == "done":                          # 📌 пометки исправлены: status done + что сделано (пометка уходит из списка открытых)
         d = load_scene(A, key, el)
@@ -1095,6 +1138,7 @@ def cli(A, argv):
         print("Комментарии автора:", "; ".join(f"[{c.get('mode', 'note')}] {names.get(c.get('target'), c.get('target') or 'сцена')} t={c.get('t')}: {c.get('text')} (id {c.get('id')})" for c in cm) or "—")
         print("Последние правки:", "; ".join(f"{'автор' if h_.get('by') == 'author' else 'Claude'}: {h_.get('desc')}" for h_ in history(A, key, el, 12)) or "—")
         print(channels_brief(A, key, d))
+        print(finals_brief(A, key, el))
         return True
     if cmd == "frame":                         # S7: кадр сцены в момент t (или несколько через запятую) -> пути PNG
         wd = os.path.join(work_dir(A, key[5:], el), "_agent")

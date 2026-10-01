@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 9                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 10                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -67,6 +67,7 @@ def system_prompt(A, vid, mode):
 - python {sp} scene brief {vid} EL                         — сцена редактора: объекты, свет, камера, префабы, authored, комментарии
 - python {sp} scene ops {vid} EL '<JSON-массив операций>' --desc "что сделано"  — ОДНА пачка правок сцены (в историю, отменяется)
 - python {sp} scene frame {vid} EL 2.5[,4]                  — кадр сцены в момент t → путь PNG; посмотри его через Read
+- python {sp} scene final-done {vid} EL ID1,ID2 "что сделано" — пункты «🎬 для финала» (ТЗ автора к готовой сцене, в scene brief) сделаны — закрыть так же, только проверенные кадром
 - python {sp} scene done {vid} EL ID1,ID2 "что сделано"      — закрыть 📌 пометки автора, которые исправил (id — в scene brief); ОБЯЗАТЕЛЬНО после правки по пометкам,
   закрывай только проверенные кадром; если пометку сделать не получилось — не закрывай и скажи почему
 - python {sp} scene history {vid} EL | scene undo {vid} EL  — история / отменить последнюю пачку
@@ -127,7 +128,7 @@ def system_prompt(A, vid, mode):
         build = f"""
 
 Режим «✨ Собрать» — доведи видео до собранного ролика в ревью, как Claude Code по _studio/CLAUDE.md (шаги 0 и A), но без викторины:
-1. Прочитай видео (show) и сцены редактора (scene brief каждой). Проект ролика — {vdir.replace(chr(92), '/')} (если его нет — python {sp} produce {vid}).
+1. Прочитай видео (show) и сцены редактора (scene brief каждой). Открытые «🎬 для финала» сцен (в brief) — ТЗ автора: сделай их в сценах до монтажа и закрой (scene final-done). Проект ролика — {vdir.replace(chr(92), '/')} (если его нет — python {sp} produce {vid}).
 2. Сценарий — script.md проекта в формате сценариста (### 0:00–0:04 — НАЗВАНИЕ, **Картинка:**, **VO:** + строки «> …»); голос — из style/voice.json канала (строки voice / rate в шапке — только если нужен другой),
    подача — стайл-гайд канала (style/style-guide.md) и _studio/prompts/style-guide.md; правила канала (channel.json → rules / ruleDefs) соблюдай.
    Картинку пиши сценами редактора (их названия). Длина — как просит видео (коротко, если не сказано). Проверь: montage check, исправь ❌.
