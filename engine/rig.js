@@ -58,7 +58,8 @@ function character(def) {
   def.needs = (def.costumes || []).map(c => (/^(\/|https?:)/.test(c) ? c : base + c).replace(location.origin, ''));
   def.skel = RIG.skeletons[def.skeleton] || null;
   if (/\/characters\/[^/]+\/v\d+\/$/.test(base)) def.extrasUrl = base + '../emotions.json';   // и в проекте ролика: assets/studio/lib/characters/<slug>/   // библиотека: эмоции, утверждённые после публикации — общие для всех версий
-  if (def.rig === 'parts') def.rigUrl = base + 'rig.json';           // части: суставы, крепление частей, позы — данными (редактор скелета их двигает)
+  if (def.rig === 'parts') def.rigUrl = base + 'rig.json';
+  def.gripsUrl = base + 'grips.json';                                // S10.2: как персонаж держит предметы (мастерская «✋ Предметы»)           // части: суставы, крепление частей, позы — данными (редактор скелета их двигает)
   // префаб сцены: kind 'group' — engine/scene.js собирает его как 3D-пропс (S.lib), см. charCard
   def.kind = 'group';
   if (def.rig === 'model') {                                       // S9: 3D-персонаж из Blender (model.glb с арматурой) — modelChar
@@ -81,6 +82,9 @@ async function rigLoadExtras(def) {
   }
   if (def.extrasUrl) {
     try { const r = await fetch(def.extrasUrl + '?v=' + Date.now()); if (r.ok) def.emotions = Object.assign({}, def.emotions || {}, await r.json()); } catch (e) {}
+  }
+  if (def.gripsUrl) {
+    try { const r = await fetch(def.gripsUrl + '?v=' + Date.now()); if (r.ok) def.grips = Object.assign({}, def.grips || {}, await r.json()); } catch (e) {}
   }
   return def;
 }
@@ -529,6 +533,14 @@ function rigDraw(ctx, char, pose, x, y, h, T) {
 // o: name, h (рост, м), px ([w, h] холста), size (рост на холсте), o (объект сцены: params.pose / params.emotion, keys pose.* / face.* / wear.*)
 // c.pose — текущая поза (поведение сцены или клип S5 пишут сюда); Paper Mario: channel rules — PAPER_RULES
 const PAPER_RULES = { paperFacing: true, facingMaxDeg: 40 };
+// S10.2 хват: char.grips[<предмет>] = { off: [dx, dy] (доли роста, оси карточки), rot (рад, к направлению предплечья), scale, back, follow, pose }
+// ключ предмета — ссылка без версии: 'props/trubka' (lib:props/trubka@N) | 'el:<id>' ; '*' — по умолчанию для любого
+function rigGripKey(ref) { const m = /^lib:([a-z]+\/[a-z0-9-]+)@/.exec(ref || ''); if (m) return m[1]; const e = /^el:([A-Za-z0-9_-]+)@/.exec(ref || ''); return e ? 'el:' + e[1] : ref; }
+function rigGrip(char, ref, slot) {
+  const G = (char && char.grips) || {}, k = rigGripKey(ref);
+  return Object.assign({}, G['*'] || {}, G[k] || {}, (G[k] && G[k][slot]) || {});
+}
+
 function charCard(w, char, opt = {}) {
   const size = opt.size || 600, cw = opt.px ? opt.px[0] : 800, ch = opt.px ? opt.px[1] : 900, foot = 10;
   const hM = opt.h || char.h || 0.9;                                    // рост персонажа в метрах
@@ -538,7 +550,7 @@ function charCard(w, char, opt = {}) {
   c = w.card({
     name: opt.name || char.name, px: [cw, ch], h: hM * ch / size, foot, rim: 6, dynamic: true, thick: 0.02, glow: opt.self == null ? 0.22 : opt.self, noItem: !!opt.o,
     state(lt, T) { return JSON.stringify(cur(), (k, v) => (k === 'card' ? undefined : typeof v === 'number' ? Math.round(v * 100) / 100 : v)) + '|' + Math.round(T * 8) + '|' + blinkAt(T, (char.base || {}).seed || 1).toFixed(1); },
-    draw(g, cw2, ch2, lt, T) { const st = rigDraw(g, char, cur(), cw2 / 2, ch2 - foot, size, T); if (c) c.lastJoints = st && st.joints; },
+    draw(g, cw2, ch2, lt, T) { const st = rigDraw(g, char, cur(), cw2 / 2, ch2 - foot, size, T); if (c) { c.lastJoints = st && st.joints; if (c.onJoints) c.onJoints(); } },   // onJoints — предметы в руках (scene.js)
   });
   c.char = char;
   c.cardInfo = { cw, ch, size, foot, hM };                   // холст px -> карточка м: редактор ставит ручки IK на кончики лап
@@ -548,7 +560,12 @@ function charCard(w, char, opt = {}) {
   c.keyed = T => rigPose(c.basePose, c.keyLayer(T));
   // S5: всё, что задаёт объект сцены (клипы, ходьба, ключи позы, IK, эмоция, костюмы, липсинк) поверх base (база персонажа или поза поведения)
   c.env = T => (so.lipsync && so.lipsync.sound ? rigEnvAt(so.lipsync.sound, T) : 0);       // липсинк: громкость звука сцены
-  c.scenePose = (T, base) => rigPose(rigSceneLayer(char, so, T, base || c.basePose, c.env || null), c.keyLayer(T));
+  c.holdLayer = T => {                                          // S10.2: поза хвата предмета в руке (grips[предмет].pose) — под ключами позы
+    let p = {};
+    if (typeof sceneHoldSlots === 'function') for (const slot of sceneHoldSlots(so)) { const ref = sceneHoldAt(so, slot, T); const g = ref && rigGrip(char, ref, slot); if (g && g.pose) p = rigPose(p, g.pose); }
+    return p;
+  };
+  c.scenePose = (T, base) => rigPose(rigPose(rigSceneLayer(char, so, T, base || c.basePose, c.env || null), c.holdLayer(T)), c.keyLayer(T));
   c.keyLayer = T => rigKeyLayer(char, so, T);
   c._keyLayerOld = T => {                                    // (было здесь; теперь rigKeyLayer — общий для карточки и 3D-модели)
     const K = (so.keys) || {};
@@ -709,4 +726,4 @@ function modelChar(w, char, opt = {}) {
   return G;
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { RIG, rigAnim, rigTrackAt, rigClipLayer, rigBlend, rigPose, rigPartsBones, rigIK2, rigSceneLayer, rigPath, rigGaitLayer };
+if (typeof module !== 'undefined' && module.exports) module.exports = { RIG, rigGripKey, rigGrip, rigAnim, rigTrackAt, rigClipLayer, rigBlend, rigPose, rigPartsBones, rigIK2, rigSceneLayer, rigPath, rigGaitLayer };

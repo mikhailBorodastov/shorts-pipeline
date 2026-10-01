@@ -406,9 +406,18 @@ def props3d_choices(A, key, plan):
     """Чем можно заменить предмет сцены (S3): 3D-пропсы этого видео (el:<id>@v<N>, выбранная версия) и библиотеки канала (lib:props/<slug>@<N>)."""
     pid = _pid(key)
     out = []
+
+    def lib_has(lid):
+        try:
+            c = A.stapi().channel_dir(P.index()["videos"].get(pid, {}).get("channel"))
+            return os.path.isfile(os.path.join(A.stapi().lib_dir(c), *lid.split("/"), "prop.json"))
+        except Exception:
+            return False
     for x in plan.get("elements") or []:
         rs = [r for r in x.get("renders") or [] if r.get("three3")]
         if x.get("kind") != "prop" or not rs or x.get("status") == "drop":
+            continue
+        if (x.get("lib") or {}).get("id") and lib_has(x["lib"]["id"]):        # копия библиотечного пропса — в списке и так есть lib: (одна ссылка — один хват)
             continue
         r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1])
         out.append({"ref": f"el:{x['id']}@v{r['v']}", "name": x.get("name", ""), "img": "/" + r["img"] if r.get("img") else "",

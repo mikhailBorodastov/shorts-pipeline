@@ -242,7 +242,48 @@ def save_bonemap(A, key, asset, mp):
     return {"v": v, "rid": rid, "bones": len(clean)}
 
 
+def grips_get(A, key, asset):
+    """«✋ Предметы»: как персонаж держит предметы (grips.json рядом с prefab.js версии ассета)."""
+    e, r, d = _asset(A, key, asset)
+    try:
+        g = json.load(open(os.path.join(d, "grips.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        g = {}
+    return {"grips": g, "v": r.get("v"), "dir": r["dir"]}
+
+
+def grips_save(A, key, asset, grips):
+    """Хваты -> grips.json рабочей версии ассета (данные, как emotions.json: без новой версии; в библиотеку — «📚 В библиотеку»).
+    Ключ — предмет без версии: 'props/<slug>' (lib:) или 'el:<id>'; значение — {off:[dx,dy] доли роста в осях предмета, rot, scale, back, follow, pose}."""
+    e, r, d = _asset(A, key, asset)
+    clean = {}
+    for k, g in (grips or {}).items():
+        if not isinstance(g, dict) or not re.match(r"^(props/[a-z0-9-]+|el:[A-Za-z0-9_-]+|\*)$", str(k)):
+            continue
+        x = {}
+        if isinstance(g.get("off"), list):
+            x["off"] = [round(float(v or 0), 4) for v in g["off"][:3]]
+        for f in ("rot", "scale"):
+            if g.get(f) is not None:
+                x[f] = round(float(g[f]), 4)
+        for f in ("back", "follow"):
+            if g.get(f) is not None:
+                x[f] = bool(g[f])
+        if isinstance(g.get("pose"), dict) and g["pose"]:
+            x["pose"] = {k2: v for k2, v in g["pose"].items() if k2 in ("bones", "ik", "face")}
+        for slot in ("handR", "handL"):                       # хват под конкретную руку (rigGrip: G[k][slot] поверх G[k])
+            if isinstance(g.get(slot), dict):
+                x[slot] = g[slot]
+        clean[k] = x
+    A.write_text(os.path.join(d, "grips.json"), json.dumps(clean, ensure_ascii=False, indent=1))
+    return {"ok": True, "n": len(clean), "v": r.get("v")}
+
+
 def handle_post(A, h, p, body):
+    if p == "/api/ws/grips":
+        if "grips" in body:
+            h._json(grips_save(A, body.get("key", ""), body.get("asset", ""), body.get("grips") or {})); return True
+        h._json(grips_get(A, body.get("key", ""), body.get("asset", ""))); return True
     if p == "/api/ws/setup":
         h._json(setup_info(A, body.get("key", ""), body.get("asset", ""))); return True
     if p == "/api/ws/bonemap":
@@ -259,13 +300,17 @@ def handle_post(A, h, p, body):
 
 def cli(A, argv):
     """ws open <lib:kind/slug[@N] | el:<id>> [--video ID] — открыть мастерскую (создаёт служебную сцену) -> {video, el}
-    ws clip <video> <el сцены> "Имя" t0 t1 [--loop] [--type hog] — ключи позы ассета -> клип библиотеки"""
+    ws clip <video> <el сцены> "Имя" t0 t1 [--loop] [--type hog] — ключи позы ассета -> клип библиотеки
+    ws grips <video> <asset> ['{"props/trubka": {"off": [0, -0.12], "rot": 0.3, "pose": {...}}}'] — хваты предметов (S10.2)"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
     if cmd == "open":
         v = A._opt(a, "--video")
         print(json.dumps(open_ws(A, a[0], "plan:" + v if v else None), ensure_ascii=False)); return True
+    if cmd == "grips":                                           # ws grips <video> <asset> ['<JSON хватов>'] — показать / записать
+        key = "plan:" + a[0]
+        print(json.dumps(grips_save(A, key, a[1], json.loads(a[2])) if len(a) > 2 else grips_get(A, key, a[1]), ensure_ascii=False, indent=1)); return True
     if cmd == "clip":
         print(json.dumps(save_clip(A, "plan:" + a[0], a[1], "asset", a[2], a[3], a[4], "--loop" in a, A._opt(a, "--type", "")), ensure_ascii=False)); return True
     return False

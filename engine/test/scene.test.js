@@ -136,5 +136,24 @@ test('3D-пропсы: ссылки lib: / el: — адреса prefab.js и с�
   assert.deepStrictEqual(S.scenePropRefs({ objects: [{ src: { prefab: 'crt' } }, { src: { prefab: 'lib:props/a@1' } }, { src: { prefab: 'lib:props/a@1' } }, {}] }), ['lib:props/a@1']);
 });
 
+test('предмет в руке: ступенькой по ключам hold.<рука>, статичный hold, ссылки для загрузки', () => {
+  const o = { hold: { handL: 'lib:props/kruzhka@1' }, keys: { 'hold.handR': [{ id: 'b', t: 6, v: null }, { id: 'a', t: 3, v: 'lib:props/trubka@2' }] } };
+  assert.deepStrictEqual(S.sceneHoldSlots(o).sort(), ['handL', 'handR']);
+  assert.strictEqual(S.sceneHoldAt(o, 'handR', 2.9), null);
+  assert.strictEqual(S.sceneHoldAt(o, 'handR', 3), 'lib:props/trubka@2');
+  assert.strictEqual(S.sceneHoldAt(o, 'handR', 6.5), null);
+  assert.strictEqual(S.sceneHoldAt(o, 'handL', 10), 'lib:props/kruzhka@1');
+  assert.deepStrictEqual(S.scenePropRefs({ objects: [o] }).sort(), ['lib:props/kruzhka@1', 'lib:props/trubka@2']);
+});
+test('хват: ключ предмета без версии, хват руки поверх общего', () => {
+  const R = require('../rig.js');
+  assert.strictEqual(R.rigGripKey('lib:props/trubka@2'), 'props/trubka');
+  assert.strictEqual(R.rigGripKey('el:e12ab@v3'), 'el:e12ab');
+  const ch = { grips: { '*': { scale: 0.9 }, 'props/trubka': { rot: 0.3, handL: { rot: -0.3 } } } };
+  assert.strictEqual(R.rigGrip(ch, 'lib:props/trubka@2', 'handR').rot, 0.3);
+  assert.strictEqual(R.rigGrip(ch, 'lib:props/trubka@2', 'handL').rot, -0.3);
+  assert.strictEqual(R.rigGrip(ch, 'lib:props/trubka@2', 'handR').scale, 0.9);
+});
+
 console.log(`\n${n - failed} / ${n} тестов прошли`);
 process.exit(failed ? 1 : 0);

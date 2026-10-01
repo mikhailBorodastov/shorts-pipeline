@@ -154,3 +154,9 @@ input[type=number] { width: 64px; }
 #ws .ws-body { display: flex; flex-direction: column; gap: 6px; }
 #ws .ws-body button { text-align: left; }
 #ws .ws-body button.primary { background: var(--accent, #d97757); color: #fff; }
+#ws .ws-props { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 4px; max-height: 210px; overflow: auto; }
+#ws .ws-props .mi { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; border: 1px solid transparent; border-radius: 6px; background: none; color: inherit; font-size: 11px; text-align: center; }
+#ws .ws-props .mi img { width: 56px; height: 56px; object-fit: contain; }
+#ws .ws-props .mi.on, #ws .ws-props .mi:hover { background: #23405f; border-color: #4d9cff; }
+#ws .ws-grip { display: flex; flex-direction: column; gap: 5px; }
+#ws .ws-sl { display: grid; grid-template-columns: 92px 1fr 40px; align-items: center; gap: 6px; }

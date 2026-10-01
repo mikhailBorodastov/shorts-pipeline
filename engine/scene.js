@@ -192,8 +192,89 @@ function scnCapture(w, fn) {
 
 // 3D-пропсы из библиотеки канала и препродакшена (S3, props3d.js): src.prefab = 'lib:props/<slug>@<N>' | 'el:<элемент>@v<N>'.
 // Их prefab.js грузятся до сборки мира (loadSceneProps) и лежат в S.lib; prefabs.js сцены их не содержит.
+// ---------------------------------------------------------------- предметы в руках (S10.2)
+// o.hold = { handR: ref } — всё время; o.keys['hold.handR'] = [{ id, t, v: ref | null }] — с момента (ступенькой: взял в 4.2 с, положил в 7 с)
+function sceneHoldSlots(o) {
+  const s = new Set(Object.keys((o && o.hold) || {}));
+  for (const k of Object.keys((o && o.keys) || {})) if (k.startsWith('hold.')) s.add(k.slice(5));
+  return [...s];
+}
+function sceneHoldAt(o, slot, t) {
+  const K = ((o.keys || {})['hold.' + slot] || []).slice().sort((a, b) => a.t - b.t);
+  let v = ((o.hold || {})[slot]) || null;
+  for (const k of K) if (k.t <= t + 1e-6) v = k.v || null;
+  return v;
+}
+function sceneHoldRefs(o) {
+  const out = Object.values((o && o.hold) || {});
+  for (const [k, list] of Object.entries((o && o.keys) || {})) if (k.startsWith('hold.')) for (const x of list || []) out.push(x.v);
+  return out.filter(Boolean);
+}
+// точка кисти на карточке: ёжик — кончик лапы (armL.end), риг частей — кость слота (slots) и её конец
+function scnHandJoints(char, slot, J) {
+  const sl = ((char.skel && char.skel.slots) || {})[slot] || (slot === 'handL' ? 'armL' : slot === 'handR' ? 'armR' : slot);
+  if (J[sl + '.end']) return [J[sl + '.end'], J[sl]];
+  const bones = (char.rigData && char.rigData.bones) || [];
+  const ch = bones.find(b => b.parent === sl && J[b.id + '.end']);
+  if (ch) return [J[ch.id + '.end'], J[ch.id]];
+  return [J[sl], null];
+}
+// 2D-карточка: предмет в точку кисти, по направлению предплечья (зовётся и после перерисовки карточки — суставы того же кадра)
+function scnHoldPlaceCard(card, rec) {
+  const I = card.cardInfo, J = card.lastJoints, hc = I.hM * I.ch / I.size, wc = hc * I.cw / I.ch, fm = I.foot / I.ch * hc;
+  for (const [slot, h] of Object.entries(rec.holds || {})) {
+    if (!h) continue;
+    const [P, A] = J ? scnHandJoints(card.char, slot, J) : [null, null];
+    if (!P) { h.holder.visible = false; continue; }
+    const inner = card.inner || card, grip = h.grip || {};
+    if (h.holder.parent !== inner) inner.add(h.holder);
+    const off = grip.off || [0, 0], ang = A ? -Math.atan2(P[1] - A[1], P[0] - A[0]) : -Math.PI / 2;
+    const rz = (grip.follow === false ? 0 : ang + Math.PI / 2) + (grip.rot || 0), sc = grip.scale || 1;   // как висит лапа (вниз) — так стоит предмет без поворота
+    const ox = off[0] * I.hM * sc, oy = off[1] * I.hM * sc, cz = Math.cos(rz), sz = Math.sin(rz);         // off — в осях предмета (как крепление в Spine): [0, -0.1] — кисть выше низа предмета
+    h.holder.visible = true;
+    h.holder.position.set((P[0] / I.cw - 0.5) * wc + ox * cz - oy * sz, (1 - P[1] / I.ch) * hc - fm + ox * sz + oy * cz, grip.back ? -0.03 : 0.03);
+    h.holder.rotation.set(0, 0, rz);
+    h.holder.scale.setScalar(sc);
+  }
+}
+function scnHoldTick(S, o, rec, t) {
+  rec.holds = rec.holds || {};
+  if (rec.card === undefined) { rec.card = null; rec.holder.traverse(x => { if (!rec.card && x.char) rec.card = x; }); }
+  const card = rec.card;
+  for (const slot of sceneHoldSlots(o)) {
+    const ref = sceneHoldAt(o, slot, t);
+    let h = rec.holds[slot];
+    if (h && h.ref !== ref) { h.holder.removeFromParent(); h = rec.holds[slot] = null; }
+    if (!ref) continue;
+    if (!h) {
+      const holder = new THREE.Group(); holder.name = 'hold:' + slot;
+      const r = scnBuildPrefab(S.w, S, { id: o.id + '#' + slot, name: (o.name || o.id) + ' · ' + slot, src: { prefab: ref }, params: {} }, holder);
+      holder.traverse(x => { x.userData.sid = x.userData.sid || o.id; });       // клик по предмету в руке выбирает персонажа
+      h = rec.holds[slot] = { ref, holder, tick: r.tick };
+    }
+    const char = card ? card.char : (rec.model && rec.model.char) || null, grip = (typeof rigGrip === 'function' && char) ? rigGrip(char, ref, slot) : {};
+    h.grip = grip;
+    if (card && card.cardInfo) {                                             // 2D-карточка: ставим после перерисовки (суставы этого кадра) — card.onJoints
+      card.onJoints = () => scnHoldPlaceCard(card, rec);
+      if (card.lastJoints) scnHoldPlaceCard(card, rec);
+    } else {                                                                  // 3D-модель: к кости кисти (карта костей персонажа)
+      const B = (char && char.bones) || {}, m = B[slot] || B[slot === 'handL' ? 'forearmL' : 'forearmR'];
+      const bone = m && rec.holder.getObjectByName(String(m.bone).replace(/[\[\].:\/]/g, ''));
+      if (!bone) { h.holder.visible = false; continue; }
+      if (h.holder.parent !== bone) bone.add(h.holder);
+      const ws = new THREE.Vector3(); bone.getWorldScale(ws);
+      const off = grip.off || [0, 0, 0];
+      h.holder.visible = true;
+      h.holder.position.set((off[0] || 0) / ws.x, (off[1] || 0) / ws.y, (off[2] || 0) / ws.z);
+      h.holder.rotation.set(0, 0, grip.rot || 0);
+      h.holder.scale.set((grip.scale || 1) / ws.x, (grip.scale || 1) / ws.y, (grip.scale || 1) / ws.z);
+    }
+    if (h.tick) h.tick(t);
+  }
+}
+
 function scenePropRefs(scene) {
-  const refs = (scene.objects || []).map(o => (o.src || {}).prefab).concat(scene.libs || []);   // libs — что нужно коду prefabs.js (персонаж для «поведения»)
+  const refs = (scene.objects || []).map(o => (o.src || {}).prefab).concat(scene.libs || []).concat(...(scene.objects || []).map(sceneHoldRefs));   // libs — что нужно коду prefabs.js; предметы в руках (S10.2)
   return [...new Set(refs.filter(k => /^(lib|el):/.test(k || '')))];
 }
 function scenePropUrl(ref, plan) {
@@ -217,7 +298,7 @@ async function loadSceneProps(refs, plan, load, into = {}, scene = null) {
       const abs = typeof location !== 'undefined' ? new URL(u, location.href).pathname : u;
       const def = (typeof PROPS3D !== 'undefined' && (PROPS3D[abs] || PROPS3D[u])) || (typeof CHAR_LAST !== 'undefined' && CHAR_LAST && (CHAR_LAST.url === abs || CHAR_LAST.url === u) ? CHAR_LAST : null) || PROP3D_LAST;
       for (const n of (def && def.needs) || []) await load(n);         // персонаж: его костюмы (costumes/*.js рядом)
-      if (def && (def.extrasUrl || def.rigUrl) && typeof rigLoadExtras === 'function') await rigLoadExtras(def);
+      if (def && (def.extrasUrl || def.rigUrl || def.gripsUrl) && typeof rigLoadExtras === 'function') await rigLoadExtras(def);
       into[ref] = def;
     }
     catch (e) { console.warn('scene: пропс не загрузился', ref, e.message); }
@@ -374,6 +455,7 @@ function applyScene(S, t) {
       rec.pivot.matrixWorldNeedsUpdate = true;
     }
     if (rec.tick && h.visible) rec.tick(t);
+    if (o.hold || (o.keys && Object.keys(o.keys).some(k => k.startsWith('hold.')))) scnHoldTick(S, o, rec, t);
   }
   for (const L of scene.lights || []) {
     const rec = S.lights.get(L.id);
@@ -424,5 +506,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
+  module.exports = { sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, sceneHoldSlots, sceneHoldAt, sceneHoldRefs, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

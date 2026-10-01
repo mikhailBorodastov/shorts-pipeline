@@ -3,6 +3,8 @@
 //   🎞 Анимация — ключи позы на таймлайне (ручки IK на лапах, свойства позы) -> «💾 Сохранить как клип» (окно = рабочая область I/O или вся сцена)
 //      -> library/anims/<тип скелета>/<slug>.json, клип сразу у всех персонажей этого типа; «📂 Клип -> ключи» — поправить готовый клип;
 //      «⇋ Отразить позу» на курсоре (L↔R, как Paste Flipped в Blender).
+//   ✋ Предметы (S10.2) — что в руке и как держит (хват: место в кисти, поворот, масштаб, поза руки) -> grips.json версии,
+//      как вложение (attachment) на кости в Spine / Child Of в Blender; в сценах — keys["hold.handR"] = предмет.
 //   🦴 Сборка — скелет, версии, «📚 в библиотеку» (ws_api.publish), карточка ассета (редактор суставов, «✨ собери / почини»).
 import { find } from './keys.js';
 import { newId } from './ops.js';
@@ -139,6 +141,77 @@ export function initWorkshop(ED) {
     requestAnimationFrame(onionTick);
   })();
 
+  // ✋ предметы: хват живьём правится в char.grips (страница), «💾» пишет grips.json рабочей версии ассета
+  let GR = null, gSlot = sessionStorage.getItem('ws.slot') || 'handR';
+  const charOf = () => { const rec = ED.S && ED.S.objects.get(OBJ); let c = null; if (rec) rec.holder.traverse(x => { if (!c && x.char) c = x; }); return c; };
+  const gKey = ref => (typeof rigGripKey === 'function' ? rigGripKey(ref) : ref);
+  const heldRef = () => { const o = find(ED.doc, OBJ); return o ? ((typeof sceneHoldAt === 'function' ? sceneHoldAt(o, gSlot, ED.t) : (o.hold || {})[gSlot]) || null) : null; };
+  async function gripsLoad() {
+    try { GR = (await ED.api('/api/ws/grips', { key: ED.key, asset: W.asset })).grips || {}; } catch (e) { GR = {}; ED.msg(e.message, 'err'); }
+    gripsLive(); draw();
+  }
+  function gripsLive() { const c = charOf(); if (c && c.char) c.char.grips = JSON.parse(JSON.stringify(GR || {})); ED.dirty = true; }
+  async function giveProp(ref) {                              // в мастерской предмет в руке — всё время (o.hold); в сценах — ключами hold.<рука>
+    if (ref && ED.lib && !ED.lib[ref] && ED.loadProp && !(await ED.loadProp(ref))) return ED.msg('Предмет не загрузился: ' + ref, 'err');
+    const o = find(ED.doc, OBJ), h = Object.assign({}, o.hold || {});
+    if (ref) h[gSlot] = ref; else delete h[gSlot];
+    ED.commit([{ op: 'set', path: ['objects', OBJ, 'hold'], value: h }], ref ? `в руку (${gSlot}): ${ref}` : `убрать из руки (${gSlot})`);
+    if (ref && !GR[gKey(ref)]) { GR[gKey(ref)] = { off: [0, -0.1], rot: 0, scale: 1 }; gripsLive(); }
+    setTimeout(draw, 50);
+  }
+  function gripPoseFromCursor() {                             // поза руки при хвате = ключи позы на курсоре (кости, цели лап, лицо) поверх прошлой
+    const ref = heldRef(), c = charOf(); if (!ref || !c) return;
+    const k = gKey(ref), g = GR[k] = GR[k] || {};
+    const L = c.keyLayer ? c.keyLayer(ED.t) : {}, pose = {};
+    for (const f of ['bones', 'ik', 'face']) if (L[f] && Object.keys(L[f]).length) pose[f] = L[f];
+    if (!Object.keys(pose).length) return ED.msg('На курсоре нет позы из ключей: поставь лапу ручкой IK (или поверни кость в свойствах ключа), потом жми снова', 'err');
+    g.pose = typeof rigPose === 'function' ? rigPose(g.pose || {}, pose) : pose;
+    gripsLive(); draw();
+    ED.msg('📌 Поза руки — в хвате. Ключи позы этого кадра больше не нужны: удали их, хват сам поднимет лапу, когда предмет в руке');
+  }
+  function gripBox() {
+    const wrap = el('div', 'ws-grip');
+    if (!W.rigchar) { wrap.append(el('p', 'dim small', 'Предметы в руках — у персонажей со скелетом.')); return wrap; }
+    if (!GR) { gripsLoad(); wrap.append(el('p', 'dim small', 'загружаю хваты…')); return wrap; }
+    const seg = el('div', 'seg ws-tabs');
+    for (const [k, l] of [['handR', '✋ правая'], ['handL', '🤚 левая']]) { const b = btn(l, 'рука (слот) персонажа', () => { gSlot = k; sessionStorage.setItem('ws.slot', k); draw(); }); if (gSlot === k) b.className = 'sel'; seg.append(b); }
+    wrap.append(seg);
+    const ref = heldRef(), P3 = ED.info.props3d || [], cur = P3.find(x => x.ref === ref);
+    wrap.append(el('p', 'small', ref ? `В руке: ${cur ? cur.name : ref}` : 'Рука пустая — выбери предмет:'));
+    const list = el('div', 'ws-props');
+    for (const x of P3) {
+      const b = btn('', `${x.name} · ${x.from} · ${x.ref}`, () => giveProp(x.ref === ref ? null : x.ref), 'mi' + (x.ref === ref ? ' on' : ''));
+      if (x.img) { const im = el('img'); im.src = x.img; im.alt = ''; b.append(im); }
+      b.append(el('span', '', x.name)); list.append(b);
+    }
+    if (!P3.length) list.append(el('p', 'dim small', 'Нет 3D-пропсов: сделай пропс в препродакшене (🖥 TRELLIS / ✨) или возьми из библиотеки.'));
+    wrap.append(list);
+    if (!ref) return wrap;
+    const k = gKey(ref), g = GR[k] = GR[k] || {};
+    const slider = (label, title, min, max, step, get, set) => {
+      const row = el('label', 'ws-sl small'), r = el('input'), v = el('span', 'dim');
+      r.type = 'range'; r.min = min; r.max = max; r.step = step; r.value = get(); v.textContent = (+get()).toFixed(2); r.title = title;
+      r.oninput = () => { set(+r.value); v.textContent = (+r.value).toFixed(2); gripsLive(); };
+      row.append(el('span', '', label), r, v); return row;
+    };
+    const off = () => (g.off = g.off || [0, 0]);
+    const chk = (label, title, get, set) => { const l = el('label', 'small'), c = el('input'); c.type = 'checkbox'; c.checked = get(); c.onchange = () => { set(c.checked); gripsLive(); }; l.title = title; l.append(c, document.createTextNode(' ' + label)); return l; };
+    wrap.append(
+      slider('↔ поперёк', 'сдвиг поперёк предмета (доли роста персонажа)', -0.4, 0.4, 0.005, () => off()[0] || 0, v => { off()[0] = v; }),
+      slider('↕ вдоль', 'сдвиг вдоль предмета: −0.1 — кисть выше нижнего края на 10% роста', -0.4, 0.4, 0.005, () => off()[1] || 0, v => { off()[1] = v; }),
+      slider('⟳ поворот', 'поворот предмета в кисти, рад', -3.14, 3.14, 0.01, () => g.rot || 0, v => { g.rot = v; }),
+      slider('⤢ размер', 'масштаб предмета в руке', 0.2, 3, 0.01, () => g.scale || 1, v => { g.scale = v; }),
+      chk('вслед за предплечьем', 'предмет поворачивается вместе с лапой (выкл. — держит ровно, как трубку у уха)', () => g.follow !== false, v => { if (v) delete g.follow; else g.follow = false; }),
+      chk('за лапой', 'предмет позади карточки (выкл. — поверх лапы)', () => !!g.back, v => { if (v) g.back = true; else delete g.back; }),
+      el('p', 'dim small', g.pose ? 'Поза руки при хвате: ' + Object.entries(g.pose).map(([a, b]) => a + ': ' + Object.keys(b).join(', ')).join(' · ') : 'Поза руки не задана — лапа как в сцене.'),
+      btn('📌 Поза руки = поза на курсоре', 'Поставь лапу ручкой IK / поверни кость (ключ позы) — и забери её в хват: теперь персонаж сам так держит этот предмет в любой сцене', gripPoseFromCursor),
+      btn('🗑 без позы руки', 'Хват только ставит предмет в кисть, поза — из сцены', () => { delete g.pose; gripsLive(); draw(); }),
+      btn('💾 Сохранить хват', 'grips.json рабочей версии персонажа; в библиотеку — «📚 В библиотеку» на вкладке «Сборка»', async () => {
+        try { const r = await ED.api('/api/ws/grips', { key: ED.key, asset: W.asset, grips: GR }); ED.msg(`💾 Хваты сохранены (${r.n}) у v${r.v}. В сцене: ключ «hold.${gSlot}» = предмет — возьмёт так же`); } catch (e) { ED.msg(e.message, 'err'); }
+      }, 'primary'));
+    return wrap;
+  }
+
   // 🦴 сборка: риг частей — редактор суставов (stands/skel.html) прямо здесь; 3D-модель — карта костей «наша ← модели» с осью и знаком
   let SU = null;
   async function setupLoad() { try { SU = await ED.api('/api/ws/setup', { key: ED.key, asset: W.asset }); } catch (e) { SU = { err: e.message }; } draw(); }
@@ -188,7 +261,7 @@ export function initWorkshop(ED) {
     box.innerHTML = '';
     const head = el('div', 'phead'); head.append(el('b', '', '🛠 ' + W.name), el('span', 'dim small', ` v${W.v || '?'}${W.lib ? ` · из библиотеки ${W.lib.id}@${W.lib.v}` : ''}`));
     const seg = el('div', 'seg ws-tabs');
-    for (const [k, l] of [['anim', '🎞 Анимация'], ['setup', '🦴 Сборка']]) { const b = btn(l, '', () => { tab = k; sessionStorage.setItem('ws.tab', k); draw(); }); if (tab === k) b.className = 'sel'; seg.append(b); }
+    for (const [k, l] of [['anim', '🎞 Анимация'], ['hold', '✋ Предметы'], ['setup', '🦴 Сборка']]) { const b = btn(l, '', () => { tab = k; sessionStorage.setItem('ws.tab', k); draw(); }); if (tab === k) b.className = 'sel'; seg.append(b); }
     box.append(head, seg);
     const body = el('div', 'ws-body'); box.append(body);
     if (tab === 'anim') {
@@ -207,6 +280,8 @@ export function initWorkshop(ED) {
       const dd = el('input'); dd.type = 'number'; dd.step = '0.05'; dd.min = '0.03'; dd.value = ON.d; dd.style.width = '60px'; dd.oninput = () => { ON.d = Math.max(0.03, +dd.value || 0.2); };
       on.append(cb, document.createTextNode(' 👻 калька ±'), dd, document.createTextNode(' с (голубая — раньше, оранжевая — позже)'));
       if (!W.model3d) body.append(on);
+    } else if (tab === 'hold') {
+      body.append(gripBox());
     } else {
       if (W.rigchar && !SU) { setupLoad(); body.append(el('p', 'dim small', 'загружаю скелет…')); return; }
       if (SU && SU.err) body.append(el('p', 'small', '⚠ ' + SU.err));
