@@ -434,6 +434,14 @@ def props3d_choices(A, key, plan):
     return out
 
 
+def prefabs_rev(A, key, el):
+    """Время правки prefabs.js рабочей копии (агент или автор поменяли вид предметов -> редактор перезагружает страницу)."""
+    try:
+        return int(os.path.getmtime(os.path.join(work_dir(A, _pid(key), el), "prefabs.js")) * 1000)
+    except OSError:
+        return 0
+
+
 def chars3d_choices(A, key, plan):
     """Кого можно поставить в сцену (＋ Добавить): персонажи этого видео со скелетом (el:<id>@v<N>, выбранная версия) и персонажи библиотеки канала (lib:characters/<slug>@<N>)."""
     pid = _pid(key)
@@ -822,6 +830,7 @@ def handle_get(A, h, p, q):
                              "versions": [{"v": r.get("v"), "id": r.get("id"), "feedback": r.get("feedback", ""), "img": r.get("img", "")} for r in e.get("renders") or [] if r.get("stage")]},
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
                  "prefabInfo": prefab_info(os.path.join(P.resolve("render/" + rel), "prefabs.js")),
+                 "prefabsRev": prefabs_rev(A, key, el) if not ver else 0,
                  "props3d": props3d_choices(A, key, plan),
                  "chars3d": chars3d_choices(A, key, plan),
                  "style3d": ((P.channel(P.index()["videos"].get(_pid(key), {}).get("channel")) or {}).get("style3d")) or "paper",
@@ -831,7 +840,7 @@ def handle_get(A, h, p, q):
         rev = 0
         if exists(A, key, el):
             rev = A.rev_of(scene_path(A, key, el)) or 0
-        h._json({"rev": rev, "locked": LOCKS.get(skey(key, el))}); return True
+        h._json({"rev": rev, "locked": LOCKS.get(skey(key, el)), "prefabsRev": prefabs_rev(A, key, el)}); return True
     if p == "/api/scene/cues":
         h._json({"cues": sound_cues(A, key, dict(load_scene(A, key, el), _el=el))}); return True
     if p == "/api/scene/env":                                       # липсинк (S5): громкость звука сцены по id — {t0, fps, env}

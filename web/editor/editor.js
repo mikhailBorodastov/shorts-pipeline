@@ -124,6 +124,12 @@ async function reload(why) {
   for (const o of nu.objects || []) { const p = oldBy.get(o.id); if (p && sig(p) !== sig(o)) rebuild.push(o.id); }
   const oldL = new Map((old.lights || []).map(o => [o.id, JSON.stringify(Object.assign({}, o, { pos: 0, intensity: 0, keys: 0 }))]));
   for (const l of nu.lights || []) if (oldL.has(l.id) && oldL.get(l.id) !== JSON.stringify(Object.assign({}, l, { pos: 0, intensity: 0, keys: 0 }))) rebuild.push(l.id);
+  if (j.prefabsRev && ED.prefabsRev && j.prefabsRev !== ED.prefabsRev && !ED.readonly) {   // поменялся вид предметов (prefabs.js): PREFABS — const, только перезагрузкой
+    ED.reloadPage('вид предметов поменялся (prefabs.js)' + (why ? ' · ' + why : ''));
+    return j;
+  }
+  const fresh = scenePropRefs(nu).filter(r => !ED.lib[r]);   // новые 3D-пропсы / персонажи (агент поставил lib: / el:) — догрузить до сборки объектов
+  if (fresh.length) await loadSceneProps(fresh, ED.key.slice(5), load, ED.lib, ED.doc);
   for (const k of Object.keys(old)) delete old[k];
   Object.assign(old, nu);                                  // keep the object identity: the engine holds it
   syncScene(ED.S, rebuild);
@@ -656,7 +662,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
       if (e.data && e.data.missing) { $('boot').textContent = 'Эта сцена ещё в старом формате.\nПереведи её в редактор кнопкой в карточке сцены («Перевести в редактор»).'; return; }
       throw e;
     }
-    ED.doc = j.scene; ED.rev = j.rev; ED.hist = j.history; ED.cues = j.cues; ED.info = j; ED.readonly = !!ED.ver;
+    ED.doc = j.scene; ED.rev = j.rev; ED.hist = j.history; ED.cues = j.cues; ED.info = j; ED.readonly = !!ED.ver; ED.prefabsRev = j.prefabsRev || 0;
     ED.locked = j.locked || null;
     ED.fix = q.get('fix') ? { vt: +q.get('vt') || 0, ops: [] } : null;     // ✋ правка из ревью (S8)
     if (ED.fix) ED.locked = null;
@@ -700,7 +706,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
       try {
         const r = await api(`/api/scene/rev?key=${encodeURIComponent(ED.key)}&el=${ED.el}`);
         ED.agent.setLock(r.locked);
-        if (r.rev > ED.rev && !ED.readonly) await reload('rev ' + r.rev);
+        if (!ED.readonly && ((r.rev > ED.rev) || (r.prefabsRev && ED.prefabsRev && r.prefabsRev !== ED.prefabsRev))) await reload('rev ' + r.rev);
       } catch {}
     }, 1500);
     try {                                                        // back after a reload for new prefabs: the same moment, selection and undo stack
