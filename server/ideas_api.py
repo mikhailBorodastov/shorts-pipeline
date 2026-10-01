@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 14
+API_VERSION = 15
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -66,6 +66,8 @@ import assets  # noqa: E402  поиск и скачивание бесплатн
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
 import char_api  # noqa: E402  персонажи со скелетом (S4): библиотека, позы, версии
 import agent  # noqa: E402  агент S7: живая сессия Claude, лог, отмена запуска
+import settings_api  # noqa: E402  ⚙ настройки приложения: ключи сервисов, Blender, модели Claude
+import models3d  # noqa: E402  3D-модели: нормализация, скелет, «картинка -> 3D»
 import channel_api  # noqa: E402  новый канал и его стиль (S9): интервью, файлы стиля, герой
 import pack_api  # noqa: E402  упаковка S8: права, packaging.md, обложки в проект
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
@@ -73,6 +75,10 @@ import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio)
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
+try:                                                         # модели Claude из ⚙ Настроек (переменные окружения важнее)
+    settings_api.apply_models(sys.modules[__name__])
+except Exception:
+    pass
 
 # survives hot reloads: importlib.reload re-runs this file in the same module dict
 if globals().get("_loaded_once"):                  # paths.py перечитывается вместе с этим файлом (правка paths — тронь и ideas_api)
@@ -84,16 +90,16 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
     """A helper module, reloaded when its file changes."""
     m = os.path.getmtime(mod.__file__)
     seen = getattr(mod, "_fresh_mtime", None)        # отметка живёт на самом модуле: перезагрузка ideas_api её не сбрасывает (раньше модуль «залипал»)
-    if seen != m:
+    if seen != m:                                    # первый вызов тоже перечитывает: модуль мог импортироваться раньше, чем файл дописали
+        importlib.reload(mod)
         if seen is not None:
-            importlib.reload(mod)
             print(mod.__name__, "перезагружен")
         mod._fresh_mtime = m
     _refc[tag] = m
@@ -122,6 +128,14 @@ def chapi():
 
 def agapi():
     return _fresh(agent, "agt")
+
+
+def stgapi():
+    return _fresh(settings_api, "stg")
+
+
+def m3d():
+    return _fresh(models3d, "m3d")
 
 
 def chnapi():
@@ -835,6 +849,8 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
+        elif job.kind in ("charmodel", "assetupload"):              # S9+: герой из 3D-модели (ассет / Meshy / Tripo), своя модель
+            m3d().run_job(sys.modules[__name__], job)
         elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps"):    # S9: интервью канала, сборка стиля, герой канала
             chnapi().run_job(sys.modules[__name__], job)
         elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
@@ -983,6 +999,9 @@ def asset_fetch(job):
             "license": r.get("license", ""), "attr": bool(r.get("license")) and not A._free(r.get("license")), "author": r.get("author", ""),
             "page": r.get("page", ""), "dir": rel_data(dst), "main": rel_data(r["main"]), "files": len(r["files"]), "size": r.get("size", 0),
             "preview": prev, "note": r.get("note", ""), "why": "", "ts": now_ms()}
+    if r["kind"] == "3d":                                       # S9+: чистый glb + скелет и анимации модели (Draco, fbx, obj — через Blender)
+        job.summary = "Blender проверяет модель: скелет, анимации…"
+        m3d().asset_item_3d(sys.modules[__name__], pid, dst, r["main"], item)
     apply_ops(key, [{"op": "add", "path": ["elements", eid, "assets"], "item": item}])
     job.result = item
     job.summary = f"Ассет в работе: «{item['title'][:60]}» ({item['fmt']}, {round(item['size'] / 2**20, 1)} МБ)"
@@ -1228,6 +1247,8 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
+    if p == "/api/settings":
+        stgapi().handle_get(sys.modules[__name__], h, p, q); return True
     if p.startswith("/api/channel/"):
         try:
             if chnapi().handle_get(sys.modules[__name__], h, p, q):
@@ -1320,6 +1341,12 @@ def handle_post(h):
             j = start_job("sndfetch", body.get("key", ""), f"sndfetch:{body.get('el', '')}:{body.get('url', '')}",
                           {k: body.get(k) for k in ("el", "url", "start", "end")})
             h._json({"job": j.info()}); return True
+        if p == "/api/assets/upload":                   # ⬆ своя 3D-модель (base64)
+            j = start_job("assetupload", body.get("key", ""), f"assetupload:{body.get('el', '')}", {k: body.get(k) for k in ("el", "name", "data", "license", "author", "page")})
+            h._json({"job": j.info()}); return True
+        if p == "/api/char/model":                      # 🦴 герой из 3D-модели: source asset | meshy | tripo
+            j = start_job("charmodel", body.get("key", ""), f"charmodel:{body.get('el', '')}", {k: body.get(k) for k in ("el", "source", "asset", "ref", "h", "skeleton")})
+            h._json({"job": j.info()}); return True
         if p == "/api/assets/fetch":
             row = body.get("row") or {}
             j = start_job("assetfetch", body.get("key", ""), f"assetfetch:{body.get('el', '')}:{body.get('as', 'work')}:{row.get('src', '')}:{row.get('id', '')}",
@@ -1359,6 +1386,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p == "/api/settings" and stgapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/channel/") and chnapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/pack/") and pkapi().handle_post(sys.modules[__name__], h, p, body):

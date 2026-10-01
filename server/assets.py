@@ -17,8 +17,11 @@ from concurrent.futures import ThreadPoolExecutor
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ShturmIdeas/1.0 (local tool of a YouTube creator)"
 MAX_BYTES = 150 * 1024 * 1024
 NAMES = {"polypizza": "Poly Pizza", "polyhaven": "Poly Haven", "sketchfab": "Sketchfab", "oga": "OpenGameArt", "openverse": "Openverse",
-         "commons": "Wikimedia Commons", "ambientcg": "ambientCG"}
-BY_KIND = {"3d": ("polypizza", "polyhaven", "sketchfab", "oga"), "2d": ("openverse", "commons", "oga"), "tex": ("ambientcg", "polyhaven")}
+         "commons": "Wikimedia Commons", "ambientcg": "ambientCG", "quaternius": "Quaternius", "kenney": "Kenney", "smithsonian": "Smithsonian 3D",
+         "objaverse": "Objaverse"}
+BY_KIND = {"3d": ("polypizza", "quaternius", "kenney", "polyhaven", "sketchfab", "objaverse", "smithsonian", "oga"), "2d": ("openverse", "commons", "oga"),
+           "tex": ("ambientcg", "polyhaven")}
+CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".studio", "cache")
 TOKEN_FILE = "sketchfab_token.txt"
 
 
@@ -105,8 +108,94 @@ def s_sketchfab(q, kind, n, has_token=False):
         ims = sorted((r.get("thumbnails") or {}).get("images") or [], key=lambda i: abs((i.get("width") or 0) - 400))
         out.append(_row("sketchfab", r.get("uid"), r.get("name"), "3d", ims[0]["url"] if ims else "", r.get("viewerUrl"),
                         (r.get("license") or {}).get("label"), (r.get("user") or {}).get("displayName"), "gltf", dl=has_token,
-                        note="" if has_token else "скачать — только с токеном Sketchfab (_ideas/sketchfab_token.txt); как референс — можно"))
+                        note="" if has_token else "скачать — с токеном Sketchfab (⚙ Настройки) или через Objaverse; как референс — можно"))
     return out[:n]
+
+
+# ---- Quaternius и Kenney: их каталоги на Poly Pizza (CC0 / CC-BY; у Quaternius много персонажей со скелетом и анимациями)
+_PP_USER = {}
+
+
+def _pp_user(name):
+    c = _PP_USER.get(name)
+    if c and time.time() - c[0] < 6 * 3600:
+        return c[1]
+    d = _json("https://poly.pizza/api/user/" + name, timeout=60)
+    _PP_USER[name] = (time.time(), d.get("models") or [])
+    return _PP_USER[name][1]
+
+
+def _s_pp_user(src, user, q, n):
+    qs = [w for w in _words(q) if len(w) > 1]
+    out = []
+    for m in _pp_user(user):
+        hay = set(_words(m.get("title", "") + " " + (m.get("alt") or "")))
+        score = sum(1 if w in hay else 0.6 if len(w) >= 4 and any(x.startswith(w[:4]) for x in hay) else 0 for w in qs)
+        if not qs or score >= max(1, len(qs) * 0.5):
+            anim = bool(re.search(r"animated|rigged|character", m.get("title", ""), re.I))
+            out.append((score, _row(src, m.get("publicID"), m.get("title"), "3d", m.get("previewUrl"), "https://poly.pizza" + (m.get("url") or ""),
+                                    m.get("licence") or "CC0", user, "glb", note="может быть со скелетом и анимациями" if anim else "")))
+    out.sort(key=lambda x: -x[0])
+    return [r for _, r in out[:n]]
+
+
+def s_quaternius(q, kind, n):
+    return _s_pp_user("quaternius", "Quaternius", q, n)
+
+
+def s_kenney(q, kind, n):
+    return _s_pp_user("kenney", "Kenney", q, n)
+
+
+# ---- Smithsonian 3D (CC0, сканы реальных предметов; glb сжаты Draco — models3d.normalize распакует)
+def s_smithsonian(q, kind, n):
+    d = _json("https://3d-api.si.edu/api/v1.0/content/file/search?" + urllib.parse.urlencode({"q": q, "file_type": "glb", "rows": n * 4}), timeout=40)
+    pk = {}
+    for r in d.get("rows") or []:
+        c = r.get("content") or {}
+        key = c.get("model_url") or c.get("uri")
+        rank = {"Medium": 0, "Low": 1, "High": 2, "Thumb": 3}.get(c.get("quality"), 4)
+        if key not in pk or rank < pk[key][0]:
+            pk[key] = (rank, r.get("title"), c.get("uri"))
+    out = []
+    for key, (_, title, uri) in list(pk.items())[:n]:
+        out.append(_row("smithsonian", uri, title, "3d", "", "https://3d.si.edu/search/collection?edan_q=" + urllib.parse.quote(title or q),
+                        "CC0", "Smithsonian Institution", "glb", note="скан реального предмета (CC0); без превью — смотри после «⬇ в работу»"))
+    return out
+
+
+# ---- Objaverse: модели Sketchfab из датасета allenai/objaverse (Hugging Face) — качаются без токена
+def _objaverse_paths(log=None):
+    os.makedirs(CACHE, exist_ok=True)
+    p = os.path.join(CACHE, "objaverse-object-paths.json.gz")
+    if not os.path.isfile(p):
+        (log or (lambda s: None))("Objaverse: первый раз качаю карту моделей (20 МБ)…")
+        data = _get("https://huggingface.co/datasets/allenai/objaverse/resolve/main/object-paths.json.gz", timeout=300, limit=60 * 2**20)[0]
+        open(p, "wb").write(data)
+    import gzip
+    c = _PH.get("objaverse")
+    if not c:
+        c = (time.time(), json.loads(gzip.decompress(open(p, "rb").read())))
+        _PH["objaverse"] = c
+    return c[1]
+
+
+def s_objaverse(q, kind, n):
+    try:
+        paths = _objaverse_paths()
+    except Exception as e:
+        raise ValueError("карта Objaverse не скачалась: " + str(e)[:100])
+    d = _json("https://api.sketchfab.com/v3/search?" + urllib.parse.urlencode({"type": "models", "q": q, "count": 24}))
+    out = []
+    for r in d.get("results") or []:
+        if r.get("uid") not in paths:
+            continue
+        ims = sorted((r.get("thumbnails") or {}).get("images") or [], key=lambda i: abs((i.get("width") or 0) - 400))
+        out.append(_row("objaverse", r.get("uid"), r.get("name"), "3d", ims[0]["url"] if ims else "", r.get("viewerUrl"),
+                        (r.get("license") or {}).get("label"), (r.get("user") or {}).get("displayName"), "glb", note="модель Sketchfab из Objaverse — без токена"))
+        if len(out) >= n:
+            break
+    return out
 
 
 OGA_TYPE = {"3d": 10, "2d": 9, "tex": 7273}
@@ -179,6 +268,7 @@ def search(q, kind="3d", n=12, srcs=None, data_dir=None):
     srcs = [s for s in (srcs or BY_KIND[kind]) if s in BY_KIND[kind]]
     has_token = bool(token(data_dir))
     per = {s: (n if s in ("polypizza", "openverse", "ambientcg") else max(4, n // 2)) for s in srcs}
+    SEARCH.update(quaternius=s_quaternius, kenney=s_kenney, smithsonian=s_smithsonian, objaverse=s_objaverse)
 
     def one(s):
         return s_sketchfab(q, kind, per[s], has_token) if s == "sketchfab" else SEARCH[s](q, kind, per[s])
@@ -255,7 +345,20 @@ def fetch(src, aid, out_dir, row=None, data_dir=None, log=None):
     res = {"src": src, "id": aid, "title": row.get("title", ""), "license": row.get("license", ""), "author": row.get("author", ""),
            "page": row.get("page", ""), "kind": row.get("kind", ""), "fmt": row.get("fmt", "")}
     files = []
-    if src == "polypizza":
+    if src in ("quaternius", "kenney"):
+        src = "polypizza"
+    if src == "smithsonian":
+        log("качаю модель Smithsonian…")
+        files.append(_save(out_dir, _safe(res["title"] or "model")[:60] + ".glb", _get(aid, timeout=120)[0]))
+        res.update(kind="3d", fmt="glb", license="CC0", author="Smithsonian Institution")
+    elif src == "objaverse":
+        paths = _objaverse_paths(log)
+        if aid not in paths:
+            raise ValueError("этой модели нет в Objaverse")
+        log("качаю модель из Objaverse (Hugging Face)…")
+        files.append(_save(out_dir, _safe(res["title"] or aid)[:60] + ".glb", _get("https://huggingface.co/datasets/allenai/objaverse/resolve/main/" + paths[aid], timeout=180)[0]))
+        res.update(kind="3d", fmt="glb")
+    elif src == "polypizza":
         glb = (row.get("thumb") or "").rsplit(".", 1)[0] + ".glb"
         if "static.poly.pizza" not in glb:
             raise ValueError("нет ссылки на модель Poly Pizza")
@@ -284,7 +387,7 @@ def fetch(src, aid, out_dir, row=None, data_dir=None, log=None):
     elif src == "sketchfab":
         tk = token(data_dir)
         if not tk:
-            raise ValueError("для скачивания со Sketchfab нужен токен: положи его в _ideas/sketchfab_token.txt (sketchfab.com → Settings → Password & API)")
+            raise ValueError("для скачивания со Sketchfab нужен токен: положи его в ⚙ Настройки приложения (sketchfab.com → Settings → Password & API)")
         d = _json(f"https://api.sketchfab.com/v3/models/{aid}/download", headers={"Authorization": "Token " + tk})
         pick = d.get("glb") or d.get("gltf")
         if not pick:

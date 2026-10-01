@@ -233,3 +233,33 @@ Object.assign(Pages, {
         : h('div.empty', 'Пока пусто'));
   },
 });
+
+// ---------------- ⚙ Настройки приложения (settings_api.py): ключи сервисов, Blender, модели Claude
+Object.assign(Pages, {
+  settings() {
+    if (Pages._set === undefined) { Pages._set = null; api('GET', '/api/settings').then(j => { Pages._set = j; App.render(); }).catch(e => { Pages._set = { err: e.message }; App.render(); }); }
+    const S = Pages._set;
+    if (!S) return h('p.dim', h('span.spin'), ' загружаю…');
+    if (S.err) return h('div.badline', '⚠ ' + S.err);
+    const save = async body => { try { Pages._set = await api('POST', '/api/settings', body); UI.toast('Сохранено'); App.render(); } catch (e) { UI.toast(e.message, 'err'); } };
+    const secretRow = (k, x) => {
+      const inp = h('input.box', { type: 'password', placeholder: x.set ? 'сохранён: ' + x.mask + ' — вставь новый, чтобы заменить' : 'вставь ключ', style: { width: '360px' }, autocomplete: 'off' });
+      return h('div.setrow', h('b', { sketchfab: '🧊 Sketchfab', meshy: '✨ Meshy', tripo: '✨ Tripo' }[k] || k), h('div.dim.small', x.label),
+        h('div.row', inp, h('button.primary', { onclick: () => inp.value.trim() && save({ secrets: { [k]: inp.value.trim() } }) }, '💾'),
+          x.set && h('span.ok-t.small', '✓ задан'), x.set && h('button', { onclick: () => confirm('Убрать ключ?') && save({ secrets: { [k]: '' } }) }, 'убрать')));
+    };
+    const bl = h('input.box', { value: S.blender.path || '', placeholder: S.blender.found ? 'найден сам: ' + S.blender.found : 'путь к blender.exe', style: { width: '480px' } });
+    const M = S.models, mi = (k, ph) => h('input.box', { value: M[k] || '', placeholder: ph, style: { width: '200px' }, 'data-k': k });
+    const mt = mi('text', 'sonnet'), mv = mi('visual', 'claude-opus-5-5'), me = mi('effort', 'по умолчанию');
+    return h('div',
+      h('div.phead', h('h1', '⚙ Настройки приложения'), h('span.dim', 'хранятся в .studio — не в git каналов и не в коде')),
+      h('section.card', h('div.card-head', h('h3', '🔑 Ключи сервисов')), Object.entries(S.secrets).map(([k, x]) => secretRow(k, x)),
+        h('p.dim.small', 'Ключи видит только этот компьютер; страница показывает их замаскированными. Quaternius, Kenney, Poly Pizza, Poly Haven, Objaverse, Smithsonian, OpenGameArt — без ключей.')),
+      h('section.card', h('div.card-head', h('h3', '🧊 Blender')), h('div.row', bl, h('button.primary', { onclick: () => save({ blender: bl.value }) }, '💾')),
+        h('p.dim.small', S.blender.found ? 'Сейчас работает: ' + S.blender.found : '⚠ Blender не найден — 3D-пропсы, герои в Blender и проверка моделей не заработают.')),
+      h('section.card', h('div.card-head', h('h3', '🤖 Модели Claude')),
+        h('div.row', h('label', 'текстовые кнопки ', mt), h('label', 'рисование и 3D ', mv), h('label', 'усилие ', me),
+          h('button.primary', { onclick: () => save({ models: { text: mt.value, visual: mv.value, effort: me.value } }) }, '💾')),
+        Object.values(M.env || {}).some(Boolean) && h('p.dim.small', '⚠ часть моделей задана переменными окружения IDEAS_* — они важнее настроек')));
+  },
+});

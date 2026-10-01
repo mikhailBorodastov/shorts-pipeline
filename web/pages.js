@@ -20,7 +20,7 @@ const Pages = {
       h('div.newbtns',
         h('button.new.short', { onclick: () => Pages.newPlan('short'), title: 'Идея → вопросы → название → препродакшен → сцены → сценарий → … → упаковка' }, '⚡ + шортс'),
         h('button.new.long', { onclick: () => Pages.newPlan('long'), title: 'Длинное видео на 8–15 минут' }, '🎬 + длинное видео')),
-      h('nav', nav('#/', '🏠', 'Проект', r.page === 'home'), nav('#/lib', '📚', 'Библиотека', r.page === 'lib'), nav('#/style', '⚙', 'Стиль канала', r.page === 'style')),
+      h('nav', nav('#/', '🏠', 'Проект', r.page === 'home'), nav('#/lib', '📚', 'Библиотека', r.page === 'lib'), nav('#/style', '🎨', 'Стиль канала', r.page === 'style'), nav('#/settings', '⚙', 'Настройки', r.page === 'settings')),
       recent.length > 0 && h('div', h('div.sec', 'Видео'), recent.map(p => h('a.rp', { class: r.page === 'p' && r.id === p.id ? 'on' : '', href: `#/p/${p.id}/${p.stage || 'idea'}`, title: p.name },
         (REF.modes[p.mode] || {}).icon + ' ' + p.name, dot(Unread.has(p.id))))),
       h('div.foot', h('span#saved', 'всё сохранено'), !App.info.claude && h('span.warn-small', 'Claude Code не найден — кнопки ✨ выключены'),
@@ -73,7 +73,7 @@ const Pages = {
   // ---------------- 📚 библиотека канала ----------------
   async loadLib() {
     LIB.busy = true;
-    try { const j = await api('GET', `/api/lib?q=${encodeURIComponent(LIB.q)}&kind=${LIB.kind}`); LIB.items = j.items; LIB.kinds = j.kinds; LIB.channel = j.channel; }
+    try { const j = await api('GET', `/api/lib?q=${encodeURIComponent(LIB.q)}&kind=${LIB.kind}&channel=${(App.info.channel || {}).id || ''}`); LIB.items = j.items; LIB.kinds = j.kinds; LIB.channel = j.channel; }
     catch (e) { LIB.items = []; LIB.err = e.message; }
     LIB.busy = false; App.render();
   },
@@ -96,6 +96,8 @@ const Pages = {
       h('b', it.name, it.d3 ? h('span.small', { title: `есть 3D-версия v${it.d3}` }, ' 🧊') : ''), h('span.dim.small', `lib:${it.id}@${it.latest}`));
   },
   lib() {
+    const cid = (App.info.channel || {}).id;
+    if (LIB.items && LIB.channel && LIB.channel !== cid) { LIB.items = null; LIB.cand = null; }   // канал сменился не через переключатель — библиотека другого канала
     if (!LIB.items && !LIB.busy) Pages.loadLib();
     if (!LIB.cand && !LIB.cbusy) { LIB.cbusy = true; api('GET', '/api/lib/candidates').then(j => { LIB.cand = j.items; LIB.cbusy = false; App.render(); }).catch(() => { LIB.cand = []; LIB.cbusy = false; }); }
     const cand = (LIB.cand || []).filter(x => x.ready);

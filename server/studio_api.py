@@ -153,8 +153,12 @@ def _render_of(e):
 def candidates(A, vid=None):
     """Утверждённые ✓ элементы видео (персонажи, пропсы, звуки и их 3D-ассеты), которых ещё нет в библиотеке."""
     out = []
+    cur = (P.channel() or {}).get("id")
+    idx = P.index()["videos"]
     for d in A.plans():
         if vid and d["id"] != vid:
+            continue
+        if not vid and idx.get(d["id"], {}).get("channel") != cur:      # только видео текущего канала: у каждого канала своя библиотека
             continue
         for e in d.get("elements") or []:
             if e.get("status") != "ok" or e.get("kind") not in ("char", "prop", "sound"):

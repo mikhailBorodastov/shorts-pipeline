@@ -15,7 +15,7 @@ export function initAnim(ED) {
     return A.list[type];
   }
   async function ensure(id) {                                  // клип нужен движку: грузим его JSON
-    if (RIG.anims[id]) return true;
+    if (RIG.anims[id] || /^gltf:/.test(id || '')) return true;          // gltf:<имя> — клип самой 3D-модели (S9), грузить нечего
     try { const r = await fetch(`/api/lib/file/video:${plan}/anims/${id}.json?v=${Date.now()}`); if (r.ok) { rigAnim(await r.json()); return true; } } catch (e) {}
     return false;
   }
@@ -25,7 +25,9 @@ export function initAnim(ED) {
   ED.clipMenu = async () => {
     const id = [...ED.sel].find(x => ED.isChar(x));
     if (!id) { ED.msg('Выбери персонажа — Tab покажет его движения'); return; }
-    const o = find(ED.doc, id), type = typeOf(id), items = await anims(type);
+    const o = find(ED.doc, id), type = typeOf(id), card = cardOf(id);
+    const own = ((card && card.gltfClips) || []).map(n => ({ id: 'gltf:' + n, name: '🎬 ' + n + ' (из модели)', dur: (card.gltfDur || {})[n] || 1, loop: true }));   // клипы 3D-модели (S9)
+    const items = own.concat(await anims(type));
     const p = ED.popup(`<h4>🎞 Движение для «${o.name}» на ${ED.t.toFixed(2)} с</h4><input id="clQ" placeholder="🔎 машет, прыжок, трёт… — ↑↓, Enter" style="width:100%"><div id="clL" class="cl-list"></div>
       <p class="hint">Клипы типа скелета «${type}» — общие для всех персонажей на нём. Нет нужного — «+ научить»: опиши словами, Claude (Opus) выучит движение и положит в библиотеку.</p>`);
     const q = p.querySelector('#clQ'), L = p.querySelector('#clL');

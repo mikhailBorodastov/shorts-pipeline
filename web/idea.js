@@ -35,9 +35,26 @@ const elTexts = e => { const fx = (e.fx || {}).main || {}; return [e.desc, e.why
 const elMentions = (d, e) => { const out = []; for (const t of elTexts(e)) for (const x of mentionsIn(t, d)) if (x !== e && !out.includes(x)) out.push(x); return out; };
 // who and what stands in a scene: «Что в сцене» + characters and props @-mentioned in its texts — mirrors preprod.cast_of
 const isModel = a => a.kind === '3d' && ['glb', 'gltf'].includes((a.fmt || '').toLowerCase());
+// ⬆ своя 3D-модель в ассеты элемента (glb / gltf / fbx / obj / stl / usdz / blend / zip) — Blender перегонит в glb и найдёт скелет и анимации
+function uploadModel(key, el) {
+  const i = h('input', { type: 'file', accept: '.glb,.gltf,.fbx,.obj,.stl,.usdz,.usd,.blend,.zip', onchange: async () => {
+    const f = i.files[0]; if (!f) return;
+    if (f.size > 150 * 2 ** 20) return UI.toast('Файл больше 150 МБ', 'err');
+    const data = await new Promise(ok => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); });
+    const lic = prompt('Лицензия модели (для «Прав»): своя, CC0, CC-BY автор…', 'своя') || 'своя / указать';
+    try { const r = await api('POST', '/api/assets/upload', { key, el, name: f.name, data, license: lic }); Claude.jobs[r.job.id] = r.job; UI.toast('Загружаю «' + f.name + '» — Blender проверит скелет и анимации'); App.render(); }
+    catch (e) { UI.toast(e.message, 'err'); } } });
+  i.click();
+}
+// 🦴 герой из 3D-модели: ассет | Meshy | Tripo — локальная задача charmodel (готовый скелет подстроит, нет — поставит авто-скелет)
+async function charModel(key, el, source, asset) {
+  try { const r = await api('POST', '/api/char/model', { key, el, source, asset }); Claude.jobs[r.job.id] = r.job; App.render(); UI.toast(source === 'asset' ? 'Делаю героя из модели…' : `${source === 'meshy' ? 'Meshy' : 'Tripo'} лепит модель по картинке — 3–10 минут`); }
+  catch (e) { UI.toast(e.message, 'err'); }
+}
 const ASSET_KIND = { '3d': '3D', '2d': '2D', tex: 'текстура' };
-const ASSET_SRC = { polypizza: 'Poly Pizza', polyhaven: 'Poly Haven', sketchfab: 'Sketchfab', oga: 'OpenGameArt', openverse: 'Openverse', commons: 'Commons', ambientcg: 'ambientCG' };
-const ASSET_WHERE = { '3d': 'Poly Pizza (low-poly, много CC0) · Poly Haven (CC0) · Sketchfab (скачать — с токеном) · OpenGameArt',
+const ASSET_SRC = { polypizza: 'Poly Pizza', polyhaven: 'Poly Haven', sketchfab: 'Sketchfab', oga: 'OpenGameArt', openverse: 'Openverse', commons: 'Commons', ambientcg: 'ambientCG',
+  quaternius: 'Quaternius', kenney: 'Kenney', smithsonian: 'Smithsonian', objaverse: 'Objaverse', upload: 'своя', meshy: 'Meshy', tripo: 'Tripo' };
+const ASSET_WHERE = { '3d': 'Poly Pizza · Quaternius (персонажи со скелетом) · Kenney · Poly Haven · Sketchfab (скачать — токен в ⚙ Настройках) · Objaverse (Sketchfab без токена) · Smithsonian (сканы) · OpenGameArt',
   '2d': 'Openverse (фото и рисунки под CC) · Wikimedia Commons · OpenGameArt', tex: 'ambientCG (CC0) · Poly Haven (CC0)' };
 const sceneCastOf = (d, e) => {
   const els = d.elements || [], out = [];
@@ -407,7 +424,12 @@ Object.assign(Plan, {
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         (p3 || (rc && cur.model3d)) && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
         rc && cur.fn !== 'hog' && !cur.model3d && h('button.primary', { onclick: () => Plan.viewSkel(d, e, cur), title: 'Двигать суставы мышью, проверять позами; сохраняется новой версией без Claude' }, '🦴 Редактор скелета'),
-        !cur && rig && Claude.btn({ label: e.make === 'blender' ? '🧊 Сделать в Blender' : '🦴 Собрать персонажа', icon: '', action: 'charparts', key, scope, params: { el: e.id },
+        rig && e.kind === 'char' && h('span.row.mk3d', { title: 'Как сделать 3D-героя со скелетом' },
+          Claude.btn({ label: 'Blender', icon: '🧊', action: 'charparts', key, scope, params: { el: e.id, make: 'blender' }, title: 'Claude (Opus) соберёт детальную модель в Blender кодом по референсам и поставит скелет — 15–40 минут' }),
+          h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'meshy'), title: 'Meshy: модель с текстурой прямо по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Meshy'),
+          h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'tripo'), title: 'Tripo: модель с текстурой по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Tripo'),
+          Claude.running(key, 'charmodel:' + e.id) && h('span.dim.small', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.scope === 'charmodel:' + e.id && j.status === 'running') || {}).summary || 'делаю…')),
+        !cur && rig && e.make !== 'blender' && Claude.btn({ label: '🦴 Собрать персонажа', icon: '', action: 'charparts', key, scope, params: { el: e.id },
           title: e.make === 'blender' ? 'Claude (Opus) соберёт 3D-модель в Blender со скелетом-арматурой, снимет поворотный стол и позы — 15–40 минут' : 'Claude (Opus) нарисует персонажа частями, предложит скелет, пять проверочных поз и лица — 10–20 минут' }),
         !cur && !rig && Claude.btn({ label: prop3 ? (has2d ? 'Сделать в 3D' : 'Сделать 3D-пропс') : 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
           title: prop3 ? 'Claude (Opus) соберёт объёмный пропс (фигурами, из модели или в Blender), снимет четыре ракурса, сам посмотрит и поправит. 5–15 минут.'
@@ -564,11 +586,12 @@ Object.assign(Plan, {
           title: 'Картинку-превью — в референсы элемента: Claude посмотрит её, когда будет рисовать' }, busy(r, 'ref') ? '⏳' : '📌 В реф.'),
         inWork(r) ? h('span.ok-t.small', '✓ в работе') : h('button.small.primary', { disabled: !!busy(r, 'work') || !r.dl, onclick: () => take(r, 'work'),
           title: r.dl ? 'Скачать сам ассет (модель, картинку, текстуру): Claude поставит его в черновик, реализатор — в ролик' : r.note || 'скачать нельзя' }, busy(r, 'work') ? '⏳' : '⬇ В работу'),
-        r.src === 'polypizza' && h('button.small', { title: 'Покрутить модель в 3D', onclick: () => Plan.viewModel(r.title, r.thumb.replace(/\.[a-z]+$/i, '.glb')) }, '🧊'),
+        ['polypizza', 'quaternius', 'kenney'].includes(r.src) && h('button.small', { title: 'Покрутить модель в 3D', onclick: () => Plan.viewModel(r.title, r.thumb.replace(/\.[a-z]+$/i, '.glb')) }, '🧊'),
         r.page && h('a.btn.small', { href: r.page, target: '_blank', rel: 'noopener', title: 'Страница ассета: лицензия, автор' }, '↗')));
     const fetching = Object.values(Claude.jobs).filter(j => j.status === 'running' && j.key === key && (j.scope || '').startsWith(`assetfetch:${e.id}:work:`)).length;
     return h('section.card.assetcard',
       h('div.card-head', h('h3', '📦 Бесплатные ассеты'), h('span.sp'),
+        h('button', { onclick: () => uploadModel(key, e.id), title: 'Своя 3D-модель (нашёл где-то): glb, gltf, fbx, obj, stl, usdz, blend или zip — Blender перегонит в glb и найдёт скелет и анимации' }, '⬆ своя модель'),
         Claude.btn({ label: picks.length ? 'Подобрать ещё' : 'Подобрать', action: 'assets', key, scope: 'assets:' + e.id, params: { el: e.id },
           title: 'Claude поищет по бесплатным каталогам (Poly Pizza, Poly Haven, Sketchfab, Openverse, Commons, ambientCG…) и предложит 3–6 ассетов с объяснением. 1–3 минуты.' })),
       h('label', 'Что нужно', h('span.dim', ' — Claude учтёт, когда будет подбирать')),
@@ -585,6 +608,9 @@ Object.assign(Plan, {
               h('button.icon.del', { title: 'Убрать из работы (файлы останутся в _ideas)', onclick: () => Store.del(key, P, a.id) }, '×')),
             h('div.dim.small', [ASSET_KIND[a.kind], (a.fmt || '').toUpperCase(), ASSET_SRC[a.src] || a.src, a.license, a.author].filter(Boolean).join(' · '),
               a.page && [' · ', h('a', { href: a.page, target: '_blank', rel: 'noopener' }, 'страница')]),
+            a.kind === '3d' && (a.rigged || (a.anims || []).length) && h('div.small.ok-t', (a.rigged ? `🦴 скелет (${a.bones || '?'} костей)` : '') + ((a.anims || []).length ? ` · 🎬 анимации: ${a.anims.slice(0, 6).join(', ')}` : '')),
+            e.kind === 'char' && a.kind === '3d' && h('button.small.primary', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'asset', a.id),
+              title: 'Сделать из этой модели героя: готовый скелет подстроится под позы студии, нет скелета — встанет авто-скелет; клипы модели станут клипами' }, '🦴 Сделать героем'),
             a.attr && h('div.awarn', 'лицензия просит подписать автора — реализатор внесёт в «Права»'),
             a.note && h('div.awarn', '⚠ ' + a.note),
             line(key, [...P, a.id, 'why'], { cls: 'box', ph: 'что взять: «только форму», «как есть, но серым»… можно @' })))))],

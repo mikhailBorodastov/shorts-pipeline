@@ -629,12 +629,13 @@ function modelChar(w, char, opt = {}) {
     map.push({ k, b, q0: b.quaternion.clone(), axis: axisOf(m.axis).applyQuaternion(toModel.invert()).normalize(), mul: m.k == null ? 1 : m.k, off: m.off || 0 });
   }
   G.bonesMap = map; G.armature = bones;
-  let mixer = null;                                             // клип glTF (idle) — база под позой
+  // клипы самой модели (glTF): idle — база под позой; клипы сцены 'gltf:<имя>' — поверх неё (вес и кроссфейд 0.2 с), потом поза студии
   const gl = X3.models[char.modelKey], obj = inner.children[0] && inner.children[0].children[0];
-  if (char.idle && gl && gl.animations && gl.animations.length && obj) {
-    const clip = THREE.AnimationClip.findByName(gl.animations, char.idle) || gl.animations[0];
-    mixer = new THREE.AnimationMixer(obj); mixer.clipAction(clip).play();
-  }
+  const anims = (gl && gl.animations) || [];
+  const mixer = anims.length && obj ? new THREE.AnimationMixer(obj) : null, acts = {};
+  const act = name => { if (!acts[name]) { const c = THREE.AnimationClip.findByName(anims, name); if (!c) return null; const a = mixer.clipAction(c); a.play(); acts[name] = a; } return acts[name]; };
+  const allBones = Object.values(bones).map(b => [b, b.quaternion.clone(), b.position.clone(), b.scale.clone()]);   // покой — каждый кадр с него
+  G.gltfClips = anims.map(a => a.name); G.gltfDur = Object.fromEntries(anims.map(a => [a.name, +(a.duration || 1).toFixed(2)]));
   G.pose = rigPose(char.pose, P.pose, P.emotion ? rigEmotion(char, P.emotion) : null);
   G.basePose = G.pose;
   G.keyLayer = T => rigKeyLayer(char, so, T);
@@ -645,7 +646,23 @@ function modelChar(w, char, opt = {}) {
   const tmp = new THREE.Quaternion();
   G.applyPose = T => {
     const p = G.pose || {}, B = p.bones || {};
-    if (mixer) mixer.setTime(T); else for (const m of map) m.b.quaternion.copy(m.q0);
+    for (const [b_, q, p_, sc] of allBones) { b_.quaternion.copy(q); b_.position.copy(p_); b_.scale.copy(sc); }
+    if (mixer) {
+      const on = [];
+      if (char.idle && THREE.AnimationClip.findByName(anims, char.idle)) on.push([char.idle, T, 1]);
+      for (const c of so.clips || []) {
+        if (!/^gltf:/.test(c.anim || '')) continue;
+        const name = c.anim.slice(5), a = act(name); if (!a) continue;
+        const len = a.getClip().duration || 1, dur = c.dur || len;
+        if (T < c.t || T > c.t + dur) continue;
+        const w = Math.max(0, Math.min(1, (T - c.t) / 0.2, (c.t + dur - T) / 0.2));
+        let lt = (T - c.t) * (c.speed || 1); lt = c.loop ? lt % len : Math.min(lt, len);
+        on.push([name, lt, w]);
+      }
+      for (const a of Object.values(acts)) a.setEffectiveWeight(0);
+      for (const [name, t, w] of on) { const a = act(name); if (a) { a.enabled = true; a.setEffectiveWeight(w); a.time = t; } }
+      if (on.length) mixer.update(0);
+    }
     for (const m of map) {
       const r = (B[m.k] && B[m.k].rot) || 0;
       const a = m.off + m.mul * r;

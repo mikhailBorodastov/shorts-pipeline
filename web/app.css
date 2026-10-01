@@ -670,3 +670,5 @@ body.agent-open .stage-editor { right: 380px; }
 .rules-list { display: flex; flex-direction: column; gap: 8px; }
 .rule { background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
 .capref { max-width: 270px; max-height: 480px; border-radius: 10px; object-fit: contain; background: #111; }
+.setrow { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mk3d { gap: 4px; }
