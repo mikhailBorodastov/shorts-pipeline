@@ -43,13 +43,16 @@ Object.assign(Plan, {
   },
 
   // ✨ сценарий агентом (режим «📝 сценарий», server/agent.py): написать заново по видео / ответить на правки раскадровки
-  scriptBtns(d) {
+  scriptState(d) {                                          // состояние сценария проекта (правки раскадровки, заглушка ли script.md) — раз в 8 с
     const S = Plan.scriptSt[d.id];
     if (!S || Date.now() - S.at > 8000) {
       Plan.scriptSt[d.id] = Object.assign(S || {}, { at: Date.now() });
       api('GET', '/api/script/state?video=' + d.id).then(r => { const old = JSON.stringify((Plan.scriptSt[d.id] || {}).r); Plan.scriptSt[d.id].r = r; if (old !== JSON.stringify(r)) App.render(); }).catch(() => {});
     }
-    const r = (S && S.r) || {}, n = r.open || 0;
+    return (S && S.r) || {};
+  },
+  scriptBtns(d) {
+    const r = Plan.scriptState(d), n = r.open || 0;
     const run = (text, title) => { AgentPanel.toggle(true); AgentPanel.say(text, { mode: 'script', model: 'opus' }); UI.toast(title); };
     return [
       h('button' + (r.template ? '.primary' : ''), { title: 'Claude (Opus) напишет сценарий заново по видео: идея, твои ответы, название, препродакшен, сцены редактора; проверит по гайду и озвучит. 5–15 минут.',

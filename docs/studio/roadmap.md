@@ -16,6 +16,7 @@
 | S8 | ревью с пометками (сдвиг / поза + комментарий), упаковка — ТЗ: [stage8-review-pack.md](stage8-review-pack.md) | 2 | S6, S7 |
 | S9 | новый канал: интервью по стилю, настройки стиля, свой тулкит — ТЗ: [stage9-channel.md](stage9-channel.md) | 1–2 | S2 |
 | S10 | мастерская: скелет и анимации → предметы в руках → живые пропсы и экраны — ТЗ: [stage10-workshop.md](stage10-workshop.md) | — | S5, S9 |
+| S11 | новый порядок: сценарий → препродакшен (почти финал) → голос → монтаж с ревью, двойной клик в сцену, автопересборка — ТЗ: [stage11-flow.md](stage11-flow.md) | 3 | S6–S10 |
 | вне плана | локальная 3D: TRELLIS.2 / Pixal3D в ComfyUI Studio, refine героя — [local3d.md](local3d.md); установщик для друзей — [stage2-studio.md §5.1](stage2-studio.md) | — | S9 |
 
 ---

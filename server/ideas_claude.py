@@ -144,6 +144,21 @@ def qa_text(plan, all_=False):
     return ("Вопросы и ответы автора (его ответы — решения, следуй им):\n" + "\n".join(rows)) if rows else ""
 
 
+TEMPLATE_SCRIPT = "# Зачем ежу иголки"                     # заглушка шаблона проекта: сценарий ещё не писали
+
+
+def script_of(plan):
+    """S11: сценарий проекта (script.md), если он уже написан — препродакшен строится по нему."""
+    vdir = P.video(plan.get("id") or "") or ""
+    try:
+        t = open(os.path.join(vdir, "script.md"), encoding="utf-8").read()
+    except OSError:
+        return ""
+    if not t.strip() or t.lstrip().startswith(TEMPLATE_SCRIPT):
+        return ""
+    return re.sub(r"<!--.*?-->", "", t, flags=re.S).strip()[:9000]
+
+
 def elements_text(plan):
     els = [e for e in plan.get("elements") or [] if e.get("status") != "drop"]
     if not els:
@@ -354,6 +369,11 @@ verdict: strong — можно писать сценарий, ok — есть ч
         howmany = (f"Только тип {kind} ({KINDS[kind]}): 4–8 новых." if kind else
                    "Персонажи — все, кто в кадре (массовка — одним элементом); пропсы — 8–15 самых важных; сцены — все локации ролика; звуки — 6–12.")
         cast = [e.get("name", "") for e in els if e.get("kind") in ("char", "prop") and e.get("status") != "drop"]
+        scr = script_of(plan)
+        if scr and not kind:
+            howmany = ("ЕСТЬ СЦЕНАРИЙ (ниже) — препродакшен строится по нему (S11): каждой сцене сценария (### …) — ровно одна сцена препродакшена, sec — заголовок этой сцены "
+                       "сценария как есть (без таймкода), desc — что в кадре по «Картинке», why — что звучит (VO) и смысл сцены; уже имеющиеся сцены не дублируй. "
+                       "Персонажи и пропсы — всё, что названо или подразумевается в «Картинке» и тексте (массовка — одним элементом); звуки — эмбиент локаций и звуки действий по сценарию.")
         prompt = f"""Шаг «Препродакшен». Ролик — бумажная анимация ({engine}), герой — наш бумажный ёжик. Чтобы собрать его, заранее готовим элементы. Составь список того, что понадобится:
 - char — персонажи: наш ёжик в нужном образе и все, кто появляется в кадре;
 - prop — пропсы и реквизит: предметы, надписи и таблички, мебель, свет (лампы), текстуры пола и стен, мелочи эпохи — то, что делает место узнаваемым;
@@ -366,8 +386,9 @@ name — коротко (2–5 слов); desc — как выглядит ил�
 Не повторяй уже имеющееся:
 {have}
 
-{ctx(plan, 'idea', 'topic', 'qa', 'refs') if plan.get('flow') == 'idea' else ctx(plan, 'idea', 'topic', 'qa', 'beats', 'meanings', 'refs')}"""
-        schema = S({"elements": ARR(S({"kind": {"type": "string", "enum": list(KINDS)}, "name": STR, "desc": STR, "why": STR, "q": STR, "uses": ARR(STR)},
+{ctx(plan, 'idea', 'topic', 'qa', 'refs') if plan.get('flow') == 'idea' else ctx(plan, 'idea', 'topic', 'qa', 'beats', 'meanings', 'refs')}
+{('Сценарий ролика (script.md проекта):' + chr(10) + scr) if scr else ''}"""
+        schema = S({"elements": ARR(S({"kind": {"type": "string", "enum": list(KINDS)}, "name": STR, "desc": STR, "why": STR, "q": STR, "uses": ARR(STR), "sec": STR},
                                       ["kind", "name", "desc", "why"]))})
 
     elif action == "element":
@@ -1674,6 +1695,8 @@ def apply(action, docs, params, res):
                     cast.setdefault(norm(item["name"]), item["id"])
                 elif e["kind"] == "scene":
                     item["_uses"] = e.get("uses") or []
+                    if (e.get("sec") or "").strip():                 # S11: сцена сценария, по которой сделана эта
+                        item["script"] = {"title": e["sec"].strip()[:120]}
                 ops.append({"op": "add", "path": ["elements"], "item": item})
         for o in ops:                           # scene -> ids of its characters and props (names from this answer or already in the plan)
             names = o["item"].pop("_uses", None)

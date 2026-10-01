@@ -644,7 +644,7 @@ def plan_md(d, img=lambda p: p, where=None, folders=None):
     return "\n".join(L)
 
 
-STAGES = ["idea", "qa", "title", "pre", "scenes", "script", "voice", "montage", "review", "pack"]
+STAGES = ["idea", "qa", "title", "script", "pre", "voice", "montage", "review", "pack", "scenes"]   # S11: сценарий до препродакшена; «scenes» — вкладка убрана
 STAGE_LABEL = {"idea": "идея", "qa": "вопросы", "title": "название", "pre": "препродакшен", "scenes": "сцены", "script": "сценарий",
                "voice": "голос", "montage": "монтаж", "review": "ревью", "pack": "упаковка"}
 

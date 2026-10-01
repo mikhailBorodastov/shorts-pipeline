@@ -934,19 +934,14 @@
     "icon": "🎯"
    },
    {
-    "key": "pre",
-    "label": "Препродакшен",
-    "icon": "🎬"
-   },
-   {
-    "key": "scenes",
-    "label": "Сцены",
-    "icon": "🎥"
-   },
-   {
     "key": "script",
     "label": "Сценарий",
     "icon": "📝"
+   },
+   {
+    "key": "pre",
+    "label": "Препродакшен",
+    "icon": "🎬"
    },
    {
     "key": "voice",

@@ -314,9 +314,12 @@ Object.assign(Plan, {
     const focus = h('input.box', { key: key + '|pfocus', placeholder: 'чего не хватает? Claude учтёт', style: { width: '260px' },
       value: Local.get('pfocus:' + d.id) || '', oninput: e => Local.set('pfocus:' + d.id, e.target.value) });
     const live = els.filter(e => e.status !== 'drop' && !e.ws), ready = live.filter(e => e.status === 'ok').length;
+    const SS = Plan.scriptState ? Plan.scriptState(d) : {}, hasScript = SS.project && !SS.template;   // S11: препродакшен — по сценарию
     return [
       hint('pre', HINTS2.pre),
       ideaBanner(d),
+      !d.service && !hasScript && h('section.card.s11note', h('b', '📝 Сначала сценарий'), h('span.dim', ' — сцены препродакшена строятся по нему: каждой сцене сценария — своя сцена, пропсы и персонажи — из «Картинки». '),
+        h('a.btn', { href: `#/p/${d.id}/script` }, '→ к сценарию'), h('span.dim.small', ' (можно и без него — тогда Claude накидает по идее и ответам)')),
       h('section.card',
         h('div.card-head', h('h3', '🎬 Препродакшен'),
           h('span.counter', { class: live.length && ready === live.length ? 'ok' : '' }, `утверждено ${ready} из ${live.length}`),
@@ -324,11 +327,11 @@ Object.assign(Plan, {
             h('div.seg', [['2d', '2D-аппликация'], ['3d', '3D-диорама']].map(([k, l]) =>
               h('button', { class: (d.engine || '2d') === k ? 'sel' : '', onclick: () => Store.set(key, ['engine'], k, true) }, l)))),
           h('span.sp'), focus,
-          Claude.btn({ label: live.length ? 'Накидать ещё' : 'Накидать элементы', action: 'elements', key, params: () => ({ focus: focus.value }),
-            title: 'Claude соберёт персонажей, пропсы, сцены (с их составом) и звуки по идее и твоим ответам' })),
+          Claude.btn({ label: hasScript ? (live.some(e => e.kind === 'scene') ? 'Накидать ещё по сценарию' : 'Накидать по сценарию') : live.length ? 'Накидать ещё' : 'Накидать элементы', action: 'elements', key, params: () => ({ focus: focus.value }),
+            title: hasScript ? 'Claude разложит сценарий: каждой сцене сценария — сцена препродакшена, персонажи, пропсы и звуки — из «Картинки» и текста' : 'Claude соберёт персонажей, пропсы, сцены (с их составом) и звуки по идее и твоим ответам' })),
         !els.length && h('p.dim', 'Пусто. Нажми ✨ — Claude составит список по идее и твоим ответам. Или добавляй сам в разделах ниже.')),
       REF.kinds.map(K => Plan.kindBox(d, key, K, focus)),
-      h('p', h('a', { href: `#/p/${d.id}/scenes` }, 'Дальше → 🎥 Сцены'), h('span.dim', ' — оформить сцены в редакторе: расстановка, камера, движение')),
+      h('p', h('a', { href: `#/p/${d.id}/voice` }, 'Дальше → 🎙 Голос'), h('span.dim', ' — запись диктора (или черновой голос), потом 🎞 Монтаж собирает финал из сцен, голоса и звуков')),
     ];
   },
 
@@ -370,7 +373,8 @@ Object.assign(Plan, {
           (e.refs || []).length > 0 && h('span', { title: 'референсов' }, `📎${e.refs.length}`), r && h('span', { title: 'версия черновика' }, `🎨 v${r.v}`),
           nfx > 0 && h('span', { title: 'неотправленных правок' }, `✏️${nfx}`), r && (r.three || r.three3) && h('span', { title: r.three3 ? '3D-пропс — можно покрутить' : '3D-сцена — можно смотреть живьём' }, '🧊'),
           nmix > 1 && h('span', { title: 'звук сведён из нескольких слоёв' }, `🎚${nmix}`), nfin > 0 && h('span', { title: 'пунктов «для финала»' }, `🎬${nfin}`),
-          e.by === 'claude' && h('span', { title: 'предложил Claude' }, '🤖')),
+          e.by === 'claude' && h('span', { title: 'предложил Claude' }, '🤖'),
+          e.script && e.script.title && h('span', { title: 'сцена сценария: ' + e.script.title }, '📝 ' + e.script.title.slice(0, 28))),
         e.kind === 'scene' && sceneCastOf(d, e).length > 0 && Plan.castRow(d, e, true)));
   },
 
@@ -420,7 +424,7 @@ Object.assign(Plan, {
             h('button', { class: (e.status || '') === k ? 'sel' : '', onclick: () => Store.set(key, [...P, 'status'], k, true) }, l))),
           h('label', e.kind === 'sound' ? 'Как звучит' : 'Как выглядит'),
           area(key, [...P, 'desc'], { cls: 'box', ph: e.kind === 'sound' ? 'гулкий металлический лязг, эхо в шахте…' : 'материал, цвет, эпоха, состояние, размер…' }),
-          h('label', 'Где в ролике'), area(key, [...P, 'why'], { cls: 'box', ph: 'в каком бите или сцене' }),
+          h('label', 'Где в ролике', e.script && e.script.title && h('span.dim', ' — 📝 сцена сценария «' + e.script.title + '»')), area(key, [...P, 'why'], { cls: 'box', ph: 'в каком бите или сцене' }),
           e.kind === 'scene' && Plan.sceneCast(d, key, e),
           h('label', 'Референсы', h('span.dim', ' — Ctrl+V, перетащи или 📎; Claude смотрит их, когда рисует')),
           Plan.elRefs(d, key, e),
