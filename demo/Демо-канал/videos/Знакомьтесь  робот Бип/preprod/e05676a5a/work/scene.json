@@ -1,0 +1,203 @@
+{
+ "schema": 1,
+ "id": "e05676a5a",
+ "name": "Комната Бипа",
+ "len": 6,
+ "fps": 30,
+ "world": {
+  "fx": {
+   "preset": "day"
+  },
+  "bg": "#2c3550",
+  "env": "stage"
+ },
+ "camera": {
+  "fov": 30,
+  "handheld": 0.004,
+  "keys": [
+   {
+    "id": "c1",
+    "t": 0,
+    "pos": [
+     0,
+     0.8,
+     2.7
+    ],
+    "target": [
+     0,
+     0.5,
+     0
+    ],
+    "ease": "io"
+   },
+   {
+    "id": "c2",
+    "t": 5,
+    "pos": [
+     0.25,
+     0.75,
+     2.3
+    ],
+    "target": [
+     0,
+     0.5,
+     0
+    ],
+    "ease": "io"
+   }
+  ],
+  "cuts": []
+ },
+ "lights": [
+  {
+   "id": "l1",
+   "name": "Небо",
+   "type": "ambient",
+   "sky": "#ffffff",
+   "ground": "#5a4a3a",
+   "intensity": 0.9
+  },
+  {
+   "id": "l2",
+   "name": "Солнце",
+   "type": "sun",
+   "pos": [
+    2,
+    4,
+    3
+   ],
+   "color": "#fff1d6",
+   "intensity": 1.6
+  }
+ ],
+ "objects": [
+  {
+   "id": "o1bip",
+   "name": "Бип",
+   "src": {
+    "prefab": "el:eed5ab5f3@v1",
+    "el": "eed5ab5f3"
+   },
+   "pos": [
+    0,
+    0,
+    0
+   ],
+   "rot": [
+    0,
+    0,
+    0
+   ],
+   "scale": 1,
+   "pose": [
+    {
+     "id": "p1",
+     "t": 0.4,
+     "bones": {
+      "armR": {
+       "rot": 0
+      },
+      "foreR": {
+       "rot": 0
+      },
+      "antenna": {
+       "rot": 0
+      }
+     },
+     "face": {}
+    },
+    {
+     "id": "p2",
+     "t": 1.3,
+     "bones": {
+      "armR": {
+       "rot": -2.3
+      },
+      "foreR": {
+       "rot": -0.7
+      },
+      "antenna": {
+       "rot": -0.4
+      }
+     },
+     "face": {
+      "name": "радость"
+     }
+    },
+    {
+     "id": "p3",
+     "t": 2.0,
+     "bones": {
+      "armR": {
+       "rot": -2.0
+      },
+      "foreR": {
+       "rot": -1.1
+      },
+      "antenna": {
+       "rot": 0.3
+      }
+     },
+     "face": {
+      "name": "радость"
+     }
+    },
+    {
+     "id": "p4",
+     "t": 2.7,
+     "bones": {
+      "armR": {
+       "rot": -2.3
+      },
+      "foreR": {
+       "rot": -0.7
+      },
+      "antenna": {
+       "rot": -0.3
+      }
+     },
+     "face": {
+      "name": "радость"
+     }
+    },
+    {
+     "id": "p5",
+     "t": 3.6,
+     "bones": {
+      "armR": {
+       "rot": 0
+      },
+      "foreR": {
+       "rot": 0
+      },
+      "antenna": {
+       "rot": 0
+      }
+     },
+     "face": {
+      "name": "удивление"
+     }
+    },
+    {
+     "id": "p6",
+     "t": 5.0,
+     "bones": {},
+     "face": {}
+    }
+   ]
+  }
+ ],
+ "sounds": [],
+ "markers": [
+  {
+   "id": "m1",
+   "t": 1.3,
+   "name": "машет"
+  }
+ ],
+ "comments": [],
+ "authored": {},
+ "rev": 0,
+ "updated": 1790847054348,
+ "libs": []
+}

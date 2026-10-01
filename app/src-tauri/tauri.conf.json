@@ -13,11 +13,29 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "Claude Studio",
+    "shortDescription": "Claude Studio — ролики с Claude",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../bundle/_studio/": "_studio/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Russian"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   }
 }

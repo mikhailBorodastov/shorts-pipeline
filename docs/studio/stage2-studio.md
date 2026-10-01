@@ -52,4 +52,19 @@ Rust и VS Build Tools нужны **только для сборки**; тому
 - Ссылки: чужие сайты — в обычном браузере; локальные `target=_blank` (клип, стенд, страница ролика «отдельным окном») — новым окном приложения. Заголовок окна — из страницы.
 - Сборка: `cd _studio/app && npm install && npx tauri build` (иконка — `python make_icon.py && npx tauri icon icon.png -o src-tauri/icons`);
   `app/build.bat` делает то же и копирует готовый `claude-studio.exe` в `app/Claude Studio.exe` (8 МБ), ярлыки «Claude Studio» — на рабочем столе и в рабочей папке. `Claude Studio.bat` остаётся запасным входом (обычный браузер).
-- Раздача другим (позже, отдельным этапом): `.exe` + установщик зависимостей (Python, Node, ffmpeg, Claude Code — через winget) без личных данных канала.
+  `build.bat` собирает только exe (`tauri build --no-bundle`).
+
+### 5.1 Установщик для друзей — `app/build_setup.bat` → `app/Claude Studio Setup.exe`
+Решение автора: setup.exe (NSIS) и **только программа + демо-канал** — без каналов автора, ёжика, ключей и его стайл-гайда.
+- **Что внутри:** окно (exe) + код `_studio` в `<папка программы>\_studio`. Код собирает `app/stage_bundle.py` в `app/bundle/_studio` (в git не лежит): только файлы репозитория
+  (`git ls-files -co --exclude-standard`, ~8 МБ) — `tools/blender`, `sfx_library`, `node_modules`, кэши и сам `app/` не попадают. Tauri кладёт их ресурсами (`tauri.conf.json → bundle.resources`).
+  Ставится «для пользователя» (`nsis.installMode: currentUser`, `%LOCALAPPDATA%\Programs\Claude Studio`, без прав администратора), язык — русский. Первая сборка Tauri сама скачивает NSIS (~5 МБ, GitHub tauri-apps).
+- **Установленный режим** (`main.rs → workspace()`): рядом с `_studio` нет `.studio` и каналов → рабочая папка — `Документы\Claude Studio` (или путь из `workspace.txt` рядом с exe — для тестов),
+  передаётся скрипту через `STUDIO_ROOT`. В режиме разработки (exe внутри `_studio/app`) всё как раньше: рабочая папка — родитель `_studio`.
+- **Первый запуск** (`first_run`): если в рабочей папке нет каналов — копирует `_studio/demo/*` (канал «🤖 Демо-канал»: видео «Знакомьтесь: робот Бип» — герой Бип на скелете частей `robot`
+  с 4 лицами и 5 позами + сцена «Комната Бипа», где он машет); пишет свой короткий `CLAUDE.md` (без инструкции автора про ёжика).
+- **Мастер зависимостей** (`check_deps` / `setup_page` / `run_setup`): проверяет Python, Python-пакеты (edge-tts, numpy, pillow), Node, модули рендера (`stands/node_modules/puppeteer-core`), ffmpeg, Git, Claude Code.
+  Чего-то нет — стартовая страница показывает список и кнопки-ссылки `studio://setup` («Установить недостающее» → `tools/setup_deps.ps1`: winget — Python 3.12, Node LTS, ffmpeg, Git; `pip install --user`;
+  `npm install` в `stands`; Claude Code — официальный установщик `claude.ai/install.ps1`), `studio://claude-login` (консоль с `claude` — войти в подписку), `studio://skip`. Вывод установки — строками в окне.
+  PATH после winget берётся заново из реестра (`fresh_path`). Blender по-прежнему качается по кнопке, когда понадобится.
+- **Проверено:** установка, имитированная копией (exe + `_studio` + `workspace.txt`): рабочая папка и демо-канал создаются, скрипт поднимается со своими данными и не цепляется к запущенной Studio автора.

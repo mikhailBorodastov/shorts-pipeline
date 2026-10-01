@@ -14,6 +14,13 @@
   @keyframes b { 0%, 80%, 100% { opacity: .2 } 40% { opacity: 1 } }
   pre { text-align: left; white-space: pre-wrap; background: #25262c; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 50vh; overflow: auto; }
   .err h1 { color: #e0876a; }
+  .deps { list-style: none; padding: 0; text-align: left; display: inline-block; margin: 8px 0 14px; }
+  .deps li { padding: 2px 0; } .deps .ok { color: #8fbf7f; } .deps .no { color: #e0a080; }
+  .btn, .btn2 { display: inline-block; padding: 8px 16px; border-radius: 8px; text-decoration: none; margin: 4px; }
+  .btn { background: #d97757; color: #fff; } .btn2 { background: #2f3037; color: #d8d4cc; }
+  .btn.busy { opacity: .5; pointer-events: none; }
+  .small { font-size: 12px; }
+  #log { display: none; }
 </style>
 </head>
 <body>
@@ -32,7 +39,34 @@
       '<p class="dim">Проверь, что установлен Python, и попробуй «Claude Studio.bat» в рабочей папке — там видно всё, что он пишет.</p>';
     b.querySelector('pre').textContent = text;
   }
-  function status(text) { document.getElementById('msg').textContent = text; }
+  function status(text) {
+    const m = document.getElementById('msg');
+    if (m) m.textContent = text; else setupLog(text);
+  }
+  // Мастер первого запуска (установленная программа): чего не хватает на компьютере.
+  // Кнопки — ссылки studio://…, их перехватывает main.rs (on_navigation).
+  function showSetup(list) {
+    const b = document.getElementById('box');
+    const old = document.getElementById('log');
+    b.className = 'box';
+    b.innerHTML = '<h1>Claude Studio — первый запуск</h1>' +
+      '<p class="dim">Для роликов нужны бесплатные программы. Отмеченные ✗ я поставлю сам — это займёт 5–15 минут.</p>' +
+      '<ul class="deps">' + list.map(d => `<li class="${d.ok ? 'ok' : 'no'}">${d.ok ? '✓' : '✗'} ${d.name}</li>`).join('') + '</ul>' +
+      '<p><a class="btn" id="go" href="studio://setup/">Установить недостающее</a> ' +
+      '<a class="btn2" href="studio://claude-login/">Войти в Claude</a> ' +
+      '<a class="btn2" href="studio://skip/">Пропустить</a></p>' +
+      '<p class="dim small">Claude Code работает на твоей подписке Claude (Pro или Max): после установки нажми «Войти в Claude» — откроется окно входа.</p>' +
+      '<pre id="log"></pre>';
+    if (old && old.textContent) { const l = document.getElementById('log'); l.textContent = old.textContent; l.style.display = 'block'; }
+    document.getElementById('go').onclick = () => { document.getElementById('go').classList.add('busy'); setupLog('Начинаю установку…'); };
+  }
+  function setupLog(line) {
+    const l = document.getElementById('log');
+    if (!l) return;
+    l.style.display = 'block';
+    l.textContent += line + '\n';
+    l.scrollTop = l.scrollHeight;
+  }
 </script>
 </body>
 </html>

@@ -1,0 +1,35 @@
+{
+ "schema": 1,
+ "id": "demo-kanal",
+ "name": "Демо-канал",
+ "icon": "🤖",
+ "lang": "ru",
+ "formats": [
+  "short",
+  "long"
+ ],
+ "style": "style/style-guide.md",
+ "toolkit": "style/toolkit.js",
+ "rules": {
+  "paperFacing": true,
+  "facingMaxDeg": 35,
+  "hero": ""
+ },
+ "models": {
+  "text": "sonnet",
+  "visual": "claude-opus-5-5"
+ },
+ "defaults": {
+  "engine": "3d",
+  "mode": "short",
+  "dim": "3d"
+ },
+ "about": "Учебный канал Claude Studio: короткие ролики про бумажного робота Бипа. Здесь можно потрогать всё — сцены, героя, монтаж — и ничего не сломать.",
+ "style3d": "paper",
+ "interview": {
+  "qa": [],
+  "done": false
+ },
+ "rev": 1,
+ "updated": 1790847051942
+}

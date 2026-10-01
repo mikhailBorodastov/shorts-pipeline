@@ -1,0 +1,40 @@
+{
+ "schema": 1, "type": "robot", "typeName": "Робот", "mode": "pins", "sheet": [1000, 1000], "foot": [500, 935], "height": 850,
+ "bones": [
+  { "id": "root", "joint": [500, 935] },
+  { "id": "body", "parent": "root", "joint": [500, 740], "end": [500, 450], "limits": [-0.4, 0.4] },
+  { "id": "head", "parent": "body", "joint": [500, 435], "end": [500, 175], "limits": [-0.5, 0.5] },
+  { "id": "antenna", "parent": "head", "joint": [500, 172], "end": [500, 86], "limits": [-0.9, 0.9] },
+  { "id": "armL", "parent": "body", "joint": [382, 490], "limits": [-0.8, 3] },
+  { "id": "foreL", "parent": "armL", "joint": [350, 600], "end": [345, 725], "limits": [-0.3, 2.4] },
+  { "id": "armR", "parent": "body", "joint": [618, 490], "limits": [-3, 0.8] },
+  { "id": "foreR", "parent": "armR", "joint": [650, 600], "end": [655, 725], "limits": [-2.4, 0.3] },
+  { "id": "legL", "parent": "body", "joint": [448, 745], "limits": [-0.6, 1.2] },
+  { "id": "footL", "parent": "legL", "joint": [448, 885], "end": [400, 915], "limits": [-0.8, 0.8] },
+  { "id": "legR", "parent": "body", "joint": [552, 745], "limits": [-1.2, 0.6] },
+  { "id": "footR", "parent": "legR", "joint": [552, 885], "end": [600, 915], "limits": [-0.8, 0.8] }
+ ],
+ "parts": [
+  { "id": "legL", "bone": "legL", "z": 1 }, { "id": "legR", "bone": "legR", "z": 1 },
+  { "id": "footL", "bone": "footL", "z": 2 }, { "id": "footR", "bone": "footR", "z": 2 },
+  { "id": "body", "bone": "body", "z": 3 },
+  { "id": "antenna", "bone": "antenna", "z": 4 },
+  { "id": "head", "bone": "head", "z": 5 },
+  { "id": "face", "bone": "head", "z": 6, "front": true },
+  { "id": "face_joy", "bone": "head", "z": 6, "front": true },
+  { "id": "face_wow", "bone": "head", "z": 6, "front": true },
+  { "id": "face_sad", "bone": "head", "z": 6, "front": true },
+  { "id": "armL", "bone": "armL", "z": 7 }, { "id": "foreL", "bone": "foreL", "z": 8 },
+  { "id": "armR", "bone": "armR", "z": 7 }, { "id": "foreR", "bone": "foreR", "z": 8 }
+ ],
+ "slots": { "head": "antenna", "handL": "foreL", "handR": "foreR", "back": "body" },
+ "face": { "base": "face", "emotions": { "радость": "face_joy", "удивление": "face_wow", "грусть": "face_sad" } },
+ "emotions": { "радость": { "ok": true }, "удивление": { "ok": true }, "грусть": { "ok": true } },
+ "poses": {
+  "покой": {},
+  "привет": { "bones": { "armR": { "rot": -2.3 }, "foreR": { "rot": -0.7 }, "head": { "rot": 0.1 }, "antenna": { "rot": -0.4 } }, "face": { "name": "радость" } },
+  "руки вверх": { "bones": { "armL": { "rot": 2.5 }, "foreL": { "rot": 0.3 }, "armR": { "rot": -2.5 }, "foreR": { "rot": -0.3 }, "antenna": { "rot": 0.3 } }, "face": { "name": "удивление" } },
+  "шаг": { "bones": { "body": { "rot": -0.05 }, "legL": { "rot": 0.25 }, "footL": { "rot": -0.25 }, "legR": { "rot": -0.15 }, "armL": { "rot": -0.3 }, "armR": { "rot": -0.3 } } },
+  "грустит": { "bones": { "head": { "rot": 0.15 }, "antenna": { "rot": 0.6 }, "armL": { "rot": -0.1 }, "armR": { "rot": 0.1 } }, "face": { "name": "грусть" } }
+ }
+}

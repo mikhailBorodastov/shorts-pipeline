@@ -4,7 +4,7 @@ rem Пересобрать окно Claude Studio (нужны Rust и VS Build T
 cd /d "%~dp0"
 set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 call npm install || goto :err
-call npx tauri build || goto :err
+call npx tauri build --no-bundle || goto :err
 copy /y "src-tauri\target\release\claude-studio.exe" "Claude Studio.exe" >nul || goto :err
 echo Готово: %~dp0Claude Studio.exe
 pause
