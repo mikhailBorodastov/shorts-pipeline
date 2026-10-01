@@ -56,9 +56,13 @@ async function charModel(key, el, source, asset, extra = {}) {
 }
 // 🖥 TRELLIS локально: выбор картинки (или ракурсов) перед первым черновиком; перетекстурить — по какой картинке красить
 function trellisDlg(key, e, cur, mode = 'draft') {
-  const refs = (e.refs || []).filter(r => r.img);
-  if (!refs.length) return UI.toast('Добавь картинку-референс героя слева', 'err');
-  const st = { ref: (cur && cur.meta && (mode === 'retex' ? '' : cur.meta.ref)) || refs[0].img, engine: (cur && cur.meta && cur.meta.engine) || 'pixal3d', views: {}, texref: '' };
+  const prop = e.kind === 'prop', who = prop ? 'предмет' : 'герой';
+  // картинки: референсы автора + 2D-черновики элемента (утверждённый 2D-пропс или лист персонажа сразу превращается в 3D)
+  const drafts = (e.renders || []).filter(r => r.img && !r.three3 && !r.rigchar && !r.model3d).slice(-3).reverse().map(r => ({ img: r.img, note: `2D-черновик v${r.v}` }));
+  const refs = (e.refs || []).filter(r => r.img).concat(drafts);
+  if (!refs.length) return UI.toast(prop ? 'Добавь картинку-референс слева или нарисуй 2D-черновик' : 'Добавь картинку-референс героя слева', 'err');
+  const st = { ref: (cur && cur.meta && (mode === 'retex' ? '' : cur.meta.ref)) || refs[0].img, engine: (cur && cur.meta && cur.meta.engine) || 'pixal3d', views: {}, texref: '',
+    h: (cur && cur.meta && cur.meta.h) || e.h || 0.6, crops: Object.assign({}, (cur && cur.meta && cur.meta.crops) || {}), focus: null };
   const SL = [['front', 'спереди'], ['left', 'слева'], ['back', 'сзади'], ['right', 'справа']];
   const body = h('div.trellis');
   const draw = () => {
@@ -67,27 +71,51 @@ function trellisDlg(key, e, cur, mode = 'draft') {
         .map(([k, l]) => h('button', { class: st.engine === k ? 'sel' : '', onclick: () => { st.engine = k; draw(); } }, l))),
       h('p.dim.small', mode === 'retex' ? 'Форма останется та же. Выбери картинку, по которой красить (можно перекрашенный тот же референс), или «новый сид» — та же картинка, другая раскраска.'
         : st.engine === 'multiview' ? 'Кликай по картинкам по порядку: спереди → слева → сзади → справа (повторный клик снимает). Герой целиком, на простом фоне, одного размера и в одной позе на всех видах.'
-        : 'Какая картинка — герой целиком, лучше спереди или ¾, на простом фоне.'),
+        : `Какая картинка — ${who} целиком, лучше спереди или ¾, на простом фоне.`),
+      prop && mode === 'draft' && h('label.small', 'высота предмета ', h('input.box', { type: 'number', step: '0.05', min: '0.02', max: '20', value: st.h, style: { width: '80px' },
+        oninput: ev => { st.h = +ev.target.value || st.h; } }), ' м — по ней предмет встанет в сцене в правильном размере'),
       h('div.refpick', refs.map(r => {
         const slot = Object.keys(st.views).find(k => st.views[k] === r.img);
         const sel = st.engine === 'multiview' ? !!slot : (mode === 'retex' ? st.texref === r.img : st.ref === r.img);
-        return h('button.refbtn', { class: sel ? 'sel' : '', title: r.note || '', onclick: () => {
+        return h('button.refbtn', { class: sel ? 'sel' : '', title: r.note || '', 'data-note': r.note || '', onclick: () => {
           if (st.engine === 'multiview' && mode === 'draft') { const free = SL.find(([k]) => !st.views[k]); if (slot) delete st.views[slot]; else if (free) st.views[free[0]] = r.img; }
           else if (mode === 'retex') st.texref = st.texref === r.img ? '' : r.img; else st.ref = r.img;
-          draw(); } }, h('img', { src: '/' + r.img, alt: '' }), slot && h('span.slot', SL.find(([k]) => k === slot)[1]));
+          st.focus = r.img; draw(); } }, h('img', { src: '/' + r.img, alt: '' }), slot && h('span.slot', SL.find(([k]) => k === slot)[1]), st.crops[r.img] && h('span.cropmark', '✂'));
       })),
+      cropBox(),
       st.engine === 'multiview' && mode === 'draft' && h('p.small', SL.map(([k, l]) => h('span.tag', { class: st.views[k] ? 'on' : '' }, l + (st.views[k] ? ' ✓' : '')))),
       h('div.row', h('span.sp'), h('button.primary', { onclick: () => {
         if (st.engine === 'multiview' && mode === 'draft' && Object.keys(st.views).length < 2) return UI.toast('Нужно хотя бы 2 ракурса', 'err');
         close();
-        const x = { mode, base: mode === 'draft' ? undefined : cur && cur.id };
-        if (mode === 'draft') Object.assign(x, st.engine === 'multiview' ? { engine: 'multiview', views: st.views } : { engine: st.engine, ref: st.ref });
+        const used = new Set([st.ref, st.texref, ...Object.values(st.views)].filter(Boolean));
+        const crops = Object.fromEntries(Object.entries(st.crops).filter(([k]) => used.has(k)));
+        const x = { mode, base: mode === 'draft' ? undefined : cur && cur.id, ...(Object.keys(crops).length ? { crops } : {}) };
+        if (mode === 'draft') Object.assign(x, st.engine === 'multiview' ? { engine: 'multiview', views: st.views } : { engine: st.engine, ref: st.ref }, prop ? { h: st.h } : {});
         if (mode === 'retex') Object.assign(x, st.texref ? { texref: st.texref } : {});
         charModel(key, e.id, 'trellis', undefined, x);
       } }, mode === 'retex' ? (st.texref ? '🎨 Перекрасить по картинке' : '🎲 Новая раскраска') : '🖥 Лепить черновик'))].filter(Boolean));
   };
+  // рамка: если на картинке лист (несколько видов, подписи, другие герои) — обведи нужный предмет мышью; без рамки берётся вся картинка
+  function cropBox() {
+    const img = st.focus || (mode === 'retex' ? st.texref : st.engine === 'multiview' ? Object.values(st.views).slice(-1)[0] : st.ref);
+    if (!img) return null;
+    const c = st.crops[img];
+    const frame = h('div.cropframe'), rect = h('div.croprect'), pic = h('img', { src: '/' + img, alt: '', draggable: false });
+    const put = b => { if (!b) { rect.hidden = true; return; } rect.hidden = false; Object.assign(rect.style, { left: b[0] * 100 + '%', top: b[1] * 100 + '%', width: (b[2] - b[0]) * 100 + '%', height: (b[3] - b[1]) * 100 + '%' }); };
+    put(c);
+    frame.onpointerdown = ev => {
+      const R = pic.getBoundingClientRect(), at = e2 => [Math.min(1, Math.max(0, (e2.clientX - R.left) / R.width)), Math.min(1, Math.max(0, (e2.clientY - R.top) / R.height))];
+      const a = at(ev); let b = null;
+      frame.setPointerCapture(ev.pointerId);
+      frame.onpointermove = e2 => { const q = at(e2); b = [Math.min(a[0], q[0]), Math.min(a[1], q[1]), Math.max(a[0], q[0]), Math.max(a[1], q[1])].map(v => +v.toFixed(4)); put(b); };
+      frame.onpointerup = () => { frame.onpointermove = frame.onpointerup = null; if (b && b[2] - b[0] > 0.02 && b[3] - b[1] > 0.02) st.crops[img] = b; draw(); };
+    };
+    frame.append(pic, rect);
+    return h('div.cropwrap', h('div.small', c ? '✂ взят кусок в рамке — ' : 'Если на картинке лист с несколькими видами или подписями — обведи мышью нужный ' + who + ' (нарисованные тени и подписи нейросеть тоже вылепит — оставь их за рамкой, если можно). ',
+      c && h('button.small', { onclick: () => { delete st.crops[img]; draw(); } }, 'вся картинка')), frame);
+  }
   draw();
-  const close = UI.modal(mode === 'retex' ? `🎨 Перетекстурить «${e.name}» v${cur.v}` : `🖥 TRELLIS локально · «${e.name}»`, body);
+  const close = UI.modal(mode === 'retex' ? `🎨 Перетекстурить «${e.name}» v${cur.v}` : `🖥 TRELLIS локально · ${prop ? '3D-пропс' : 'герой'} «${e.name}»`, body);
 }
 const ASSET_KIND = { '3d': '3D', '2d': '2D', tex: 'текстура' };
 const ASSET_SRC = { polypizza: 'Poly Pizza', polyhaven: 'Poly Haven', sketchfab: 'Sketchfab', oga: 'OpenGameArt', openverse: 'Openverse', commons: 'Commons', ambientcg: 'ambientCG',
@@ -465,8 +493,8 @@ Object.assign(Plan, {
           title: 'Та же фигура (те же сиды), но 1536³, текстура 2048 и полная сетка — 3–8 минут' }, '⬆ Довести'),
         trl && h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, cur, 'retex'), title: 'Форма та же — новая раскраска: по другой картинке или новым сидом' }, '🎨 Перекрасить'),
         rc && cur.fn !== 'hog' && !cur.model3d && h('button.primary', { onclick: () => Plan.viewSkel(d, e, cur), title: 'Двигать суставы мышью, проверять позами; сохраняется новой версией без Claude' }, '🦴 Редактор скелета'),
-        rig && e.kind === 'char' && h('span.row.mk3d', { title: 'Как сделать 3D-героя со скелетом' },
-          Claude.btn({ label: 'Blender', icon: '🧊', action: 'charparts', key, scope, params: { el: e.id, make: 'blender' }, title: 'Claude (Opus) соберёт детальную модель в Blender кодом по референсам и поставит скелет — 15–40 минут' }),
+        ((rig && e.kind === 'char') || e.kind === 'prop') && h('span.row.mk3d', { title: e.kind === 'prop' ? '3D-пропс из модели по картинке: локально или сервисом' : 'Как сделать 3D-героя со скелетом' },
+          e.kind === 'char' && Claude.btn({ label: 'Blender', icon: '🧊', action: 'charparts', key, scope, params: { el: e.id, make: 'blender' }, title: 'Claude (Opus) соберёт детальную модель в Blender кодом по референсам и поставит скелет — 15–40 минут' }),
           h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, null), title: 'TRELLIS.2 / Pixal3D на твоей видеокарте, бесплатно: черновик за 1–3 минуты, потом «довести», «перекрасить», пины. Ставится в ⚙ Настройках' }, '🖥 TRELLIS'),
           h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'meshy'), title: 'Meshy: модель с текстурой прямо по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Meshy'),
           h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'tripo'), title: 'Tripo: модель с текстурой по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Tripo'),

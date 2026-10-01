@@ -118,9 +118,12 @@ const P3 = (() => {
     return m;
   }
   function papery(mesh) {                            // модель из glb -> бумажная: зерно по метрам, матовая
-    mesh.geometry = prep(mesh.geometry.clone(), 40);
+    const src = mesh.geometry, mats = [].concat(mesh.material), own = mats.some(x => x && x.map) && src.attributes.uv;
+    const g = prep(src.clone(), 40);                 // prep пишет UV «в метрах» под зерно — у модели со своей текстурой (TRELLIS, Meshy, ассеты) её развёртку возвращаем
+    if (own) g.setAttribute('uv', (src.index ? src.toNonIndexed() : src).attributes.uv.clone());
+    mesh.geometry = g;
     const t = paperTex();
-    for (const x of [].concat(mesh.material)) { x.map = x.map || t; x.bumpMap = t; x.bumpScale = 0.9; x.roughness = 1; x.metalness = 0; x.needsUpdate = true; }
+    for (const x of mats) { x.map = x.map || t; x.bumpMap = t; x.bumpScale = own ? 0.35 : 0.9; x.roughness = 1; x.metalness = 0; x.needsUpdate = true; }
   }
   function edges(mesh, o = {}) {
     const e = new THREE.LineSegments(o.geo || new THREE.EdgesGeometry(mesh.geometry, o.angle || 28),

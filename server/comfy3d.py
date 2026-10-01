@@ -310,7 +310,7 @@ def build(p, images):
         _set(api, N["remesh"], **{k: v for k, v in {"resolution": 512}.items() if k in api[str(N["remesh"])]["inputs"]})
     faces = int(p.get("faces") or (150000 if draft else 400000))
     dec = api[str(N["decimate"])]["inputs"]
-    for k in ("target_faces", "face_count", "target", "faces"):
+    for k in ("target_face_count", "target_faces", "face_count", "target", "faces"):
         if k in dec:
             dec[k] = faces
     if not draft:

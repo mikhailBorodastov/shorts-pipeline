@@ -1352,7 +1352,7 @@ def handle_post(h):
         if p == "/api/char/model":                      # 🦴 герой из 3D-модели: source asset | meshy | tripo
             j = start_job("charmodel", body.get("key", ""), f"charmodel:{body.get('el', '')}", {k: body.get(k) for k in ("el", "source", "asset", "ref", "h", "skeleton", "body",
                                                                                                           # TRELLIS (локально): режим refine, база, движок, ракурсы, сиды, картинка для текстуры, сетка
-                                                                                                          "mode", "base", "engine", "views", "reseed", "texref", "tex", "faces", "pad", "bg", "res", "stage", "why", "feedback")})
+                                                                                                          "mode", "base", "engine", "views", "reseed", "texref", "tex", "faces", "pad", "bg", "res", "stage", "why", "feedback", "crops")})
             h._json({"job": j.info()}); return True
         if p == "/api/assets/fetch":
             row = body.get("row") or {}

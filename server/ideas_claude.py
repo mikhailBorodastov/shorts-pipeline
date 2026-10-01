@@ -884,7 +884,7 @@ def trellisfix_spec(docs, params, sysp):
         rcopy[r["img"]] = dst
     lines = [f"- «{t}»" for t in ([ftext] if ftext else []) + [n["text"] for n in notes]]
     lines += [f"- 📍 пин {i}: точка {p['p']} на модели: «{p['text'] or 'автор отметил место без слов — посмотри'}»" for i, p in enumerate(pins3, 1)]
-    prompt = f"""Герой «{e.get('name')}» слеплен локальной нейросетью по картинке (TRELLIS.2 / Pixal3D в ComfyUI). Автор оставил правки к версии v{base.get('v')}:
+    prompt = f"""{'3D-пропс' if e.get('kind') == 'prop' else 'Герой'} «{e.get('name')}» слеплен локальной нейросетью по картинке (TRELLIS.2 / Pixal3D в ComfyUI). Автор оставил правки к версии v{base.get('v')}:
 {chr(10).join(lines)}
 
 Посмотри через Read кадры этой версии: {', '.join(_fwd(x) for x in shots)}{' (pins.png — номера пинов с четырёх сторон, полый кружок — с обратной стороны)' if pins3 else ''}.

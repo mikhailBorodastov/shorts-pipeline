@@ -533,6 +533,61 @@ def upload_job(A, job):
     job.summary = f"Модель загружена: «{item['title']}»" + (" — со скелетом" if item.get("rigged") else "")
 
 
+def crop_ref(path, box, out_dir, tag):
+    """Кусок картинки по рамке автора (доли 0..1: x0, y0, x1, y1) -> out_dir/<tag>.png; без рамки — та же картинка."""
+    if not box:
+        return path
+    from PIL import Image
+    im = Image.open(path)
+    W, H = im.size
+    x0, y0, x1, y1 = [float(v) for v in box]
+    c = im.crop((int(x0 * W), int(y0 * H), max(int(x0 * W) + 8, int(x1 * W)), max(int(y0 * H) + 8, int(y1 * H))))
+    dst = os.path.join(out_dir, f"{tag}.png")
+    c.save(dst)
+    return dst
+
+
+def prop_prefab_js(name, h, note=""):
+    return f"""// {name} — 3D-пропс из модели ({note or 'модель'}; models3d.py). Высота h — в метрах; в сцене масштабируй scale или поменяй h здесь.
+prop3d({{
+  name: {json.dumps(name, ensure_ascii=False)}, h: {round(float(h), 3)},
+  models: {{ m1: 'model.glb' }}, kind: 'model', model: 'm1',
+  params: {{}},
+}});
+"""
+
+
+def prop_finish(A, job, key, pid, eid, e, wd, rel, v, src, meta, info, h):
+    """Пропс из модели (S3 + локальная 3D): prefab.js prop3d (kind 'model') + 4 ракурса render_prop.js -> renders[] (three3), dim '3d'."""
+    log = lambda t: setattr(job, "summary", t)
+    what = {"asset": f"из ассета «{meta.get('title', '')}»", "meshy": "Meshy по картинке", "tripo": "Tripo по картинке",
+            "trellis": f"TRELLIS локально ({ {'pixal3d': 'Pixal3D', 'trellis': 'TRELLIS.2', 'multiview': 'по ракурсам'}.get(meta.get('engine'), '') }, "
+                       f"{'черновик' if meta.get('stage') == 'draft' else 'чистовик'}, {meta.get('secs', '?')} с)"}.get(src, src)
+    A.write_text(os.path.join(wd, "prefab.js"), prop_prefab_js(e.get("name") or "пропс", h, what))
+    meta["h"] = h
+    json.dump(dict(info, source=src, meta=meta), open(os.path.join(wd, "info.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    log("снимаю четыре ракурса…")
+    cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.run(["node", os.path.join(P.STANDS, "render_prop.js"), f"/rscene/{rel}/prefab.js", wd, "--port", str(A._docs(key)["port"])],
+                   capture_output=True, timeout=300, creationflags=cf)
+    main = os.path.join(wd, "element.png")
+    if not os.path.isfile(main):
+        raise RuntimeError("кадры не снялись — модель не открылась на стенде")
+    img = A.save_file(pid, open(main, "rb").read())
+    extra = [A.save_file(pid, open(os.path.join(wd, f"element_{i}.png"), "rb").read()) for i in (1, 3, 5, 7) if os.path.isfile(os.path.join(wd, f"element_{i}.png"))]
+    rid = A.new_id("r")
+    item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "three3": True, "how": "model", "fn": "", "source": src, "model3d": True, "meta": meta,
+            **({"feedback": job.params["feedback"]} if job.params.get("feedback") else {}),
+            "summary": f"3D-пропс {what}; высота {h:g} м, граней {info.get('faces') or '?'}",
+            "note": "Высота задаётся при лепке (по умолчанию 0,6 м) — в сцене можно масштабировать. Пины на модели → «Поправить» перелепит по ним.", "ts": int(time.time() * 1000)}
+    ops = [{"op": "add", "path": ["elements", eid, "renders"], "item": item}, {"op": "set", "path": ["elements", eid, "render"], "value": rid}]
+    if e.get("dim") != "3d":
+        ops.append({"op": "set", "path": ["elements", eid, "dim"], "value": "3d"})
+    A.apply_ops(key, ops)
+    job.result = item
+    job.summary = item["summary"]
+
+
 def char_job(A, job):
     """🦴 герой из 3D-модели: ассет элемента (скачанный / загруженный) или «картинка -> 3D» (Meshy / Tripo) -> скелет (готовый — подстроить, нет — авто)
     -> render/<plan>/<el>/v<N>/ model.glb + prefab.js (rig 'model') + кадры поворотного стола и поз -> renders[] (rigchar, model3d)."""
@@ -549,7 +604,8 @@ def char_job(A, job):
     os.makedirs(wd, exist_ok=True)
     log = lambda t: setattr(job, "summary", t)
     src, meta = prm.get("source") or "asset", {}
-    h = float(prm.get("h") or e.get("h") or 1.9)
+    is_prop = e.get("kind") == "prop"                            # пропс: та же генерация (ассет / TRELLIS / Meshy / Tripo), но без скелета — 3D-пропс prop3d из model.glb
+    h = float(prm.get("h") or e.get("h") or (((rs[-1].get("meta") or {}).get("h")) if rs and is_prop else 0) or (0.6 if is_prop else 1.9))
     if src == "asset":
         a = A._by_id(e.get("assets"), prm.get("asset")) or next((x for x in reversed(e.get("assets") or []) if x.get("kind") == "3d"), None)
         if not a:
@@ -559,11 +615,12 @@ def char_job(A, job):
         log("Blender открывает модель…")
         info = normalize(base, wd)
     elif src == "trellis":                                       # локально: TRELLIS.2 / Pixal3D в ComfyUI Studio (comfy3d.py)
-        import comfy3d as C
+        C = A._fresh(__import__("comfy3d"), "comfy3d")          # перечитать, если файл поменялся (Studio держит модули в памяти)
         base = A._by_id(rs, prm.get("base")) if prm.get("base") else None
         bm = dict((base or {}).get("meta") or {})
         mode = prm.get("mode") or ("final" if base else "draft")
         refs = [r for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+        refs += [r for r in reversed(rs) if r.get("img") and not (r.get("three3") or r.get("rigchar") or r.get("model3d")) and os.path.isfile(P.resolve(r["img"]))][:1]
         views = prm.get("views") or bm.get("views") or {}               # {front|left|back|right: путь files/…}
         engine = prm.get("engine") or bm.get("engine") or ("multiview" if len(views) >= 2 else "pixal3d")
         ref = prm.get("ref") or bm.get("ref") or (refs[0]["img"] if refs else None)
@@ -580,14 +637,15 @@ def char_job(A, job):
         stage = prm.get("stage") or ("final" if mode in ("final",) or (mode in ("retex", "fix") and bm.get("stage") == "final") else "draft")
         opts = {k: prm[k] if prm.get(k) is not None else bm.get(k) for k in ("tex", "faces", "pad", "bg", "res", "mv_fov")}   # не задано — как у базы (иначе вход сети другой и фигура поплывёт)
         texref = prm.get("texref") if mode in ("retex", "fix") else bm.get("texref") if mode == "final" else None
-        images = ({k: P.resolve(v) for k, v in views.items()} if engine == "multiview" else {"main": P.resolve(ref)})
+        crops = prm.get("crops") if prm.get("crops") is not None else (bm.get("crops") or {})   # рамки автора: {путь картинки: [x0, y0, x1, y1]}
+        images = ({k: crop_ref(P.resolve(v), crops.get(v), wd, "in_" + k) for k, v in views.items()} if engine == "multiview" else {"main": crop_ref(P.resolve(ref), crops.get(ref), wd, "in_main")})
         if texref:
-            images["tex"] = P.resolve(texref)
+            images["tex"] = crop_ref(P.resolve(texref), crops.get(texref), wd, "in_tex")
         what = {"draft": "черновик", "final": "довожу до чистовика", "retex": "перетекстуриваю", "fix": "правлю"}[mode]
         log(f"TRELLIS ({'Pixal3D' if engine == 'pixal3d' else 'по ракурсам' if engine == 'multiview' else 'TRELLIS.2'}): {what}…")
         glb, meta = C.generate(images, wd, log, engine=engine, mode=mode, stage=stage, seeds=seeds, tag=f"{pid}_{eid}_v{v}",
                                **{k: x for k, x in opts.items() if x is not None})
-        meta.update(ref=ref, views=views or None, texref=texref, base=(base or {}).get("id"), why=prm.get("why") or "")
+        meta.update(ref=ref, views=views or None, texref=texref, base=(base or {}).get("id"), why=prm.get("why") or "", crops=crops or None)
         meta = {k: x for k, x in meta.items() if x is not None}
         log("Blender проверяет модель…")
         info = normalize(glb, wd)
@@ -597,10 +655,13 @@ def char_job(A, job):
         if not k:
             raise ValueError(f"нет ключа {src.capitalize()} — добавь его в ⚙ Настройках")
         refs = [P.resolve(r["img"]) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+        refs += [P.resolve(r["img"]) for r in reversed(rs) if r.get("img") and not (r.get("three3") or r.get("rigchar") or r.get("model3d")) and os.path.isfile(P.resolve(r["img"]))][:1]   # нет референсов — 2D-черновик
         ref = P.resolve(prm["ref"]) if prm.get("ref") else (refs[0] if refs else None)
         if not ref:
             raise ValueError("нужна картинка-референс персонажа")
-        glb, meta = (meshy if src == "meshy" else tripo)(ref, k, wd, log, height=h)
+        if prm.get("crops") and prm.get("ref") and prm["crops"].get(prm["ref"]):
+            ref = crop_ref(ref, prm["crops"][prm["ref"]], wd, "in_main")
+        glb, meta = (meshy if src == "meshy" else tripo)(ref, k, wd, log, height=h, rig=not is_prop)
         meta["ref"] = A.rel_data(ref)
         log("Blender проверяет модель…")
         info = normalize(glb, wd)
@@ -609,6 +670,9 @@ def char_job(A, job):
             got = merge_anims(os.path.join(wd, "model.glb"), meta["anims"], wd)
             info = normalize(os.path.join(wd, "model.glb"), wd)
             meta["merged"] = got
+    if is_prop:
+        prop_finish(A, job, key, pid, eid, e, wd, rel, v, src, meta, info, h)
+        return
     if not info.get("rigged") or len(info.get("map") or {}) < 6:
         log("скелета нет — ставлю авто-скелет…")
         info = auto_rig(os.path.join(wd, "model.glb"), wd, prm.get("body") or ("quadruped" if (meta.get("rigType") or "") == "quadruped" else "auto"))
