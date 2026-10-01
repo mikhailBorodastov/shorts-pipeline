@@ -192,6 +192,72 @@ function scnCapture(w, fn) {
 
 // 3D-пропсы из библиотеки канала и препродакшена (S3, props3d.js): src.prefab = 'lib:props/<slug>@<N>' | 'el:<элемент>@v<N>'.
 // Их prefab.js грузятся до сборки мира (loadSceneProps) и лежат в S.lib; prefabs.js сцены их не содержит.
+// ---------------------------------------------------------------- каналы пропса (S10.3): что в предмете оживает — экран, индикатор, курсор
+// Префаб объявляет channels: { screen: { kind: 'media', programs: [...], def }, led: { kind: 'blink', def }, cursor: { kind: 'point' } };
+// в сцене — o.keys['ch.<имя>'] = [{ id, t, v, ease }] поверх o.params[<имя>]. Числа и [x, y] плавно (ease ключа), остальное — ступенькой;
+// объект-значение получает at = время своего ключа (media: { media: 'lib:media/<slug>@N', from, speed, loop } — клип стартует в момент ключа).
+function sceneChAt(o, name, t, def) {
+  const base = o && o.params && o.params[name] != null ? o.params[name] : def;
+  const K = scnSorted(((o && o.keys) || {})['ch.' + name]).filter(k => k.v !== undefined);
+  if (!K.length || t < K[0].t - 1e-6) return base;
+  let i = 0;
+  while (i < K.length - 1 && t >= K[i + 1].t - 1e-6) i++;
+  const a = K[i], b = K[i + 1];
+  const num = v => typeof v === 'number' || (Array.isArray(v) && v.length && v.every(x => typeof x === 'number'));
+  if (b && num(a.v) && num(b.v) && a.ease !== 'hold') return evalKeys(K, t, base);
+  if (a.v === null) return base;
+  return a.v && typeof a.v === 'object' && !Array.isArray(a.v) ? Object.assign({ at: a.t }, a.v) : a.v;
+}
+// индикатор: true / 'on' — горит, false / 'off' — нет, { hz, duty, on } — мигает (детерминировано от времени сцены)
+function sceneBlink(v, t) {
+  if (v == null || v === false || v === 'off' || v === 0) return false;
+  if (typeof v !== 'object') return true;
+  if (v.on === false) return false;
+  const hz = v.hz || 2, duty = v.duty == null ? 0.5 : v.duty;
+  return (((t - (v.at || 0)) * hz) % 1 + 1) % 1 < duty;
+}
+// медиа (видео кадрами): library/media/<slug>/vN/ = media.json { fps, n, w, h, dur, ext } + f0001.jpg… — грузятся целиком до первого кадра (рендер детерминирован)
+const SCENE_MEDIA = {};
+function sceneMediaUrl(ref, plan) {
+  const m = /^lib:media\/([a-z0-9-]+)@(\d+)$/.exec(ref || '');
+  if (!m) return null;
+  const U = typeof SCENE_URLS !== 'undefined' ? SCENE_URLS : null;
+  return U ? `${U.lib}media/${m[1]}/v${m[2]}/` : `/api/lib/file/video:${plan}/media/${m[1]}/v${m[2]}/`;
+}
+function sceneMediaRefs(scene) {
+  const out = new Set(), see = v => { if (v && typeof v === 'object' && typeof v.media === 'string') out.add(v.media); };
+  for (const o of (scene && scene.objects) || []) {
+    for (const v of Object.values(o.params || {})) see(v);
+    for (const [k, list] of Object.entries(o.keys || {})) if (k.startsWith('ch.')) for (const x of list || []) see(x.v);
+  }
+  return [...out];
+}
+async function sceneMediaLoad(refs, plan) {
+  for (const ref of refs) {
+    if (SCENE_MEDIA[ref]) continue;
+    const base = sceneMediaUrl(ref, plan);
+    if (!base) continue;
+    try {
+      const meta = await (await fetch(base + 'media.json')).json();
+      const ext = meta.ext || 'jpg', frames = [];
+      for (let i = 1; i <= meta.n; i++) { const im = new Image(); im.src = `${base}f${String(i).padStart(4, '0')}.${ext}`; frames.push(im); }
+      await Promise.all(frames.map(im => (im.decode ? im.decode().catch(() => null) : null)));
+      SCENE_MEDIA[ref] = { meta, frames };
+    } catch (e) { console.warn('scene: медиа не загрузилось', ref, e.message); }
+  }
+}
+// кадр медиа в момент сцены t: { img, i } | null. Время клипа = from + (t − at) · speed, петля по длине клипа
+function sceneMediaFrame(v, t) {
+  const M = v && SCENE_MEDIA[v.media];
+  if (!M || !M.frames.length) return null;
+  const fps = M.meta.fps || 15, n = M.frames.length, dur = n / fps;
+  let ct = (v.from || 0) + Math.max(0, t - (v.at || 0)) * (v.speed == null ? 1 : v.speed);
+  if (v.to != null && ct > v.to) ct = v.loop ? (v.from || 0) + (ct - (v.from || 0)) % Math.max(1 / fps, v.to - (v.from || 0)) : v.to;
+  ct = v.loop === false ? Math.min(ct, dur - 1 / fps) : ((ct % dur) + dur) % dur;
+  const i = Math.max(0, Math.min(n - 1, Math.floor(ct * fps + 1e-6)));
+  return { img: M.frames[i], i };
+}
+
 // ---------------------------------------------------------------- предметы в руках (S10.2)
 // o.hold = { handR: ref } — всё время; o.keys['hold.handR'] = [{ id, t, v: ref | null }] — с момента (ступенькой: взял в 4.2 с, положил в 7 с)
 function sceneHoldSlots(o) {
@@ -311,6 +377,7 @@ async function loadSceneProps(refs, plan, load, into = {}, scene = null) {
       try { const r = await fetch(u); if (r.ok) rigAnim(await r.json()); } catch (e) { console.warn('scene: клип не загрузился', id); }
     }
   }
+  if (into.__scene) await sceneMediaLoad(sceneMediaRefs(into.__scene), plan);     // экраны (S10.3): кадры видео до первого кадра
   if (typeof X3 !== 'undefined' && X3.R && typeof loadModels3 === 'function') await loadModels3();
   return into;
 }
@@ -506,5 +573,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, sceneHoldSlots, sceneHoldAt, sceneHoldRefs, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
+  module.exports = { sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, sceneHoldSlots, sceneHoldAt, sceneHoldRefs, sceneChAt, sceneBlink, sceneMediaRefs, sceneMediaFrame, SCENE_MEDIA, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

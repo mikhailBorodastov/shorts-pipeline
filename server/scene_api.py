@@ -402,6 +402,52 @@ def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edi
 
 
 # ---------------------------------------------------------------- prefabs.js: what things there are and their parameters
+def prefab_file(A, key, ref):
+    """lib:<kind>/<slug>@N | el:<id>@vN -> путь prefab.js (или None)."""
+    m = re.match(r"^lib:([a-z]+/[a-z0-9-]+)@(\d+)$", ref or "")
+    if m:
+        try:
+            c = A.stapi().channel_dir(P.index()["videos"].get(_pid(key), {}).get("channel"))
+            return os.path.join(A.stapi().lib_dir(c), *m.group(1).split("/"), f"v{m.group(2)}", "prefab.js")
+        except Exception:
+            return None
+    m = re.match(r"^el:([A-Za-z0-9_-]+)@v?(\d+)$", ref or "")
+    return P.resolve(f"render/{_pid(key)}/{m.group(1)}/v{m.group(2)}/prefab.js") if m else None
+
+
+def channels_brief(A, key, d):
+    """S10.3 для агента: живые части предметов сцены (каналы префаба) и видео для экранов."""
+    out = []
+    for o in d.get("objects") or []:
+        f = prefab_file(A, key, (o.get("src") or {}).get("prefab"))
+        if not f or not os.path.isfile(f):
+            continue
+        src = open(f, encoding="utf-8").read()
+        m = re.search(r"channels:\s*\{(.*?)\n\s*\},", src, re.S)
+        if not m:
+            continue
+        for line in m.group(1).splitlines():
+            c = re.match(r"\s*(\w+):\s*\{\s*kind:\s*'(\w+)'", line)
+            if not c:
+                continue
+            progs = re.search(r"programs:\s*\[([^\]]*)\]", line)
+            note = re.search(r"note:\s*'([^']*)'", line)
+            cur = [k.get("t") for k in ((o.get("keys") or {}).get("ch." + c.group(1)) or [])]
+            out.append(f"  {o.get('name')} ({o['id']}) · ch.{c.group(1)} [{c.group(2)}]" + (f" программы {progs.group(1).replace(chr(39), '')}" if progs else "")
+                       + (f" — {note.group(1)}" if note else "") + (f" · ключи в {cur}" if cur else ""))
+    try:
+        md = A.mdapi().choices(A, P.index()["videos"].get(_pid(key), {}).get("channel"))
+    except Exception:
+        md = []
+    head = "Живые части (каналы, S10.3) — ключи keys['ch.<имя>'] = [{id, t, v}] (числа и [x, y] плавно, остальное ступенькой):"
+    txt = (head + "\n" + "\n".join(out)) if out else "Живые части (каналы): —"
+    if md:
+        txt += "\nВидео для экранов (v: {media, from, speed, loop, fit}): " + "; ".join(f"{x['ref']} «{x['name']}» {x.get('dur')} с" for x in md)
+    else:
+        txt += '\nВидео для экранов: нет (добавить — studio.py media add "<ссылка>" --name … --from … --to …)'
+    return txt
+
+
 def props3d_choices(A, key, plan):
     """Чем можно заменить предмет сцены (S3): 3D-пропсы этого видео (el:<id>@v<N>, выбранная версия) и библиотеки канала (lib:props/<slug>@<N>)."""
     pid = _pid(key)
@@ -884,6 +930,7 @@ def handle_get(A, h, p, q):
                  "prefabsRev": prefabs_rev(A, key, el) if not ver else 0,
                  "propsRev": props_rev(A, key, doc) if not ver else 0,
                  "props3d": props3d_choices(A, key, plan),
+                 "media": A.mdapi().choices(A, P.index()["videos"].get(_pid(key), {}).get("channel")),   # видео кадрами для экранов (S10.3)
                  "chars3d": chars3d_choices(A, key, plan),
                  "style3d": ((P.channel(P.index()["videos"].get(_pid(key), {}).get("channel")) or {}).get("style3d")) or "paper",
                  "clip": f"/rscene/{rel}/clip.mp4" if os.path.isfile(os.path.join(work_dir(A, _pid(key), el), "clip.mp4")) else ""})
@@ -1031,6 +1078,7 @@ def cli(A, argv):
         cm = [c for c in d.get("comments") or [] if c.get("status", "open") == "open"]
         print("Комментарии автора:", "; ".join(f"[{c.get('mode', 'note')}] {names.get(c.get('target'), c.get('target') or 'сцена')} t={c.get('t')}: {c.get('text')} (id {c.get('id')})" for c in cm) or "—")
         print("Последние правки:", "; ".join(f"{'автор' if h_.get('by') == 'author' else 'Claude'}: {h_.get('desc')}" for h_ in history(A, key, el, 12)) or "—")
+        print(channels_brief(A, key, d))
         return True
     if cmd == "frame":                         # S7: кадр сцены в момент t (или несколько через запятую) -> пути PNG
         wd = os.path.join(work_dir(A, key[5:], el), "_agent")

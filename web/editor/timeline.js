@@ -49,6 +49,8 @@ export function initTimeline(ED) {
         if (popen) for (const ch of poseChannels(o)) out.push({ kind: 'posech', id: o.id, tkind: kind, ch, label: '  ' + ch });   // Dope Sheet: каналы позы
       }
       if (open) for (const p of kind === 'lights' ? ['pos', 'intensity'] : ['pos', 'rot', 'scale', 'hide']) out.push({ kind: 'prop', id: o.id, tkind: kind, prop: p, label: PN[p] });
+      if (open) for (const p of Object.keys(o.keys || {}).filter(k => /^(ch|hold)\./.test(k) && (o.keys[k] || []).length).sort())   // S10.2 / S10.3: предмет в руке, живые части
+        out.push({ kind: 'prop', id: o.id, tkind: kind, prop: p, label: (p.startsWith('hold.') ? '✋ ' : '📺 ') + p.split('.')[1] });
     }
     out.push({ kind: 'sounds', label: '🔊 звуки' });
     return out;

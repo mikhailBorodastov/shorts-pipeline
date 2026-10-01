@@ -1880,6 +1880,12 @@ SCENE_RULES = """Сцена — документ scene.json (формат — _p
   Как держать (место в кисти, поворот, размер, поза руки — «трубка у уха») — хват персонажа grips.json, его ставят в мастерской «✋ Предметы»
   (или `studio.py ws grips <видео> <ассет> '<JSON>'`); в сцене поза руки при хвате включается сама, поверх неё — ключи pose.
   «Дай ей трубку на 3-й секунде, на 6-й положи» — set ["objects", id, "keys", "hold.handR"] = [{id:"h1", t:3, v:ref}, {id:"h2", t:6, v:null}]; отдельный объект-трубку не ставь.
+- Живые части пропса (S10.3): префаб объявляет channels (экран, индикатор, курсор…) — список и видео канала печатает `scene brief` («Живые части»).
+  Ключи keys["ch.<имя>"] = [{id, t, v}]: числа и [x, y] — плавно (ease), остальное — ступенькой до следующего ключа; v: null — вернуть как в params.
+  Экран (media): v — программа ('xp', 'off'…) или видео {media: "lib:media/<slug>@N", from: сек_в_видео, speed, loop, fit: cover|contain|stretch} — клип стартует в момент ключа.
+  «Запусти San Andreas на мониторе в 2 с, курсор к ярлыку» — ch.cursor [{t:0, v:[0.2,0.2]}, {t:1.6, v:[0.62,0.55]}, {t:2, v:null}], ch.screen [{t:1.6, v:"select"}, {t:2, v:{media:…, from:0}}].
+  Нужного видео нет — `studio.py media add "<ссылка>" --name "…" --from 12 --to 40` (YouTube и др., кусок до минуты; права на чужие кадры — у владельца), потом ключ.
+  Своему пропсу без channels — новая версия префаба (lib fork): channels: {...} в prop3d и build возвращает {obj: G, tick(T) {…}} с P3.ch / P3.screen / P3.media / P3.blink (engine/props3d.js; образец — library props/elt-monitor-bol-soi v3).
 - keys.<pos|rot|scale|hide>[] = {id, t, v, ease}; ease у ЛЕВОГО ключа — кривая до следующего: linear | io (плавно, по умолчанию) | in | out | hold.
   Нет ключей — работает статичное значение (pos / rot / scale). Есть ключи — статичное значение не работает, меняй ключи.
 - lights[]: {id, name, type: lamp|point|ambient|sun, pos, color, intensity, dist, keys: {intensity, pos}}. Свет внутри предмета (лампа на столе) — в его префабе, управляется его params.

@@ -19,6 +19,8 @@
   на `engine/props3d.js`: фигуры `P3.box / cyl / lathe / extrude`, наклейки `P3.sticker` из 2D-рисунков; или Blender: `model.py` → `python _studio/stands/blender_run.py model.py` → `model.glb`).
   Стиль 3D канала — `channel.json → style3d` (у «Доедать будешь» — бумажный макет). Кадры — `node _studio/stands/render_prop.js <url prefab.js> <папка>` (4 ракурса + лист);
   в сцене редактора — `src.prefab = 'lib:props/<slug>@N'` или `'el:<элемент>@vN'`. Образец — `_studio/stands/samples/crt3d/prefab.js`, ТЗ — `docs/studio/stage3-props.md`.
+  Живые части (S10.3): `channels` в prop3d + ключи `keys["ch.<имя>"]` (экран — программа или видео кадрами `lib:media/<slug>@N`, индикатор, курсор); видео — `studio.py media add "<ссылка>" --from --to`;
+  предметы в руках (S10.2) — `keys["hold.handR"]` + хват персонажа `grips.json` (мастерская «✋ Предметы»). Образец — `lib:props/elt-monitor-bol-soi@3`, ТЗ — `docs/studio/stage10-workshop.md`.
 - **Персонажи со скелетом (Claude Studio, S4):** персонаж библиотеки — `lib:characters/<slug>@N` = `prefab.js` (`character({...})`, `engine/rig.js`) + костюмы / `rig.json`.
   Ёжик — риг `param` поверх `drawHog` (скелет `hog`: тело, голова, лапы, ноги; лицо — look, lid, mouth, brows), пижама и кепка — костюмы (`wear`). Остальные — риг `parts` (части на костях).
   Поза — `{ bones: { armL: { rot, len } }, face: { mouth, brows, look }, wear: { kepka: true }, sit }`; нарисовать — `rigDraw(ctx, char, pose, x, yНог, рост, T)`, в 3D — `charCard(w, char)`.

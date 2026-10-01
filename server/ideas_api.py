@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 16
+API_VERSION = 17
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -73,6 +73,7 @@ import pack_api  # noqa: E402  упаковка S8: права, packaging.md, о
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 import ws_api  # noqa: E402  мастерская ассета (S10): служебная сцена, клип из ключей позы, в библиотеку
+import media_api  # noqa: E402  медиа библиотеки (S10.3): видео кадрами для живых экранов
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -91,7 +92,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -157,6 +158,10 @@ def scapi():
 
 def wsapi():
     return _fresh(ws_api, "ws")
+
+
+def mdapi():
+    return _fresh(media_api, "media")
 
 
 def stapi():
@@ -858,6 +863,8 @@ def _run_job(job):
             m3d().run_job(sys.modules[__name__], job)
         elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps"):    # S9: интервью канала, сборка стиля, герой канала
             chnapi().run_job(sys.modules[__name__], job)
+        elif job.kind == "mediaadd":                           # 🎞 видео кадрами для экранов (S10.3)
+            mdapi().run_job(sys.modules[__name__], job)
         elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
             mnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("charrig", "charemotions"):          # персонажи (S4): сохранение скелета, эмоции; charparts — обычная задача Claude ниже
@@ -1351,6 +1358,12 @@ def handle_post(h):
         if p == "/api/assets/upload":                   # ⬆ своя 3D-модель (base64)
             j = start_job("assetupload", body.get("key", ""), f"assetupload:{body.get('el', '')}", {k: body.get(k) for k in ("el", "name", "data", "license", "author", "page")})
             h._json({"job": j.info()}); return True
+        if p == "/api/media/add":                       # 🎞 видео (ссылка / файл, кусок с–по) -> кадры в библиотеку канала (S10.3)
+            pr = {k: body.get(k) for k in ("src", "name", "from", "to", "fps", "h", "owner", "channel")}
+            if not pr.get("channel") and body.get("key"):
+                pr["channel"] = P.index()["videos"].get(body["key"][5:], {}).get("channel")
+            j = start_job("mediaadd", body.get("key", ""), "mediaadd:" + (body.get("src") or "")[-40:], pr)
+            h._json({"job": j.info()}); return True
         if p == "/api/local3d/setup":                  # 🖥 поставить / докачать ComfyUI Studio и модели TRELLIS.2 / Pixal3D (~23 ГБ)
             j = start_job("comfysetup", "", "comfysetup", {})
             h._json({"job": j.info()}); return True
@@ -1562,6 +1575,8 @@ def cli(argv):
         return stapi().cli(sys.modules[__name__], a)
     if cmd == "ws":
         return wsapi().cli(sys.modules[__name__], a)
+    if cmd == "media":
+        return mdapi().cli(sys.modules[__name__], a)
     if cmd == "model":
         return m3d().cli(sys.modules[__name__], a)
     if cmd == "produce":

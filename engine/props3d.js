@@ -17,6 +17,11 @@
 //                                     o.px — разрешение, o.glow — светится (экран), o.dynamic — перерисовка по времени (w.dyn)
 //   P3.edges(mesh, o)                 линии сгибов (paper), P3.part(geometry, color, o) — меш из своей геометрии с материалом стиля
 //   P3.p(o, 'имя', поУмолчанию)       параметр объекта сцены (o.params) — то, что автор меняет в редакторе
+//   S10.3 живые части: prop3d({ channels: { screen: { kind: 'media', programs: ['xp', 'off'], def: 'xp' }, led: { kind: 'blink', def: true } }, build(w, o) { … return { obj: G, tick(T) {…} }; } })
+//   P3.ch(o, 'screen', T, def)        значение канала в момент T (ключи сцены keys['ch.screen'] поверх params)
+//   P3.screen(w, h, o)                экран-холст: s.userData.show(ключ, (g, cw, ch) => рисунок) перерисует, только если ключ сменился; o.crt — кинескоп
+//   P3.media(g, cw, ch, v, T)         кадр видео канала (v = { media: 'lib:media/<slug>@N', from, speed, loop, at }) «по размеру экрана» -> ключ кадра | null
+//   P3.blink(v, T)                    индикатор горит? (true | 'off' | { hz, duty })    P3.cursor(g, x, y, s) — стрелка мыши
 // Мелочи-детали (кнопки, щели, винты) — лучше наклейкой или маленьким P3.box, чем булевой операцией.
 // ======================================================================
 
@@ -197,11 +202,63 @@ const P3 = (() => {
     mesh.receiveShadow = !o.glow; mesh.castShadow = false;
     if (o.pos) mesh.position.set(o.pos[0], o.pos[1], o.pos[2]);
     if (o.rot) mesh.rotation.set(o.rot[0] || 0, o.rot[1] || 0, o.rot[2] || 0);
+    mesh.userData.canvas = c; mesh.userData.tex = t;
     if (o.dynamic) { let last = null; mesh.userData.redraw = (lt, T) => { const k = o.state ? o.state(lt, T) : Math.round(lt * 30); if (k === last) return; last = k; paint(lt); t.needsUpdate = true; }; mesh.userData.p3dyn = true; }
     return mesh;
   }
   // собрать динамические наклейки группы в w.dyn (их перерисовывает world.draw)
   function live(w, G) { G.traverse(x => { if (x.userData && x.userData.p3dyn && !w.dyn.includes(x)) w.dyn.push(x); }); return G; }
   const p = (o, k, d) => (o && o.params && o.params[k] != null ? o.params[k] : d);   // параметр объекта сцены (как P_ в prefabs.js)
-  return { mat, part, box, cyl, lathe, extrude, sticker, edges, papery, uvMeters, prep, paperTex, live, rboxGeo, p };
+  // ---- S10.3: каналы, экран, видео кадрами, индикатор, курсор
+  const ch = (o, k, T, d) => (typeof sceneChAt === 'function' ? sceneChAt(o, k, T || 0, d) : p(o, k, d));
+  const blink = (v, T) => (typeof sceneBlink === 'function' ? sceneBlink(v, T || 0) : !!v);
+  function crt(g, cw, ch_, o = {}) {                     // кинескоп: сканлайны, виньетка, лёгкая засветка по центру
+    g.save();
+    g.globalAlpha = o.scan == null ? 0.16 : o.scan; g.fillStyle = '#000';
+    const step = Math.max(2, Math.round(ch_ / 240));
+    for (let y = 0; y < ch_; y += step * 2) g.fillRect(0, y, cw, step);
+    g.globalAlpha = 1;
+    const v = g.createRadialGradient(cw / 2, ch_ / 2, Math.min(cw, ch_) * 0.3, cw / 2, ch_ / 2, Math.hypot(cw, ch_) * 0.56);
+    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.55)'); g.fillStyle = v; g.fillRect(0, 0, cw, ch_);
+    g.globalCompositeOperation = 'screen'; g.globalAlpha = 0.08;
+    const l = g.createRadialGradient(cw * 0.45, ch_ * 0.4, 0, cw * 0.45, ch_ * 0.4, cw * 0.5);
+    l.addColorStop(0, '#ffffff'); l.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = l; g.fillRect(0, 0, cw, ch_);
+    g.restore();
+  }
+  function screen(w, h, o = {}) {
+    const m = sticker(w, h, () => {}, { glow: o.glow || 1.15, px: o.px || 640, grain: false });
+    const c = m.userData.canvas, g = c.getContext('2d'); let last = null;
+    m.userData.show = (key, draw) => {
+      if (key === last) return false;
+      last = key; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, c.width, c.height);
+      draw(g, c.width, c.height);
+      if (o.crt !== false) crt(g, c.width, c.height, o.crt || {});
+      m.userData.tex.needsUpdate = true; return true;
+    };
+    return m;
+  }
+  function media(g, cw, ch_, v, T) {                      // кадр «по размеру» (cover); нет кадров — «нет сигнала»
+    const f = typeof sceneMediaFrame === 'function' ? sceneMediaFrame(v, T || 0) : null;
+    if (!f || !f.img || !f.img.naturalWidth) {
+      g.fillStyle = '#101418'; g.fillRect(0, 0, cw, ch_);
+      g.fillStyle = '#7f8a94'; g.font = `700 ${Math.round(ch_ * 0.07)}px Rubik, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('нет сигнала', cw / 2, ch_ / 2); return 'nosig';
+    }
+    const iw = f.img.naturalWidth, ih = f.img.naturalHeight, fit = v.fit || 'cover';   // cover — заполнить (края срежутся), contain — целиком с полями, stretch — растянуть (игра 4:3 с HUD)
+    g.imageSmoothingEnabled = true;
+    if (fit === 'stretch') g.drawImage(f.img, 0, 0, cw, ch_);
+    else {
+      const k = fit === 'contain' ? Math.min(cw / iw, ch_ / ih) : Math.max(cw / iw, ch_ / ih);
+      if (fit === 'contain') { g.fillStyle = '#000'; g.fillRect(0, 0, cw, ch_); }
+      g.drawImage(f.img, (cw - iw * k) / 2, (ch_ - ih * k) / 2, iw * k, ih * k);
+    }
+    return v.media + '#' + f.i;
+  }
+  function cursor(g, x, y, s) {                          // стрелка мыши XP (белая с чёрной обводкой), x, y — кончик
+    const P = [[0, 0], [0, 17], [4, 13], [7, 20], [10, 19], [7, 12], [12, 12]];
+    g.save(); g.translate(x, y); g.scale(s / 20, s / 20);
+    g.beginPath(); P.forEach(([a, b], i) => (i ? g.lineTo(a, b) : g.moveTo(a, b))); g.closePath();
+    g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1.4; g.strokeStyle = '#000'; g.lineJoin = 'round'; g.stroke(); g.restore();
+  }
+  return { mat, part, box, cyl, lathe, extrude, sticker, edges, papery, uvMeters, prep, paperTex, live, rboxGeo, p, ch, blink, crt, screen, media, cursor };
 })();

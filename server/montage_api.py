@@ -243,6 +243,16 @@ def generate(A, vid, montage=None):
             _copy(os.path.join(P.files(vid), *ref.split("/")), os.path.join(S, "files", *ref.split("/")))
         # библиотека и черновики: lib: / el: (объекты и scene.libs), клипы, огибающие липсинка
         refs = {(o.get("src") or {}).get("prefab") for o in sc.get("objects") or []} | set(sc.get("libs") or [])
+        for o in sc.get("objects") or []:                    # предметы в руках (S10.2) и видео экранов (S10.3) — тоже из библиотеки
+            refs |= {v for v in (o.get("hold") or {}).values() if isinstance(v, str)}
+            for k, lst in (o.get("keys") or {}).items():
+                for x in lst or []:
+                    v = x.get("v")
+                    if k.startswith("hold.") and isinstance(v, str):
+                        refs.add(v)
+                    if k.startswith("ch.") and isinstance(v, dict) and isinstance(v.get("media"), str):
+                        refs.add(v["media"])
+            refs |= {v["media"] for v in (o.get("params") or {}).values() if isinstance(v, dict) and isinstance(v.get("media"), str)}
         for ref in filter(None, refs):
             m = re.match(r"lib:([a-z]+)/([a-z0-9-]+)@(\d+)$", ref)
             if m:

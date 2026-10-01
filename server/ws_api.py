@@ -95,7 +95,10 @@ def open_ws(A, src, key=None):
     elif (obj.get("src") or {}).get("prefab") != ref:
         ops.append({"op": "set", "path": ["objects", "asset", "src", "prefab"], "value": ref})
     if ops:
-        S.apply(A, key, ws["id"], ops, by="author", desc=f"мастерская: {e.get('name', '')} {ref}")
+        S.apply(A, key, ws["id"], ops, by="ws", desc=f"мастерская: {e.get('name', '')} {ref}")   # служебная сборка — не «правил руками»: агент тоже может ставить ключи
+    au = (S.load_scene(A, key, ws["id"]).get("authored") or {})
+    if au.get("asset") == ["*"]:                                  # старые мастерские: объект ассета был помечен целиком при создании
+        d2 = S.load_scene(A, key, ws["id"]); d2["authored"].pop("asset", None); S.save_scene(A, key, ws["id"], d2)
     return {"video": vid, "el": ws["id"], "asset": e["id"], "ref": ref, "kind": e.get("kind"), "lib": e.get("lib")}
 
 

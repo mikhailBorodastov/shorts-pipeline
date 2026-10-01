@@ -15,7 +15,9 @@ export function initWorkshop(ED) {
   const box = document.createElement('section');
   box.id = 'ws'; box.setAttribute('aria-label', 'Мастерская');
   side.prepend(box);
-  let tab = (sessionStorage.getItem('ws.tab') || (W.rigchar ? 'anim' : 'setup'));
+  const TABS = W.rigchar ? [['anim', '🎞 Анимация'], ['hold', '✋ Предметы'], ['setup', '🦴 Сборка']] : [['live', '📺 Живое'], ['setup', '🦴 Сборка']];
+  let tab = sessionStorage.getItem('ws.tab');
+  if (!TABS.some(x => x[0] === tab)) tab = TABS[0][0];
   const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
   const btn = (text, title, on, cls) => { const b = el('button', cls || '', text); b.title = title || ''; b.onclick = on; return b; };
   const typeOf = () => {                                      // тип скелета ассета: из карточки персонажа на сцене
@@ -261,11 +263,11 @@ export function initWorkshop(ED) {
     box.innerHTML = '';
     const head = el('div', 'phead'); head.append(el('b', '', '🛠 ' + W.name), el('span', 'dim small', ` v${W.v || '?'}${W.lib ? ` · из библиотеки ${W.lib.id}@${W.lib.v}` : ''}`));
     const seg = el('div', 'seg ws-tabs');
-    for (const [k, l] of [['anim', '🎞 Анимация'], ['hold', '✋ Предметы'], ['setup', '🦴 Сборка']]) { const b = btn(l, '', () => { tab = k; sessionStorage.setItem('ws.tab', k); draw(); }); if (tab === k) b.className = 'sel'; seg.append(b); }
+    for (const [k, l] of TABS) { const b = btn(l, '', () => { tab = k; sessionStorage.setItem('ws.tab', k); draw(); }); if (tab === k) b.className = 'sel'; seg.append(b); }
     box.append(head, seg);
     const body = el('div', 'ws-body'); box.append(body);
     if (tab === 'anim') {
-      if (!W.rigchar) { body.append(el('p', 'dim small', 'У пропса анимация — ключами объекта (сдвиг, поворот, видимость) и его параметрами; каналы (экран, индикаторы) — S10.3.')); return; }
+      if (!W.rigchar) return;
       const [t0, t1] = win();
       body.append(el('p', 'dim small', 'Ключи позы: ручки на кончиках лап (IK), поворот костей и лицо — в свойствах ключа (клик по ромбу «поза»). Tab — готовые движения. I / O на таймлайне — окно клипа.'));
       const row = el('div', 'row'); row.append(nm);
@@ -280,6 +282,17 @@ export function initWorkshop(ED) {
       const dd = el('input'); dd.type = 'number'; dd.step = '0.05'; dd.min = '0.03'; dd.value = ON.d; dd.style.width = '60px'; dd.oninput = () => { ON.d = Math.max(0.03, +dd.value || 0.2); };
       on.append(cb, document.createTextNode(' 👻 калька ±'), dd, document.createTextNode(' с (голубая — раньше, оранжевая — позже)'));
       if (!W.model3d) body.append(on);
+    } else if (tab === 'live') {                          // S10.3: живые части пропса — каналы префаба (экран, индикатор, курсор)
+      const pf = ED.lib && ED.lib[((find(ED.doc, OBJ) || {}).src || {}).prefab], chs = (pf && pf.channels) || null;
+      if (!chs) body.append(el('p', 'small', 'У этого пропса нет живых частей (channels в prefab.js). Попроси агента: «сделай экран живым» — он добавит каналы новой версией.'));
+      else {
+        body.append(el('p', 'small', 'Живые части: ' + Object.entries(chs).map(([n, c]) => `${n} (${c.kind})`).join(', ')),
+          el('p', 'dim small', 'Ключи — в свойствах предмета, блок «📺 Живые части» (ставятся на курсоре), строки ch.* на таймлайне. Экран: программа или видео кадрами из библиотеки канала.'),
+          btn('🎯 Выбрать предмет', 'Показать блок «📺 Живые части» в свойствах', () => { ED.select([OBJ], OBJ); ED.uiDirty = true; }),
+          btn('🎞 + видео по ссылке…', 'YouTube / файл → кадры в библиотеку канала (кусок «с / по»)', () => ED.addMedia && ED.addMedia()));
+        const L = ED.info.media || [];
+        body.append(el('p', 'dim small', L.length ? 'Видео канала: ' + L.map(m => `«${m.name}» ${m.dur} с`).join(' · ') : 'Видео в библиотеке канала пока нет.'));
+      }
     } else if (tab === 'hold') {
       body.append(gripBox());
     } else {

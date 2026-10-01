@@ -167,6 +167,8 @@ export function initPanels(ED) {
       `источник: ${src.el ? `элемент «${els[src.el] || src.el}» (${src.el})` : '—'} · префаб ${src.prefab || '—'}${src.lib ? ' · ' + src.lib : ''}`;
     props.append(s);
     if (o.type !== 'group') props.append(swapBtn(o));
+    const pf = ED.lib && src.prefab && ED.lib[src.prefab];
+    if (pf && pf.channels) props.append(chBox(o, pf));
     const cc = charOf(id);
     if (cc) props.append(charBox(o, cc));
     const au = (d.authored || {})[id];
@@ -215,6 +217,20 @@ export function initPanels(ED) {
       await new Promise(r => setTimeout(r, 400)); await loadSceneEnvs(ED.doc, ED.key.slice(5), ED.el); ED.dirty = true;
     };
     box.append(lip);
+    for (const [slot, lab] of [['handR', '✋ в правой'], ['handL', '🤚 в левой']]) {   // S10.2: предмет в руке с этого момента (ключ hold.<рука>), хват — из мастерской
+      const hs = document.createElement('select'), cur = typeof sceneHoldAt === 'function' ? sceneHoldAt(o, slot, t) : null;
+      hs.append(new Option(`${lab}: пусто`, ''));
+      for (const x of ED.info.props3d || []) hs.append(new Option(`${lab}: ${x.name}`, x.ref));
+      if (cur && ![...hs.options].some(op => op.value === cur)) hs.append(new Option(`${lab}: ${cur}`, cur));
+      hs.value = cur || '';
+      hs.title = 'Предмет в лапе с этого момента (ключ hold). Как держит — хват персонажа: 🛠 Мастерская → ✋ Предметы';
+      hs.onchange = async () => {
+        const ref = hs.value || null;
+        if (ref && ED.loadProp && !ED.lib[ref] && !(await ED.loadProp(ref))) return ED.msg('Предмет не загрузился: ' + ref, 'err');
+        ED.commit(setOps(d, o.id, 'hold.' + slot, ref, t, true, true), `${o.name}: ${ref ? 'взять ' + ref : 'отпустить'} (${slot}) с ${t.toFixed(2)} с`);
+      };
+      box.append(hs);
+    }
     const em = Object.keys(ch.emotions || {});
     if (em.length) {
       const sel = document.createElement('select');
@@ -227,6 +243,83 @@ export function initPanels(ED) {
     return box;
   }
 
+  // 📺 живые части (S10.3): каналы префаба — экран (программа или видео кадрами), индикатор, курсор; ключ ch.<имя> на курсоре
+  function chBox(o, pf) {
+    const d = ED.doc, t = ED.t, box = div('grp chbox');
+    box.append(Object.assign(document.createElement('b'), { textContent: '📺 Живые части — ключом с ' + t.toFixed(2) + ' с' }));
+    const keyAt = n => scnSorted(((o.keys || {})['ch.' + n]) || []).filter(k => k.t <= t + EPS).pop();
+    for (const [n, c] of Object.entries(pf.channels)) {
+      const cur = typeof sceneChAt === 'function' ? sceneChAt(o, n, t, c.def) : null;
+      const row = div('prop'), lab = Object.assign(document.createElement('span'), { textContent: n, title: c.note || '' });
+      row.append(lab);
+      const put = (v, what) => ED.commit(setOps(d, o.id, 'ch.' + n, v, t, true, true), `${o.name}: ${n} — ${what} с ${t.toFixed(2)} с`);
+      if (c.kind === 'media') {
+        const sel = document.createElement('select');
+        for (const p of c.programs || []) sel.append(new Option('▣ ' + p, 'p:' + p));
+        for (const m of ED.info.media || []) sel.append(new Option(`🎞 ${m.name} (${m.dur} с)`, 'm:' + m.ref));
+        sel.append(new Option('🎞 + видео по ссылке…', '+'));
+        const isM = cur && typeof cur === 'object' && cur.media;
+        sel.value = isM ? 'm:' + cur.media : 'p:' + cur;
+        sel.onchange = async () => {
+          const v = sel.value;
+          if (v.startsWith('p:')) return put(v.slice(2), v.slice(2));
+          if (v === '+') return addMedia();
+          const ref = v.slice(2), from = parseFloat(String(await ED.ask('С какой секунды видео начать?', '0') || '0').replace(',', '.')) || 0;
+          if (typeof sceneMediaLoad === 'function') { ED.msg('🎞 гружу кадры…'); await sceneMediaLoad([ref], ED.key.slice(5)); }
+          put({ media: ref, from, loop: true }, `видео с ${from} с`);
+        };
+        row.append(sel);
+        if (isM) {                                           // кадр видео в экране: заполнить / целиком / растянуть
+          const k = keyAt(n), fit = document.createElement('select');
+          fit.append(new Option('кадр: заполнить', 'cover'), new Option('кадр: целиком', 'contain'), new Option('кадр: растянуть', 'stretch'));
+          fit.value = cur.fit || 'cover'; fit.title = 'как видео ложится в экран (игры 4:3 с HUD — «растянуть»)';
+          fit.onchange = () => k && ED.commit([{ op: 'set', path: ['objects', o.id, 'keys', 'ch.' + n, k.id, 'v'], value: Object.assign({}, k.v, { fit: fit.value }) }], `${o.name}: ${n} — кадр ${fit.value}`);
+          row.append(fit);
+        }
+      } else if (c.kind === 'blink') {
+        const sel = document.createElement('select');
+        sel.append(new Option('горит', 'on'), new Option('не горит', 'off'), new Option('мигает', 'blink'));
+        sel.value = cur && typeof cur === 'object' ? 'blink' : cur === false || cur === 'off' ? 'off' : 'on';
+        sel.onchange = () => put(sel.value === 'blink' ? { hz: 2, duty: 0.5 } : sel.value === 'on', sel.value);
+        row.append(sel);
+      } else if (c.kind === 'point') {
+        const v = Array.isArray(cur) ? cur : null;
+        for (const i of [0, 1]) {
+          const inp = document.createElement('input'); inp.type = 'number'; inp.step = '0.01'; inp.min = '0'; inp.max = '1'; inp.style.width = '58px';
+          inp.value = v ? v[i].toFixed(2) : ''; inp.placeholder = i ? 'y' : 'x'; inp.title = 'доля экрана: 0 — лево / верх, 1 — право / низ';
+          inp.onchange = () => { const nv = (v || [0.5, 0.5]).slice(); nv[i] = Math.max(0, Math.min(1, +inp.value || 0)); put(nv, `[${nv.map(x => x.toFixed(2))}]`); };
+          row.append(inp);
+        }
+        const off = document.createElement('button'); off.textContent = v ? '✕ спрятать' : '📍 показать';
+        off.onclick = () => put(v ? null : [0.5, 0.5], v ? 'спрятан' : 'в центре');
+        row.append(off);
+      } else {
+        const inp = document.createElement('input'); inp.value = cur == null ? '' : JSON.stringify(cur); inp.title = c.note || 'значение (JSON)';
+        inp.onchange = () => { let v = inp.value; try { v = JSON.parse(v); } catch (e) {} put(v, inp.value); };
+        row.append(inp);
+      }
+      box.append(row);
+    }
+    box.append(Object.assign(div('hint'), { textContent: 'Ключ ставится на курсоре и держится до следующего (курсор мыши — плавно между ключами). Ключи — строки ch.* на таймлайне.' }));
+    return box;
+  }
+  async function addMedia() {                                // 🎞 видео по ссылке (YouTube и др.) или файлу -> кадры в библиотеку канала (S10.3, server/media_api.py)
+    const src = await ED.ask('Ссылка на видео (YouTube и др.) или путь к файлу', ''); if (!src) return refreshProps(true);
+    const name = await ED.ask('Как назвать (в библиотеке канала)?', '') || '';
+    const from = await ED.ask('С какой секунды взять (пусто — с начала; можно 1:23)', '') || '';
+    const to = await ED.ask('По какую секунду (пусто — до конца; лучше кусок до минуты)', '') || '';
+    try {
+      const r = await ED.api('/api/media/add', { key: ED.key, src, name, from: from || null, to: to || null });
+      ED.msg('🎞 качаю и нарезаю кадры… (минута-две)');
+      for (let i = 0; i < 600; i++) {
+        await new Promise(res => setTimeout(res, 2000));
+        const j = await ED.api('/api/job?id=' + r.job.id).catch(() => null);
+        if (j && j.status !== 'running') { if (j.status !== 'done') return ED.msg(j.error || j.status, 'err'); ED.reloadPage('🎞 ' + (j.summary || 'видео в библиотеке') + ' — выбери его в «📺 Живые части»'); return; }
+      }
+    } catch (e) { ED.msg(e.message, 'err'); }
+  }
+
+  ED.addMedia = addMedia;
   // 🔗 привязка (links, engine/scene.js): с момента объект едет за другим поверх своих ключей — «ёжик сел в кресло», «клавиатура на выдвижной полке»
   function linkBox(o) {
     const d = ED.doc, box = div('links');

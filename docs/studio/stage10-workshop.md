@@ -82,3 +82,24 @@ Claude делает всё то же из любого места (агент, �
 - **Агент**: правило в `SCENE_RULES` («дай трубку на 3-й секунде, на 6-й положи» — ключи `hold.handR`, отдельный объект не ставить), `RULES_REV = 6`.
 - **Жена-ёжиха**: `lib:characters/jena-ejiha@4` — нейтральная (`wearOpt['svitr-zheny'] = { phone: false, hold: false }`), трубка — `lib:props/telefonnaa-trubka@1`
   (наклейка `P3.sticker`, низ — микрофон), хват — у уха (`follow: false`, `rot 0.3`, поза `armR rot −2.6 len 0.65`, взгляд вбок, рот «о»). Тесты — `engine/test/scene.test.js` (21).
+
+## Как сделано (S10.3 — живые пропсы и экраны)
+- **Каналы** (`engine/scene.js`): префаб объявляет `channels: { screen: { kind: 'media', programs, def, note }, led: { kind: 'blink' }, cursor: { kind: 'point' } }`;
+  в сцене — `keys["ch.<имя>"] = [{ id, t, v, ease }]` поверх `params[<имя>]` (`sceneChAt`): числа и `[x, y]` — плавно по ease, остальное — ступенькой,
+  `v: null` — вернуть значение из params; объект-значение получает `at` = время своего ключа. Индикатор — `sceneBlink` (`true | false | { hz, duty }`, от времени сцены).
+- **Видео кадрами** (библиотека канала, тип `media`, `server/media_api.py`): `library/media/<slug>/vN/` = `media.json` (`fps, n, w, h, dur`) + `f0001.jpg…` (высота 480,
+  15 к/с) + `license.json` + `preview.png`. Источник — ссылка (yt-dlp, только кусок «с / по») или файл. Кадры грузятся целиком до первого кадра
+  (`sceneMediaLoad` в `loadSceneProps`) — рендер детерминирован, без `<video>` и перемотки. Кадр в момент сцены — `sceneMediaFrame`: время клипа =
+  `from + (t − at) · speed`, петля. CLI `studio.py media add "<ссылка>" --name … --from … --to … [--owner …]`, `media list`; HTTP `/api/media/add` (задача `mediaadd`);
+  список — `/api/scene → media`. Монтаж копирует медиа и предметы в руках вместе с префабами.
+- **Пропс** (`engine/props3d.js`): `P3.ch(o, имя, T, def)`, `P3.screen(w, h, o)` (холст, перерисовка только при смене кадра — `userData.show(ключ, рисунок)`;
+  `o.crt` — сканлайны, виньетка, засветка), `P3.media(g, cw, ch, v, T)` (`fit: cover | contain | stretch`, нет кадров — «нет сигнала»), `P3.blink`, `P3.cursor` (стрелка XP).
+  `build` возвращает `{ obj: G, tick(T) }` (стенд `stand3d.html` тоже понимает такой ответ).
+- **ЭЛТ-монитор v3** (`lib:props/elt-monitor-bol-soi@3`): `screen` — программы `xp / select / game / off` или видео, `led` — индикатор (гаснет при `off`), `cursor` — мышь
+  поверх экрана; свет экрана гаснет / меняет цвет по каналу. Видео: **`lib:media/gta-san-andreas-grouv-strit-na-velike@1`** — 60 с San Andreas (CJ на велике по Гроув-стрит,
+  YouTube thEVILLIDESTANI, 3:20–4:20; права — Rockstar Games, в «Права» упаковки).
+- **Редактор**: в свойствах предмета — «📺 Живые части» (программа / видео с секунды / «🎞 + видео по ссылке…», кадр заполнить / целиком / растянуть, индикатор горит / нет /
+  мигает, курсор x y / показать / спрятать — ключ на курсоре); у персонажа — «✋ в правой / 🤚 в левой» (ключ `hold.*`); строки `📺 ch.*` и `✋ hold.*` на таймлайне.
+  Мастерская пропса — вкладки «📺 Живое» и «🦴 Сборка».
+- **Агент**: `scene brief` печатает каналы предметов и видео канала; правила в `SCENE_RULES` («запусти San Andreas на мониторе, курсор к ярлыку»), `RULES_REV = 7`;
+  мастерская больше не помечает объект ассета «правил руками» — агент ставит в ней ключи. Тесты — `engine/test/scene.test.js` (23).

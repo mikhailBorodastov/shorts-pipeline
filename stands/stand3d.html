@@ -222,6 +222,7 @@
         PROP.tick = r && !r.isObject3D && r.tick;                 // персонаж: поза, клипы, IK — каждый кадр
         for (const c of w.scene.children.filter(c => !before.has(c))) G.add(c);
         if (r && r.isObject3D && !r.parent) G.add(r);
+        else if (r && r.obj && r.obj.isObject3D && !r.obj.parent) G.add(r.obj);   // { obj, tick } — пропс с живыми каналами (S10.3)
         w.scene.add(G); P3.live(w, G); PROP.G = G;
         w.item(PROP.o.name, 'group', G);
         const box = new THREE.Box3().setFromObject(G), sz = box.getSize(new THREE.Vector3());

@@ -23,7 +23,7 @@ import json, os, re, shutil, subprocess, time
 import paths as P
 
 LIB_KINDS = {"char": "characters", "prop": "props", "sound": "sounds", "model": "models"}
-LIB_LABEL = {"characters": "персонажи", "props": "пропсы", "sounds": "звуки", "models": "3D-модели"}
+LIB_LABEL = {"characters": "персонажи", "props": "пропсы", "sounds": "звуки", "models": "3D-модели", "media": "видео для экранов"}
 
 
 def now_ms():

@@ -155,5 +155,28 @@ test('хват: ключ предмета без версии, хват руки
   assert.strictEqual(R.rigGrip(ch, 'lib:props/trubka@2', 'handR').scale, 0.9);
 });
 
+test('каналы пропса: ключи ch.* поверх params, числа плавно, остальное ступенькой, media с моментом ключа', () => {
+  const o = { params: { screen: 'xp', bright: 1 }, keys: {
+    'ch.screen': [{ id: 'a', t: 2, v: 'select' }, { id: 'b', t: 4, v: { media: 'lib:media/gta@1', from: 10 } }, { id: 'c', t: 8, v: null }],
+    'ch.bright': [{ id: 'd', t: 0, v: 0, ease: 'linear' }, { id: 'e', t: 2, v: 1 }],
+    'ch.cursor': [{ id: 'f', t: 1, v: [0, 0], ease: 'linear' }, { id: 'g', t: 3, v: [1, 0.5] }] } };
+  assert.strictEqual(S.sceneChAt(o, 'screen', 1), 'xp');
+  assert.strictEqual(S.sceneChAt(o, 'screen', 3), 'select');
+  assert.deepStrictEqual(S.sceneChAt(o, 'screen', 5), { at: 4, media: 'lib:media/gta@1', from: 10 });
+  assert.strictEqual(S.sceneChAt(o, 'screen', 9), 'xp');
+  near(S.sceneChAt(o, 'bright', 1), 0.5);
+  assert.deepStrictEqual(S.sceneChAt(o, 'cursor', 2), [0.5, 0.25]);
+  assert.strictEqual(S.sceneChAt(o, 'led', 1, true), true);
+});
+test('индикатор и кадр медиа: мигание от времени сцены, время клипа от ключа, петля', () => {
+  assert.strictEqual(S.sceneBlink('off', 1), false); assert.strictEqual(S.sceneBlink(true, 1), true);
+  assert.strictEqual(S.sceneBlink({ hz: 2, duty: 0.5 }, 0.1), true); assert.strictEqual(S.sceneBlink({ hz: 2, duty: 0.5 }, 0.3), false);
+  S.SCENE_MEDIA['lib:media/t@1'] = { meta: { fps: 10, n: 50 }, frames: Array.from({ length: 50 }, (_, i) => ({ i })) };
+  assert.strictEqual(S.sceneMediaFrame({ media: 'lib:media/t@1', at: 2, from: 1 }, 2.55).i, 15);
+  assert.strictEqual(S.sceneMediaFrame({ media: 'lib:media/t@1', at: 0 }, 6.2).i, 12);
+  assert.strictEqual(S.sceneMediaFrame({ media: 'lib:media/t@1', at: 0, loop: false }, 9).i, 49);
+  assert.deepStrictEqual(S.sceneMediaRefs({ objects: [{ keys: { 'ch.screen': [{ v: { media: 'lib:media/t@1' } }, { v: 'xp' }] } }] }), ['lib:media/t@1']);
+});
+
 console.log(`\n${n - failed} / ${n} тестов прошли`);
 process.exit(failed ? 1 : 0);
