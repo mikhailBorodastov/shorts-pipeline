@@ -275,6 +275,7 @@ export function initTimeline(ED) {
     const keysOnly = S.filter(s => !['markers', 'cuts', 'sounds', 'clips', 'pose'].includes(s.kind));
     if (keysOnly.length) for (const [k, label] of EASES) items.push([`кривая: ${label}`, () => setEase(keysOnly, k, label)]);
     if (S.length) items.push(['копировать (Ctrl+C)', copy], ['удалить (Delete)', delKeys]);
+    if (S.length && ED.objMenu) { const k0 = S[0]; items.push(['💬 Claude про это…', () => { if (k0.t0 != null) ED.setT(k0.t0); ED.objMenu({ clientX: e.clientX, clientY: e.clientY }, k0.id || (k0.kind === 'camera' || k0.kind === 'cuts' ? 'camera' : null)); }]); }   // S7: комментарий на ключе
     if (T.clip) items.push([`вставить на курсор (${T.clip.length})`, paste]);
     if (!hh && !S.length) items.push(['+ маркер здесь', () => { ED.setT(Tof(at(e).x)); addMarker(); }], ['✂ склейка здесь', () => { ED.setT(Tof(at(e).x)); addCut(); }], ['вписать всю сцену', () => { T.fit = true; ED.tlDirty = true; }]);
     ctx(e.clientX, e.clientY, items);
