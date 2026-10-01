@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 18
+API_VERSION = 19
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -684,6 +684,36 @@ def img_ext(data):
     return None
 
 
+def file_from_url(pid, url):
+    """🔎 Картинка, перетащенная из окна поиска (Google Картинки и любой сайт): адрес картинки, data: или ссылка-обёртка (imgres?imgurl=…) -> файл видео."""
+    import urllib.request, urllib.parse
+    url = (url or "").strip().splitlines()[0] if url else ""
+    if url.startswith("data:"):
+        return save_file(pid, url.encode())
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    for k in ("imgurl", "mediaurl", "img_url"):                 # обёртки поисковиков: настоящий адрес — в параметре
+        if q.get(k):
+            url = q[k][0]; break
+    if not re.match(r"^https?://", url):
+        raise ValueError("это не адрес картинки")
+    pr = urllib.parse.urlparse(url)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+                                               "Referer": f"{pr.scheme}://{pr.netloc}/", "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read(FILE_MAX + 1)
+    except Exception as ex:                                    # сайт не отдал (защита от скачивания, 403, таймаут) — понятная ошибка, а не обрыв
+        raise ValueError(f"сайт не отдал картинку ({getattr(ex, 'code', '') or ex.__class__.__name__}) — «Копировать картинку» в окне поиска и Ctrl+V над слотом") from None
+    if not img_ext(data):                                      # avif / bmp / tiff — в png
+        try:
+            from PIL import Image
+            import io
+            b = io.BytesIO(); Image.open(io.BytesIO(data)).convert("RGBA").save(b, "PNG"); data = b.getvalue()
+        except Exception:
+            raise ValueError("по ссылке не картинка (открой картинку крупно и перетащи её, или «Копировать картинку» → Ctrl+V)")
+    return save_file(pid, data)
+
+
 def save_file(pid, data):
     if not re.fullmatch(r"[a-z0-9-]{3,40}", pid or ""):
         raise ValueError("нет id штурма")
@@ -1338,6 +1368,8 @@ def handle_post(h):
                 h._json({"error": "картинка больше 12 МБ"}, 413); return True
             h._json({"path": save_file(q.get("plan", [""])[0], h._body())}); return True
         body = json.loads(h._body() or b"{}")
+        if p == "/api/file/url":                       # 🔎 перетащили картинку из окна поиска / сайта
+            h._json({"path": file_from_url(body.get("plan", ""), body.get("url", ""))}); return True
         if p == "/api/op":
             ops = body.get("ops")
             if not isinstance(ops, list):

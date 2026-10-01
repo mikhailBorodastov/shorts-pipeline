@@ -238,6 +238,41 @@ fn open_in_browser(url: &Url) {
 
 static WINDOWS: AtomicUsize = AtomicUsize::new(0);
 
+/// Поиск картинок (Google / Яндекс Картинки): открывается окном «🔎 Картинки» внутри приложения, а не во внешнем браузере —
+/// картинку оттуда перетаскивают в слот референса (или «Копировать картинку» → Ctrl+V).
+fn is_img_search(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or("");
+    let q = url.query().unwrap_or("");
+    (host.contains("google.") && (q.contains("udm=2") || q.contains("tbm=isch")))
+        || (host.contains("yandex.") && url.path().starts_with("/images"))
+}
+
+fn search_window(app: &AppHandle, url: Url) {
+    if let Some(w) = app.get_webview_window("imgsearch") {
+        let _ = w.navigate(url);
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+    let (mut x, mut y) = (60.0, 40.0);
+    if let Some(m) = app.get_webview_window("main") {                // справа от главного окна, чтобы перетаскивать
+        if let (Ok(p), Ok(s), Ok(f)) = (m.outer_position(), m.outer_size(), m.scale_factor()) {
+            x = (p.x as f64 + s.width as f64) / f - 520.0;
+            y = p.y as f64 / f + 30.0;
+        }
+    }
+    let h = app.clone();
+    let _ = WebviewWindowBuilder::new(app, "imgsearch", WebviewUrl::External(url))
+        .title("🔎 Картинки — перетащи картинку в референс")
+        .inner_size(760.0, 900.0)
+        .position(x.max(0.0), y.max(0.0))
+        .on_new_window(move |url, _features| {                       // ссылки «в новой вкладке» — в этом же окне
+            if let Some(w) = h.get_webview_window("imgsearch") { let _ = w.navigate(url); }
+            NewWindowResponse::Deny
+        })
+        .build();
+}
+
 /// Окно приложения: общие правила ссылок, заголовок — из страницы.
 fn app_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<WebviewWindow> {
     let h = app.clone();
@@ -270,6 +305,11 @@ fn app_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<We
             }
         }})
         .on_new_window(move |url, _features| {
+            if is_img_search(&url) {
+                let h2 = h.clone();
+                let _ = h.run_on_main_thread(move || search_window(&h2, url));
+                return NewWindowResponse::Deny;
+            }
             if is_local(&url) {
                 let h2 = h.clone();
                 let _ = h.run_on_main_thread(move || {

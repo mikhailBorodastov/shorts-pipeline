@@ -486,7 +486,7 @@ Object.assign(Plan, {
       (e.refs || []).map(r => h('div.refimg',
         imgSlot({ key, path: [...P, r.id, 'img'], planId: d.id, aspect: '4/3', onSet: p => (p ? Store.set(key, [...P, r.id, 'img'], p, true) : Store.del(key, P, r.id)) }),
         line(key, [...P, r.id, 'note'], { ph: 'что взять', cls: 'box' }))),
-      h('div.refimg', imgSlot({ key, path: null, planId: d.id, aspect: '4/3', label: '+ референс', onSet: p => p && Store.add(key, P, { id: uid('f'), img: p, note: '' }) })));
+      h('div.refimg', imgSlot({ key, path: null, planId: d.id, aspect: '4/3', label: '+ референс', q: e.name, onSet: p => p && Store.add(key, P, { id: uid('f'), img: p, note: '' }) })));
   },
 
   // 🎨 draft by our engine (ideas_claude.element_spec) + edits by pins, like the video review

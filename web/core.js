@@ -1,6 +1,6 @@
 // Claude Studio — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
 'use strict';
-const API = 18;                     // must match ideas_api.API_VERSION
+const API = 19;                     // must match ideas_api.API_VERSION
 const REF = {};                     // web/ref.json, loaded at boot
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -320,14 +320,53 @@ const fmtDate = ms => ms ? new Date(ms).toLocaleDateString('ru-RU', { day: 'nume
 // ---------- pictures: paste / drop / file / sketch ----------
 const Paste = { target: null };
 const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+const hasImgUrl = e => [...(e.dataTransfer?.types || [])].some(t => t === 'text/uri-list' || t === 'text/html');
 const imageFiles = dt => [...(dt?.files || [])].filter(f => f.type.startsWith('image/'));
+// картинка, перетащенная из окна поиска / с сайта: адрес из uri-list (обёртка поисковика с imgurl=…) или <img src> из html
+function dropImageUrl(dt) {
+  if (!dt) return '';
+  const uri = (dt.getData('text/uri-list') || '').split(/\r?\n/).find(s => s && !s.startsWith('#')) || '';
+  if (/[?&](imgurl|mediaurl|img_url)=/.test(uri)) return uri;
+  const m = /<img[^>]+src=["']([^"']+)["']/i.exec(dt.getData('text/html') || '');
+  const src = m ? m[1].replace(/&amp;/g, '&') : '';
+  if (/^(https?:|data:image\/)/.test(src)) return src;
+  return /^https?:/.test(uri) ? uri : '';
+}
+const isImgUrl = s => /^https?:\/\/\S+\.(png|jpe?g|webp|gif|avif)(\?\S*)?$/i.test((s || '').trim()) || /^data:image\//.test((s || '').trim());
+async function uploadImageUrl(planId, url) {
+  return (await api('POST', '/api/file/url', { plan: planId, url })).path;
+}
 document.addEventListener('paste', e => {
   const f = [...(e.clipboardData?.items || [])].filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile())[0];
-  if (!f || !Paste.target) return;
-  if (/^(TEXTAREA|INPUT)$/.test(e.target.tagName) && e.clipboardData.getData('text/plain').trim()) return;
+  if (!Paste.target) return;
+  const txt = (e.clipboardData?.getData('text/plain') || '').trim();
+  if (!f && isImgUrl(txt) && !/^(TEXTAREA|INPUT)$/.test(e.target.tagName)) { e.preventDefault(); Paste.target(txt); return; }   // адрес картинки — тоже картинка
+  if (!f) return;
+  if (/^(TEXTAREA|INPUT)$/.test(e.target.tagName) && txt) return;
   e.preventDefault();
   Paste.target(f);
 });
+// 🔎 поиск картинок не выходя из приложения: Google / Яндекс Картинки — окно «🔎 Картинки» (в окне-приложении; в браузере — всплывающее окно).
+// Найденное перетаскивают в слот или «Копировать картинку» → Ctrl+V над слотом.
+const ImgSearch = {
+  open(q = '') {
+    const inp = h('input.box', { value: q, placeholder: 'что ищем: «ЭЛТ монитор 2006», «бабушкин ковёр»…', style: { width: '100%' } });
+    const go_ = eng => {
+      const s = inp.value.trim(); if (!s) return inp.focus();
+      const url = eng === 'ya' ? 'https://yandex.ru/images/search?text=' + encodeURIComponent(s) : 'https://www.google.com/search?udm=2&hl=ru&q=' + encodeURIComponent(s);
+      window.open(url, 'imgsearch', `popup,width=760,height=900,left=${Math.max(0, screen.availWidth - 780)},top=40`);
+      Local.set('imgq', s); close();
+      UI.toast('🔎 Окно картинок открыто: перетащи картинку в слот (лучше — открыв её крупно) или «Копировать картинку» → Ctrl+V над слотом');
+    };
+    inp.onkeydown = e => { if (e.key === 'Enter') go_('g'); if (e.key === 'Escape') close(); };
+    const box = h('div.imgsearch', h('b', '🔎 Найти картинку'), inp,
+      h('div.row', h('button.primary', { onclick: () => go_('g') }, 'Google Картинки'), h('button', { onclick: () => go_('ya') }, 'Яндекс Картинки'), h('span.sp'), h('button', { onclick: () => close() }, 'Отмена')),
+      h('p.dim.small', 'Откроется окно поиска рядом. Картинку оттуда перетащи в слот референса — или правой кнопкой «Копировать картинку» и Ctrl+V над слотом. Права на чужие картинки — у их авторов: это референсы, не кадры ролика.'));
+    const ov = h('div.imgsearch-ov', { onclick: e => { if (e.target === ov) close(); } }, box);
+    const close = () => ov.remove();
+    document.body.append(ov); setTimeout(() => { inp.focus(); inp.select(); }, 30);
+  },
+};
 document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
 document.addEventListener('drop', e => { if (hasFiles(e)) e.preventDefault(); });
 function pickFile(cb) { const i = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', onchange: () => i.files[0] && cb(i.files[0]) }); i.click(); }
@@ -337,26 +376,36 @@ async function uploadImage(planId, fileOrDataURL) {
   return (await api('POST', '/api/file?plan=' + encodeURIComponent(planId), undefined, data)).path;
 }
 // picture slot bound to a path; onSet(path) is used when the item does not exist yet
-function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small, compact }) {
+function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small, compact, q }) {
   const src = (path && getPath(Store.get(key), path)) || '';
   const set = p => (onSet ? onSet(p) : Store.set(key, path, p, true));
-  const upload = async f => { try { set(await uploadImage(planId, f)); } catch (e) { UI.toast(e.message, 'err'); } };
+  const upload = async f => {                              // файл / data: — как раньше; адрес картинки (из окна поиска) — качает локальное приложение
+    try { set(typeof f === 'string' && !f.startsWith('data:') ? (UI.toast('⬇ беру картинку…'), await uploadImageUrl(planId, f)) : await uploadImage(planId, f)); }
+    catch (e) { UI.toast(e.message, 'err'); }
+  };
+  const search = () => ImgSearch.open(q || Local.get('imgq') || '');
   const box = h('div.slot', { class: (src ? '' : 'empty') + (small ? ' small' : '') + (compact && !src ? ' compact' : ''), tabindex: 0,
     style: { aspectRatio: compact && !src ? 'auto' : aspect }, title: 'Ctrl+V — вставить картинку сюда' });
   if (src) box.append(h('img', { src: '/' + src, alt: '', onclick: () => UI.lightbox('/' + src) }),
     h('div.slot-acts', h('button.icon', { title: 'Дорисовать', onclick: e => { e.stopPropagation(); Sketch.open({ aspect, bg: '/' + src, planId, onSave: set }); } }, '✏️'),
       h('button.icon', { title: 'Убрать картинку', onclick: e => { e.stopPropagation(); set(''); } }, '×')));
   else if (compact) box.append(h('div.slot-empty.row', h('button.icon', { title: 'Файл с диска', onclick: () => pickFile(upload) }, '📎'),
+    h('button.icon', { title: 'Найти в Google / Яндекс Картинках — окно рядом, картинку оттуда перетащи сюда', onclick: search }, '🔎'),
     h('button.icon', { title: 'Нарисовать эскиз', onclick: () => Sketch.open({ aspect, planId, onSave: set }) }, '✏️'), h('span', 'картинка: Ctrl+V')));
   else box.append(h('div.slot-empty', label && h('b', label), h('span', 'Ctrl+V · перетащи'),
     h('div.row', h('button.icon', { title: 'Файл с диска', onclick: () => pickFile(upload) }, '📎'),
+      h('button.icon', { title: 'Найти в Google / Яндекс Картинках — окно рядом, картинку оттуда перетащи сюда', onclick: search }, '🔎'),
       h('button.icon', { title: 'Нарисовать эскиз', onclick: () => Sketch.open({ aspect, planId, onSave: set }) }, '✏️'))));
   box.addEventListener('mouseenter', () => (Paste.target = upload));
   box.addEventListener('mouseleave', () => { if (Paste.target === upload) Paste.target = null; });
   box.addEventListener('focus', () => (Paste.target = upload));
-  box.addEventListener('dragover', e => { if (hasFiles(e)) { e.preventDefault(); box.classList.add('drop'); } });
+  box.addEventListener('dragover', e => { if (hasFiles(e) || hasImgUrl(e)) { e.preventDefault(); box.classList.add('drop'); } });
   box.addEventListener('dragleave', () => box.classList.remove('drop'));
-  box.addEventListener('drop', e => { box.classList.remove('drop'); const f = imageFiles(e.dataTransfer)[0]; if (f) { e.preventDefault(); e.stopPropagation(); upload(f); } });
+  box.addEventListener('drop', e => {
+    box.classList.remove('drop');
+    const f = imageFiles(e.dataTransfer)[0], u = !f && dropImageUrl(e.dataTransfer);
+    if (f || u) { e.preventDefault(); e.stopPropagation(); upload(f || u); }
+  });
   return box;
 }
 

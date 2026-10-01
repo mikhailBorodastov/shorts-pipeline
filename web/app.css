@@ -709,3 +709,7 @@ body.agent-open .stage-editor { right: 380px; }
 .libimp .libcard.sel { border-color: var(--accent, #d97757); }
 .libimp label { display: block; margin-top: 8px; }
 .libimp textarea { width: 100%; box-sizing: border-box; }
+
+/* 🔎 поиск картинок (core.js ImgSearch) */
+.imgsearch-ov { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; z-index: 1000; }
+.imgsearch { background: var(--card, #1e1f24); border: 1px solid var(--line, #3a3a3e); border-radius: 10px; padding: 14px 16px; width: min(560px, 92vw); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.4); }
