@@ -1143,6 +1143,31 @@ def run_action(job):
     for key, ops in changes:
         if ops:
             apply_ops(key, ops)
+    if job.kind == "element" and not job.cancelled:
+        auto_stage(job)
+
+
+def auto_stage(job):
+    """Нарисованная 3D-сцена сразу уходит в редактор (без кнопки «Перевести в редактор»): тот же перевод scene_api.convert —
+    prefabs.js + scene.json и сравнение кадров «было / стало», в этой же задаче (отмена задачи отменяет и перевод)."""
+    el = job.params.get("el")
+    e = _by_id(load(job.key).get("elements"), el)
+    if not e or e.get("kind") != "scene" or (e.get("stage") or {}).get("work"):
+        return
+    rs = e.get("renders") or []
+    r = next((x for x in rs if x.get("id") == e.get("render")), rs[-1] if rs else None)
+    if not r or not r.get("three") or r.get("stage"):
+        return
+    drawn, params = job.summary, job.params
+    job.summary = (drawn + " · " if drawn else "") + "переношу в редактор сцены (5–10 мин)…"
+    try:
+        job.params = {"el": el, "base": r["id"]}
+        scapi().convert(sys.modules[__name__], job)
+        job.summary = (drawn + " · " if drawn else "") + "🎬 " + job.summary
+    except Exception as ex:
+        job.summary = (drawn + " · " if drawn else "") + f"в редактор не перенёс ({ex}) — кнопка «🎬 Перевести в редактор»"
+    finally:
+        job.params = params
 
 
 def produce(job):
