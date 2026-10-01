@@ -376,6 +376,9 @@ name — коротко (2–5 слов); desc — как выглядит ил�
     elif action == "charparts":
         return charparts_spec(docs, params, sysp)
 
+    elif action == "trellisfix":
+        return trellisfix_spec(docs, params, sysp)
+
     elif action == "animteach":
         return animteach_spec(docs, params, sysp)
 
@@ -847,6 +850,66 @@ def prop3_engine(docs, e, rel, wd, blender):
    Мелкие детали — наклейками (P3.sticker с 2D-рисунком) или маленькими P3.box; надписи и экраны — наклейками.{bl}
 3. Сними кадры командой (ровно так): node {rp} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']}
    Получишь element.png — лист 2×2 из четырёх ракурсов (¾ спереди, другой бок, ¾ сзади, другой бок), element_1/3/5/7.png — каждый крупно, и ошибки страницы."""
+
+
+def trellisfix_spec(docs, params, sysp):
+    """«Поправить» у героя, слепленного TRELLIS локально (comfy3d.py): Claude читает пины и заметки, смотрит кадры и подбирает,
+    ЧТО перегенерировать и с какими настройками. Саму модель лепит потом задача charmodel (source trellis, mode fix) — без Claude."""
+    plan = docs["plan"]
+    e = next((x for x in plan.get("elements") or [] if x["id"] == params.get("el")), None)
+    if not e:
+        raise ValueError("элемент не найден")
+    base = next((r for r in e.get("renders") or [] if r.get("id") == params.get("base")), None)
+    if not base or base.get("source") != "trellis":
+        raise ValueError("править так можно только модель TRELLIS")
+    bm = base.get("meta") or {}
+    wd = os.path.join(P.resolve("render/" + base["dir"]), "_fix")
+    os.makedirs(wd, exist_ok=True)
+    fx = ((e.get("fx") or {}).get("main")) or {}
+    pins3 = [{"id": p.get("id"), "p": p.get("p"), "n": p.get("n"), "text": (p.get("text") or "").strip()} for p in fx.get("pins3d") or [] if p.get("p")]
+    notes = fx_notes(fx)
+    ftext = (fx.get("text") or "").strip()
+    params["_fx"] = {"text": ftext, "notes": notes, "pins3d": pins3, "pins": []}
+    if not (pins3 or notes or ftext):
+        raise ValueError("правок нет: поставь пины на модели или напиши «в целом»")
+    bd = P.resolve("render/" + base["dir"])
+    shots = [os.path.join(bd, f) for f in ("element.png", "pose_up/element.png") if os.path.isfile(os.path.join(bd, f))]
+    if pins3 and _prop3_pins(docs, base, wd, pins3):
+        shots = [os.path.join(wd, "pins.png")] + shots
+    refs = [r for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+    rcopy = {}                                                    # копии рядом: Read за пределами рабочей папки (кириллица, тире в пути) не всегда пускает
+    for i, r in enumerate(refs, 1):
+        dst = os.path.join(wd, f"ref{i}{os.path.splitext(r['img'])[1].lower() or '.png'}")
+        shutil.copy2(P.resolve(r["img"]), dst)
+        rcopy[r["img"]] = dst
+    lines = [f"- «{t}»" for t in ([ftext] if ftext else []) + [n["text"] for n in notes]]
+    lines += [f"- 📍 пин {i}: точка {p['p']} на модели: «{p['text'] or 'автор отметил место без слов — посмотри'}»" for i, p in enumerate(pins3, 1)]
+    prompt = f"""Герой «{e.get('name')}» слеплен локальной нейросетью по картинке (TRELLIS.2 / Pixal3D в ComfyUI). Автор оставил правки к версии v{base.get('v')}:
+{chr(10).join(lines)}
+
+Посмотри через Read кадры этой версии: {', '.join(_fwd(x) for x in shots)}{' (pins.png — номера пинов с четырёх сторон, полый кружок — с обратной стороны)' if pins3 else ''}.
+Картинки-референсы элемента (через Read; в ответе указывай путь в квадратных скобках): {', '.join(f'{_fwd(rcopy[r["img"]])} [{r["img"]}]' + (f' — «{r["note"]}»' if r.get("note") else '') for r in refs) or 'нет'}.
+Текущие настройки: движок {bm.get('engine')}, ступень {bm.get('stage')}, картинка {bm.get('ref')}, ракурсы {json.dumps(bm.get('views') or {}, ensure_ascii=False)},
+поля кадра pad {bm.get('pad') or 1.1}, убирать фон {bm.get('bg', True)}, сетка faces {bm.get('faces') or 'по умолчанию'}, текстура tex {bm.get('tex') or 'по умолчанию'}.
+
+Нейросеть нельзя попросить словами — меняются только настройки. Реши, что поможет:
+- reseed — какие случайные стадии перегенерировать: structure (силуэт и объём целиком — если форма не та, лишние/слипшиеся части), shape (детали формы при том же силуэте),
+  upsample (мелкие детали чистовика), texture (раскраска: пятна, цвета, грязь). Чем меньше стадий — тем больше остаётся как было.
+- engine — pixal3d (точнее повторяет картинку спереди), trellis (TRELLIS.2: свободнее достраивает спину и бока), multiview (по 2–4 ракурсам: front/left/back/right — пути files/… из референсов; нужен, если сзади и сбоку модель выдумана неверно, а в референсах есть эти виды).
+- ref — другая картинка-референс (путь files/…), если текущая плохая (обрезаны руки, сложный фон, герой не целиком). texref — картинка только для раскраски (форма останется).
+- pad 1.0–1.6: больше — если обрезало торчащие части (оружие, уши, хвост). bg false — если фон уже прозрачный и BiRefNet съедает детали.
+  ВАЖНО: ref, engine, pad, bg меняют вход нейросети — фигура изменится целиком даже с теми же сидами. Не трогай их, если автор доволен формой и просит только детали или цвет.
+  texref — только другая картинка (например, перекрашенный референс); та же картинка, что ref, ничего не даёт — тогда просто reseed texture.
+- stage draft (быстро, 512³) или final (1536³, долго) — оставь как было, если автор не просит иначе.
+- faces — число треугольников (50000–700000): меньше — проще и легче, больше — детальнее. tex 1024/2048/4096.
+Если правка нейросетью невыполнима (например, «сделай улыбку» — лицо меняется только картинкой), так и скажи в reply и предложи, что поменять в референсе.
+reply — 1–3 фразы автору по-русски, что и почему меняешь."""
+    sch = S({"reply": STR, "reseed": ARR({"type": "string", "enum": ["structure", "shape", "upsample", "texture"]}),
+             "engine": {"type": "string", "enum": ["pixal3d", "trellis", "multiview"]}, "stage": {"type": "string", "enum": ["draft", "final"]},
+             "ref": STR, "texref": STR, "views": S({k: STR for k in ("front", "left", "back", "right")}),
+             "pad": {"type": "number"}, "bg": {"type": "boolean"}, "faces": {"type": "integer"}, "tex": {"type": "integer"}}, ["reply", "reseed"])
+    dirs = [bd, wd] + sorted({os.path.dirname(P.resolve(r["img"])) for r in refs})
+    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 600, "tools": ["Read"], "allowed": ["Read"], "dirs": dirs, "schema": sch}
 
 
 def charparts_spec(docs, params, sysp):
@@ -1566,6 +1629,17 @@ def apply(action, docs, params, res):
             shutil.copy2(os.path.join(wd, "strip.png"), os.path.join(dst_dir, slug + ".png"))
         res.update({"id": a["id"], "name": a["name"], "dur": a.get("dur"), "loop": a.get("loop", False)})
         return [], f"Claude выучил «{a['name']}» ({a['id']}, {a.get('dur')} с) — в библиотеке анимаций типа {typ}"
+
+    if action == "trellisfix":                                    # правки сняты, параметры уходят в задачу charmodel (её запускает страница по onResult)
+        eid = params["el"]
+        fx = params.get("_fx") or {}
+        res["feedback"] = "; ".join(([fx["text"]] if fx.get("text") else []) + [n["text"] for n in fx.get("notes") or []]
+                                    + [f"📍{i} {p['text'] or '(смотри место)'}" for i, p in enumerate(fx.get("pins3d") or [], 1)])
+        ops = [{"op": "del", "path": ["elements", eid, "fx", "main", "notes"], "id": n["id"]} for n in fx.get("notes") or [] if n.get("id")]
+        ops += [{"op": "del", "path": ["elements", eid, "fx", "main", "pins3d"], "id": p["id"]} for p in fx.get("pins3d") or [] if p.get("id")]
+        if fx.get("text"):
+            ops.append({"op": "set", "path": ["elements", eid, "fx", "main", "text"], "value": ""})
+        return [(key, ops)], "TRELLIS: " + (res.get("reply") or "перелепливаю")
 
     if action == "charparts":
         wd, rel, v = params["_wd"], params["_rel"], params["_v"]

@@ -15,6 +15,7 @@
 | S7 | агент: панель с живым логом и вмешательством, комментарии на объектах, «✨ Собрать» — ТЗ: [stage7-agent.md](stage7-agent.md) | 2–3 | S1, S6 |
 | S8 | ревью с пометками (сдвиг / поза + комментарий), упаковка — ТЗ: [stage8-review-pack.md](stage8-review-pack.md) | 2 | S6, S7 |
 | S9 | новый канал: интервью по стилю, настройки стиля, свой тулкит — ТЗ: [stage9-channel.md](stage9-channel.md) | 1–2 | S2 |
+| вне плана | локальная 3D: TRELLIS.2 / Pixal3D в ComfyUI Studio, refine героя — [local3d.md](local3d.md); установщик для друзей — [stage2-studio.md §5.1](stage2-studio.md) | — | S9 |
 
 ---
 

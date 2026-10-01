@@ -47,9 +47,47 @@ function uploadModel(key, el) {
   i.click();
 }
 // 🦴 герой из 3D-модели: ассет | Meshy | Tripo — локальная задача charmodel (готовый скелет подстроит, нет — поставит авто-скелет)
-async function charModel(key, el, source, asset) {
-  try { const r = await api('POST', '/api/char/model', { key, el, source, asset }); Claude.jobs[r.job.id] = r.job; App.render(); UI.toast(source === 'asset' ? 'Делаю героя из модели…' : `${source === 'meshy' ? 'Meshy' : 'Tripo'} лепит модель по картинке — 3–10 минут`); }
+async function charModel(key, el, source, asset, extra = {}) {
+  const msg = source === 'asset' ? 'Делаю героя из модели…' : source === 'trellis'
+    ? ({ draft: 'TRELLIS лепит черновик на твоей видеокарте — 1–3 минуты', final: 'TRELLIS доводит до чистовика 1536³ — 3–8 минут', retex: 'TRELLIS перекрашивает ту же форму — 2–5 минут', fix: 'TRELLIS перелепливает по правкам' }[extra.mode || 'draft'])
+    : `${source === 'meshy' ? 'Meshy' : 'Tripo'} лепит модель по картинке — 3–10 минут`;
+  try { const r = await api('POST', '/api/char/model', Object.assign({ key, el, source, asset }, extra)); Claude.jobs[r.job.id] = r.job; App.render(); UI.toast(msg); }
   catch (e) { UI.toast(e.message, 'err'); }
+}
+// 🖥 TRELLIS локально: выбор картинки (или ракурсов) перед первым черновиком; перетекстурить — по какой картинке красить
+function trellisDlg(key, e, cur, mode = 'draft') {
+  const refs = (e.refs || []).filter(r => r.img);
+  if (!refs.length) return UI.toast('Добавь картинку-референс героя слева', 'err');
+  const st = { ref: (cur && cur.meta && (mode === 'retex' ? '' : cur.meta.ref)) || refs[0].img, engine: (cur && cur.meta && cur.meta.engine) || 'pixal3d', views: {}, texref: '' };
+  const SL = [['front', 'спереди'], ['left', 'слева'], ['back', 'сзади'], ['right', 'справа']];
+  const body = h('div.trellis');
+  const draw = () => {
+    body.replaceChildren(...[
+      mode === 'draft' && h('div.seg', [['pixal3d', 'Pixal3D — точно по картинке'], ['trellis', 'TRELLIS.2 — свободнее достроит'], ['multiview', 'по ракурсам (2–4 картинки)']]
+        .map(([k, l]) => h('button', { class: st.engine === k ? 'sel' : '', onclick: () => { st.engine = k; draw(); } }, l))),
+      h('p.dim.small', mode === 'retex' ? 'Форма останется та же. Выбери картинку, по которой красить (можно перекрашенный тот же референс), или «новый сид» — та же картинка, другая раскраска.'
+        : st.engine === 'multiview' ? 'Кликай по картинкам по порядку: спереди → слева → сзади → справа (повторный клик снимает). Герой целиком, на простом фоне, одного размера и в одной позе на всех видах.'
+        : 'Какая картинка — герой целиком, лучше спереди или ¾, на простом фоне.'),
+      h('div.refpick', refs.map(r => {
+        const slot = Object.keys(st.views).find(k => st.views[k] === r.img);
+        const sel = st.engine === 'multiview' ? !!slot : (mode === 'retex' ? st.texref === r.img : st.ref === r.img);
+        return h('button.refbtn', { class: sel ? 'sel' : '', title: r.note || '', onclick: () => {
+          if (st.engine === 'multiview' && mode === 'draft') { const free = SL.find(([k]) => !st.views[k]); if (slot) delete st.views[slot]; else if (free) st.views[free[0]] = r.img; }
+          else if (mode === 'retex') st.texref = st.texref === r.img ? '' : r.img; else st.ref = r.img;
+          draw(); } }, h('img', { src: '/' + r.img, alt: '' }), slot && h('span.slot', SL.find(([k]) => k === slot)[1]));
+      })),
+      st.engine === 'multiview' && mode === 'draft' && h('p.small', SL.map(([k, l]) => h('span.tag', { class: st.views[k] ? 'on' : '' }, l + (st.views[k] ? ' ✓' : '')))),
+      h('div.row', h('span.sp'), h('button.primary', { onclick: () => {
+        if (st.engine === 'multiview' && mode === 'draft' && Object.keys(st.views).length < 2) return UI.toast('Нужно хотя бы 2 ракурса', 'err');
+        close();
+        const x = { mode, base: mode === 'draft' ? undefined : cur && cur.id };
+        if (mode === 'draft') Object.assign(x, st.engine === 'multiview' ? { engine: 'multiview', views: st.views } : { engine: st.engine, ref: st.ref });
+        if (mode === 'retex') Object.assign(x, st.texref ? { texref: st.texref } : {});
+        charModel(key, e.id, 'trellis', undefined, x);
+      } }, mode === 'retex' ? (st.texref ? '🎨 Перекрасить по картинке' : '🎲 Новая раскраска') : '🖥 Лепить черновик'))].filter(Boolean));
+  };
+  draw();
+  const close = UI.modal(mode === 'retex' ? `🎨 Перетекстурить «${e.name}» v${cur.v}` : `🖥 TRELLIS локально · «${e.name}»`, body);
 }
 const ASSET_KIND = { '3d': '3D', '2d': '2D', tex: 'текстура' };
 const ASSET_SRC = { polypizza: 'Poly Pizza', polyhaven: 'Poly Haven', sketchfab: 'Sketchfab', oga: 'OpenGameArt', openverse: 'Openverse', commons: 'Commons', ambientcg: 'ambientCG',
@@ -386,7 +424,7 @@ Object.assign(Plan, {
     const FX = ['elements', e.id, 'fx', 'main'], fx = (e.fx || {}).main || {}, pins = fx.pins || [], n = fxCount(fx);
     const three = e.kind === 'scene' && d.engine === '3d', prop3 = isProp3(e), p3 = cur && cur.three3, pins3 = fx.pins3d || [];
     const has2d = prop3 && (e.renders || []).some(r => !r.three3);
-    const rig = isRigChar(e), rc = cur && cur.rigchar, act = rig ? 'charparts' : 'element';
+    const rig = isRigChar(e), rc = cur && cur.rigchar, trl = cur && cur.source === 'trellis' && cur.meta, act = trl ? 'trellisfix' : rig ? 'charparts' : 'element';
     // a click on the picture: a pin for the next draft (red) or, once the element is approved, a wish «для финала» (green)
     const mode = Plan.pinMode[e.id] || (e.status === 'ok' ? 'final' : 'fix'), FIN = ['elements', e.id, 'final'];
     const img = cur && rc ? h('img', { src: '/' + cur.img, alt: '', title: 'Проверочные позы с костями — клик: крупно', onclick: () => UI.lightbox('/' + cur.img) })
@@ -423,9 +461,13 @@ Object.assign(Plan, {
         cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         (p3 || (rc && cur.model3d)) && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
+        trl && cur.meta.stage === 'draft' && h('button.primary', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'trellis', undefined, { mode: 'final', base: cur.id }),
+          title: 'Та же фигура (те же сиды), но 1536³, текстура 2048 и полная сетка — 3–8 минут' }, '⬆ Довести'),
+        trl && h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, cur, 'retex'), title: 'Форма та же — новая раскраска: по другой картинке или новым сидом' }, '🎨 Перекрасить'),
         rc && cur.fn !== 'hog' && !cur.model3d && h('button.primary', { onclick: () => Plan.viewSkel(d, e, cur), title: 'Двигать суставы мышью, проверять позами; сохраняется новой версией без Claude' }, '🦴 Редактор скелета'),
         rig && e.kind === 'char' && h('span.row.mk3d', { title: 'Как сделать 3D-героя со скелетом' },
           Claude.btn({ label: 'Blender', icon: '🧊', action: 'charparts', key, scope, params: { el: e.id, make: 'blender' }, title: 'Claude (Opus) соберёт детальную модель в Blender кодом по референсам и поставит скелет — 15–40 минут' }),
+          h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, null), title: 'TRELLIS.2 / Pixal3D на твоей видеокарте, бесплатно: черновик за 1–3 минуты, потом «довести», «перекрасить», пины. Ставится в ⚙ Настройках' }, '🖥 TRELLIS'),
           h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'meshy'), title: 'Meshy: модель с текстурой прямо по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Meshy'),
           h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'tripo'), title: 'Tripo: модель с текстурой по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Tripo'),
           Claude.running(key, 'charmodel:' + e.id) && h('span.dim.small', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.scope === 'charmodel:' + e.id && j.status === 'running') || {}).summary || 'делаю…')),
@@ -451,7 +493,7 @@ Object.assign(Plan, {
         [['fix', '✏️ правка черновика'], ['final', '🎬 для финала']].map(([k, l]) => h('button', { class: mode === k ? 'sel' : '', onclick: () => { Plan.pinMode[e.id] = k; App.render(); } }, l))),
       cur && h('div.elshot', h('div.pinwrap.big', img, pinMarks(fx), finMarks),
         (cur.extra || []).length > 0 && h('div.extra', cur.extra.map(x => h('img', { src: '/' + x, alt: '', title: 'другой момент времени — открыть крупно', onclick: () => UI.lightbox('/' + x) })))),
-      p3 && (pins3.length ? h('ol.pinlist', pins3.map((p, i) => h('li', h('span.pnum', i + 1),
+      (p3 || (rc && cur.model3d)) && (pins3.length ? h('ol.pinlist', pins3.map((p, i) => h('li', h('span.pnum', i + 1),
         line(key, [...FX, 'pins3d', p.id, 'text'], { ph: 'что здесь не так / как надо', cls: 'box' }),
         h('button.icon.del', { title: 'Убрать пин', onclick: () => Store.del(key, [...FX, 'pins3d'], p.id) }, '×'))))
         : h('p.dim', 'Нажми «🧊 Покрутить · 📍 пины» (или на картинку): крути модель мышью и кликай по ней — каждый клик ставит пин с номером, текст правки пишешь рядом.')),
@@ -464,7 +506,10 @@ Object.assign(Plan, {
       cur && [h('label', 'В целом', h('span.dim', ' — к следующему черновику; каждая правка отдельным пунктом')),
         noteList(key, FX, '+ «краска зеленее, как в советских коридорах», «ёжик меньше», «кнопки круглые»…')],
       cur && h('div.row',
-        n ? Claude.btn({ label: `Поправить (${n})`, action: act, key, scope, params: { el: e.id, base: cur.id }, title: 'Новая версия с учётом правок; прошлые остаются' })
+        n ? Claude.btn({ label: `Поправить (${n})`, action: act, key, scope, params: { el: e.id, base: cur.id }, title: trl ? 'Claude прочтёт пины, посмотрит модель и подберёт, что перелепить (силуэт, детали, раскраску, картинку, ракурсы); лепит TRELLIS' : 'Новая версия с учётом правок; прошлые остаются',
+            onResult: trl ? r => { if (!r || !r.reseed) return; UI.toast(r.reply || 'перелепливаю', 'ok');
+              charModel(key, e.id, 'trellis', undefined, Object.assign({ mode: 'fix', base: cur.id, why: r.reply, feedback: r.feedback },
+                ...['reseed', 'engine', 'stage', 'ref', 'texref', 'views', 'pad', 'bg', 'faces', 'tex'].filter(k => r[k] != null && r[k] !== '' && !(typeof r[k] === 'object' && !Array.isArray(r[k]) && !Object.keys(r[k]).length)).map(k => ({ [k]: r[k] })))); } : undefined })
           : h('span.dim.small', 'правок нет'),
         h('span.sp'),
         e.status !== 'ok' && h('button.primary', { onclick: () => Store.set(key, ['elements', e.id, 'status'], 'ok', true) }, '✓ Утвердить'),

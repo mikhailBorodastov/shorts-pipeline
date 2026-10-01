@@ -524,6 +524,39 @@ def char_job(A, job):
         meta = {"asset": a["id"], "title": a.get("title"), "license": a.get("license"), "author": a.get("author"), "page": a.get("page")}
         log("Blender открывает модель…")
         info = normalize(base, wd)
+    elif src == "trellis":                                       # локально: TRELLIS.2 / Pixal3D в ComfyUI Studio (comfy3d.py)
+        import comfy3d as C
+        base = A._by_id(rs, prm.get("base")) if prm.get("base") else None
+        bm = dict((base or {}).get("meta") or {})
+        mode = prm.get("mode") or ("final" if base else "draft")
+        refs = [r for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+        views = prm.get("views") or bm.get("views") or {}               # {front|left|back|right: путь files/…}
+        engine = prm.get("engine") or bm.get("engine") or ("multiview" if len(views) >= 2 else "pixal3d")
+        ref = prm.get("ref") or bm.get("ref") or (refs[0]["img"] if refs else None)
+        if engine == "multiview" and len(views) < 2:
+            raise ValueError("для «по ракурсам» нужны хотя бы 2 картинки: спереди и сбоку/сзади")
+        if engine != "multiview" and not ref:
+            raise ValueError("нужна картинка-референс персонажа")
+        seeds = dict(bm.get("seeds") or {})
+        keep = {"draft": () if not base else ("structure", "shape", "upsample", "texture"), "final": ("structure", "shape", "texture"),
+                "retex": ("structure", "shape", "upsample"), "fix": tuple(k for k in ("structure", "shape", "upsample", "texture") if k not in (prm.get("reseed") or []))}[mode]
+        if mode == "draft" and not base:
+            seeds = {}
+        seeds = C.new_seeds(seeds, keep)
+        stage = prm.get("stage") or ("final" if mode in ("final",) or (mode in ("retex", "fix") and bm.get("stage") == "final") else "draft")
+        opts = {k: prm[k] if prm.get(k) is not None else bm.get(k) for k in ("tex", "faces", "pad", "bg", "res", "mv_fov")}   # не задано — как у базы (иначе вход сети другой и фигура поплывёт)
+        texref = prm.get("texref") if mode in ("retex", "fix") else bm.get("texref") if mode == "final" else None
+        images = ({k: P.resolve(v) for k, v in views.items()} if engine == "multiview" else {"main": P.resolve(ref)})
+        if texref:
+            images["tex"] = P.resolve(texref)
+        what = {"draft": "черновик", "final": "довожу до чистовика", "retex": "перетекстуриваю", "fix": "правлю"}[mode]
+        log(f"TRELLIS ({'Pixal3D' if engine == 'pixal3d' else 'по ракурсам' if engine == 'multiview' else 'TRELLIS.2'}): {what}…")
+        glb, meta = C.generate(images, wd, log, engine=engine, mode=mode, stage=stage, seeds=seeds, tag=f"{pid}_{eid}_v{v}",
+                               **{k: x for k, x in opts.items() if x is not None})
+        meta.update(ref=ref, views=views or None, texref=texref, base=(base or {}).get("id"), why=prm.get("why") or "")
+        meta = {k: x for k, x in meta.items() if x is not None}
+        log("Blender проверяет модель…")
+        info = normalize(glb, wd)
     else:
         S = A.stgapi()
         k = S.secret(src)
@@ -548,7 +581,7 @@ def char_job(A, job):
         meta["autorig"] = info.get("weights")
     sk = prm.get("skeleton") or e.get("skeleton") or "biped"
     slug = re.sub(r"[^a-z0-9-]+", "-", (e.get("slug") or eid).lower()).strip("-") or eid
-    A.write_text(os.path.join(wd, "prefab.js"), prefab_js(slug, e.get("name") or "персонаж", sk, h, info, {"asset": "ассет", "meshy": "Meshy", "tripo": "Tripo"}.get(src, src)))
+    A.write_text(os.path.join(wd, "prefab.js"), prefab_js(slug, e.get("name") or "персонаж", sk, h, info, {"asset": "ассет", "meshy": "Meshy", "tripo": "Tripo", "trellis": "TRELLIS.2 локально"}.get(src, src)))
     json.dump(dict(info, source=src, meta=meta), open(os.path.join(wd, "info.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     log("снимаю поворотный стол и позы…")
     rp = os.path.join(P.STANDS, "render_prop.js")
@@ -564,9 +597,14 @@ def char_job(A, job):
     img = A.save_file(pid, open(main, "rb").read())
     extra = [A.save_file(pid, open(os.path.join(wd, f), "rb").read()) for f in ("pose_up/element.png", "pose_step/element.png") if os.path.isfile(os.path.join(wd, f))]
     rid = A.new_id("r")
-    what = {"asset": f"из ассета «{meta.get('title', '')}»", "meshy": "Meshy по картинке", "tripo": "Tripo по картинке"}.get(src, src)
+    what = {"asset": f"из ассета «{meta.get('title', '')}»", "meshy": "Meshy по картинке", "tripo": "Tripo по картинке",
+            "trellis": f"TRELLIS локально ({ {'pixal3d': 'Pixal3D', 'trellis': 'TRELLIS.2', 'multiview': 'по ракурсам'}.get(meta.get('engine'), '') }, "
+                       f"{'черновик' if meta.get('stage') == 'draft' else 'чистовик'}, {meta.get('secs', '?')} с)"}.get(src, src)
     skel = "авто-скелет" + (" (конверты)" if meta.get("autorig") == "envelope" else "") if meta.get("autorig") else "готовый скелет модели"
+    if src == "trellis" and prm.get("feedback"):
+        meta["feedback"] = prm["feedback"]
     item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "fn": sk, "rigchar": True, "model3d": True, "source": src, "meta": meta,
+            **({"feedback": prm["feedback"]} if prm.get("feedback") else {}),
             "summary": f"3D-герой {what}; {skel}: {len(info.get('map') or {})} костей позы" + (f"; анимации модели: {', '.join((info.get('animations') or [])[:8])}" if info.get("animations") else ""),
             "note": "проверь позы «руки вверх» и «шаг»: если рука идёт не туда — поменяй k у кости в prefab.js или скажи Claude", "ts": int(time.time() * 1000)}
     ops = [{"op": "add", "path": ["elements", eid, "renders"], "item": item}, {"op": "set", "path": ["elements", eid, "render"], "value": rid}]
@@ -577,7 +615,25 @@ def char_job(A, job):
     job.summary = item["summary"]
 
 
+def comfy_setup_job(A, job):
+    """🖥 ⚙ Настройки → «Поставить локальную 3D»: tools/comfy_setup.py (ComfyUI portable + модели TRELLIS.2 / Pixal3D), строки вывода — в summary."""
+    cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    pr = subprocess.Popen([sys.executable, "-u", os.path.join(P.STUDIO, "tools", "comfy_setup.py")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, encoding="utf-8", errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8"), creationflags=cf)
+    last = ""
+    for line in pr.stdout:
+        if line.strip():
+            last = line.strip(); job.summary = last
+        if job.cancelled:
+            pr.kill(); raise RuntimeError("остановлено — докачается с того же места")
+    if pr.wait():
+        raise RuntimeError(last or "установка не удалась")
+    job.summary = "Локальная 3D готова: TRELLIS.2 и Pixal3D"
+
+
 def run_job(A, job):
+    if job.kind == "comfysetup":
+        comfy_setup_job(A, job); return True
     if job.kind == "charmodel":
         char_job(A, job); return True
     if job.kind == "assetupload":

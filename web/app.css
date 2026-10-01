@@ -672,3 +672,12 @@ body.agent-open .stage-editor { right: 380px; }
 .capref { max-width: 270px; max-height: 480px; border-radius: 10px; object-fit: contain; background: #111; }
 .setrow { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .mk3d { gap: 4px; }
+/* 🖥 TRELLIS локально: выбор картинки / ракурсов */
+.trellis .seg { margin-bottom: 8px; flex-wrap: wrap; }
+.refpick { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.refbtn { position: relative; padding: 0; width: 120px; height: 120px; border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: var(--bg2, #222); }
+.refbtn img { width: 100%; height: 100%; object-fit: contain; }
+.refbtn.sel { border-color: var(--accent, #d97757); }
+.refbtn .slot { position: absolute; left: 4px; bottom: 4px; background: var(--accent, #d97757); color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 6px; }
+.trellis .tag { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: 8px; background: var(--bg2, #2a2a2a); opacity: .6; }
+.trellis .tag.on { opacity: 1; }

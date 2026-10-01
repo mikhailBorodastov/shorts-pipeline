@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 15
+API_VERSION = 16
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -90,7 +90,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -849,7 +849,7 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
-        elif job.kind in ("charmodel", "assetupload"):              # S9+: герой из 3D-модели (ассет / Meshy / Tripo), своя модель
+        elif job.kind in ("charmodel", "assetupload", "comfysetup"):              # S9+: герой из 3D-модели (ассет / Meshy / Tripo), своя модель
             m3d().run_job(sys.modules[__name__], job)
         elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps"):    # S9: интервью канала, сборка стиля, герой канала
             chnapi().run_job(sys.modules[__name__], job)
@@ -1249,7 +1249,7 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
-    if p == "/api/settings":
+    if p in ("/api/settings", "/api/local3d"):
         stgapi().handle_get(sys.modules[__name__], h, p, q); return True
     if p.startswith("/api/channel/"):
         try:
@@ -1346,8 +1346,13 @@ def handle_post(h):
         if p == "/api/assets/upload":                   # ⬆ своя 3D-модель (base64)
             j = start_job("assetupload", body.get("key", ""), f"assetupload:{body.get('el', '')}", {k: body.get(k) for k in ("el", "name", "data", "license", "author", "page")})
             h._json({"job": j.info()}); return True
+        if p == "/api/local3d/setup":                  # 🖥 поставить / докачать ComfyUI Studio и модели TRELLIS.2 / Pixal3D (~23 ГБ)
+            j = start_job("comfysetup", "", "comfysetup", {})
+            h._json({"job": j.info()}); return True
         if p == "/api/char/model":                      # 🦴 герой из 3D-модели: source asset | meshy | tripo
-            j = start_job("charmodel", body.get("key", ""), f"charmodel:{body.get('el', '')}", {k: body.get(k) for k in ("el", "source", "asset", "ref", "h", "skeleton")})
+            j = start_job("charmodel", body.get("key", ""), f"charmodel:{body.get('el', '')}", {k: body.get(k) for k in ("el", "source", "asset", "ref", "h", "skeleton", "body",
+                                                                                                          # TRELLIS (локально): режим refine, база, движок, ракурсы, сиды, картинка для текстуры, сетка
+                                                                                                          "mode", "base", "engine", "views", "reseed", "texref", "tex", "faces", "pad", "bg", "res", "stage", "why", "feedback")})
             h._json({"job": j.info()}); return True
         if p == "/api/assets/fetch":
             row = body.get("row") or {}
@@ -1388,7 +1393,7 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
-        if p == "/api/settings" and stgapi().handle_post(sys.modules[__name__], h, p, body):
+        if p in ("/api/settings", "/api/local3d/stop") and stgapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/channel/") and chnapi().handle_post(sys.modules[__name__], h, p, body):
             return True

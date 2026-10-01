@@ -21,3 +21,4 @@ app/*.exe
 tools/blender/
 
 app/bundle/
+tools/comfyui/

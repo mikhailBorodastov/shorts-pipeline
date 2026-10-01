@@ -86,13 +86,31 @@ def save(A, body):
     return get(A)
 
 
+def local3d():
+    """🖥 Локальная 3D (TRELLIS.2 / Pixal3D в ComfyUI Studio, server/comfy3d.py): поставлено ли, запущено ли, видеокарта."""
+    import comfy3d as C, subprocess
+    st = dict(C.installed(), alive=C.alive())
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip().splitlines()
+        st["gpu"] = out[0] if out else ""
+    except Exception:
+        st["gpu"] = ""
+    return st
+
+
 def handle_get(A, h, p, q):
     if p == "/api/settings":
         h._json(get(A)); return True
+    if p == "/api/local3d":
+        h._json(local3d()); return True
     return False
 
 
 def handle_post(A, h, p, body):
     if p == "/api/settings":
         h._json(save(A, body)); return True
+    if p == "/api/local3d/stop":                       # освободить видеопамять: ComfyUI Studio поднимется сам при следующей лепке
+        import comfy3d as C
+        C.stop(); h._json(local3d()); return True
     return False

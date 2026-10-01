@@ -236,6 +236,26 @@ Object.assign(Pages, {
 
 // ---------------- ⚙ Настройки приложения (settings_api.py): ключи сервисов, Blender, модели Claude
 Object.assign(Pages, {
+  // 🖥 Локальная 3D: TRELLIS.2 / Pixal3D в отдельном ComfyUI Studio (server/comfy3d.py, tools/comfy_setup.py)
+  local3dCard() {
+    if (Pages._l3d === undefined) { Pages._l3d = null; api('GET', '/api/local3d').then(j => { Pages._l3d = j; App.render(); }).catch(e => { Pages._l3d = { err: e.message }; App.render(); }); }
+    const L = Pages._l3d, job = Object.values(Claude.jobs).find(j => j.scope === 'comfysetup' && j.status === 'running');
+    const refresh = () => { Pages._l3d = undefined; App.render(); };
+    const ready = L && L.comfy && !(L.missing || []).length;
+    return h('section.card', h('div.card-head', h('h3', '🖥 Локальная 3D — TRELLIS.2 и Pixal3D'), h('span.sp'), L && h('button.small', { onclick: refresh }, '↻')),
+      !L ? h('p.dim', h('span.spin'), ' проверяю…') : L.err ? h('div.badline', '⚠ ' + L.err) : [
+        h('p.dim.small', 'Герой по картинке на твоей видеокарте, бесплатно и без ключей: черновик за 1–3 минуты, «⬆ Довести» до 1536³, «🎨 Перекрасить», пины → «Поправить», по 2–4 ракурсам. ',
+          'Отдельный ComfyUI в _studio/tools/comfyui (твой ComfyUI не трогает), модели Comfy-Org (MIT), ~23 ГБ. Нужна NVIDIA от 12–16 ГБ.'),
+        h('div.row', h('span', L.gpu ? '🎮 ' + L.gpu : '⚠ NVIDIA не найдена'), h('span.sp'),
+          ready ? h('span.ok-t', '✓ установлено') : h('span.dim', L.comfy ? 'не хватает: ' + L.missing.join(', ') : 'не установлено'),
+          L.alive && h('span.ok-t', ' · запущено (порт ' + L.port + ')')),
+        h('div.row',
+          !ready && (job ? h('span.dim.small', h('span.spin'), ' ', job.summary || 'ставлю…')
+            : h('button.primary', { onclick: async () => { if (!confirm('Скачать ComfyUI (2 ГБ, GitHub) и модели TRELLIS.2 + Pixal3D (~21 ГБ, Hugging Face Comfy-Org)? Докачивается с места обрыва.')) return;
+              try { const r = await api('POST', '/api/local3d/setup', {}); Claude.jobs[r.job.id] = r.job; App.render(); } catch (e) { UI.toast(e.message, 'err'); } } }, L.comfy ? '⬇ Докачать модели' : '⬇ Установить')),
+          L.alive && h('button', { title: 'ComfyUI держит модели в видеопамяти. Остановить — освободить её для игр и рендера; при следующей лепке поднимется сам', onclick: async () => {
+            try { Pages._l3d = await api('POST', '/api/local3d/stop', {}); App.render(); UI.toast('ComfyUI остановлен — видеопамять свободна'); } catch (e) { UI.toast(e.message, 'err'); } } }, '⏹ Освободить видеопамять'))]);
+  },
   settings() {
     if (Pages._set === undefined) { Pages._set = null; api('GET', '/api/settings').then(j => { Pages._set = j; App.render(); }).catch(e => { Pages._set = { err: e.message }; App.render(); }); }
     const S = Pages._set;
@@ -257,6 +277,7 @@ Object.assign(Pages, {
         h('p.dim.small', 'Ключи видит только этот компьютер; страница показывает их замаскированными. Quaternius, Kenney, Poly Pizza, Poly Haven, Objaverse, Smithsonian, OpenGameArt — без ключей.')),
       h('section.card', h('div.card-head', h('h3', '🧊 Blender')), h('div.row', bl, h('button.primary', { onclick: () => save({ blender: bl.value }) }, '💾')),
         h('p.dim.small', S.blender.found ? 'Сейчас работает: ' + S.blender.found : '⚠ Blender не найден — 3D-пропсы, герои в Blender и проверка моделей не заработают.')),
+      Pages.local3dCard(),
       h('section.card', h('div.card-head', h('h3', '🤖 Модели Claude')),
         h('div.row', h('label', 'текстовые кнопки ', mt), h('label', 'рисование и 3D ', mv), h('label', 'усилие ', me),
           h('button.primary', { onclick: () => save({ models: { text: mt.value, visual: mv.value, effort: me.value } }) }, '💾')),
