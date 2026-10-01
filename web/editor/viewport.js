@@ -52,8 +52,8 @@ export function initViewport(ED) {
   // the 9:16 frame inside the view: whole height (camera view) or a corner (mini view)
   function frameRect(mini) {
     const { w: vw, h: vh } = VP.size;
-    if (!mini) { const h = vh - 16, fw = Math.round(h * 9 / 16); return { x: Math.round((vw - fw) / 2), y: 8, w: fw, h }; }
-    const h = Math.round(Math.min(vh * 0.42, 360)), fw = Math.round(h * 9 / 16);
+    if (!mini) { const h = vh - 16, fw = Math.round(h * W / H); return { x: Math.round((vw - fw) / 2), y: 8, w: fw, h }; }
+    const h = Math.round(Math.min(vh * 0.42, 360)), fw = Math.round(h * W / H);
     return { x: vw - fw - 10, y: 10, w: fw, h };
   }
   // the post chain of the scene sized to a rect (postprocessing's setSize resizes the renderer too — put it back)
@@ -104,7 +104,7 @@ export function initViewport(ED) {
     }
     for (const k of keys) {                                // a small 9:16 frame at every key, big for the selected one
       const big = ED.selKey && ED.selKey.kind === 'camera' && ED.selKey.kid === k.id;
-      const d = big ? 0.45 : 0.2, fov = (k.fov || c.fov || 30) * DEG, hh = d * Math.tan(fov / 2), hw = hh * 9 / 16;
+      const d = big ? 0.45 : 0.2, fov = (k.fov || c.fov || 30) * DEG, hh = d * Math.tan(fov / 2), hw = hh * W / H;
       const m = new THREE.Matrix4().lookAt(V3(k.pos), V3(k.target), new THREE.Vector3(0, 1, 0));
       const corner = (x, y) => new THREE.Vector3(x, y, -d).applyMatrix4(m).add(V3(k.pos));
       const A = corner(-hw, hh), B = corner(hw, hh), C = corner(hw, -hh), D = corner(-hw, -hh), P = V3(k.pos);
@@ -443,7 +443,7 @@ export function initViewport(ED) {
       R.render(w.scene, cam);
       R.toneMapping = THREE.NoToneMapping; R.autoClear = false;
       // the 9:16 guide: what «ключ с этого вида» takes
-      const gh = vh, gw = gh * 9 / 16, gx = (vw - gw) / 2;
+      const gh = vh, gw = gh * W / H, gx = (vw - gw) / 2;
       octx.setTransform(dpr, 0, 0, dpr, 0, 0);
       octx.strokeStyle = 'rgba(111,224,255,0.35)'; octx.setLineDash([6, 6]); octx.lineWidth = 1; octx.strokeRect(gx + 0.5, 0.5, gw - 1, gh - 1); octx.setLineDash([]);
       if (ED.showMini !== false) {

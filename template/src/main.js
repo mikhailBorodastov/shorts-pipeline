@@ -1,6 +1,7 @@
 // Engine: asset loading, timeline, transitions, captions, SFX cue export.
 // Project-specific content lives in scenes.js (SCENES, ASSETS). Nothing here should need editing per project.
 const canvas = document.getElementById('c');
+canvas.width = W; canvas.height = H;                         // формат проекта (src/format.js)
 const ctx = canvas.getContext('2d');
 const TOTAL = VO.total;
 
@@ -162,7 +163,7 @@ function composite(type, p, T, kb) {
 }
 
 // ---------- captions (word by word, from VO timings) ----------
-const CAPTIONS = Object.assign({ size: 70, y: 0.765, maxWords: 3, maxChars: 17 }, (typeof CAPTION_STYLE !== 'undefined' && CAPTION_STYLE) || {});
+const CAPTIONS = Object.assign(WIDE ? { size: 58, y: 0.86, maxWords: 6, maxChars: 38 } : { size: 70, y: 0.765, maxWords: 3, maxChars: 17 }, (typeof CAPTION_STYLE !== 'undefined' && CAPTION_STYLE) || {});
 const CHUNKS = (() => {
   const words = [];
   VO.sections.forEach(s => s.words.forEach(w => words.push({ w: w.w, t: s.start + w.t, e: s.start + w.t + w.d })));

@@ -1,5 +1,7 @@
 // ---------- math / easing ----------
-const W = 1080, H = 1920;
+// кадр: шортс 1080×1920 (по умолчанию) или длинное видео 1920×1080 — window.FRAME_SIZE из src/format.js проекта (редактор, стенды: ?fmt=long)
+const FRAME_SIZE = (typeof window !== 'undefined' && (window.FRAME_SIZE || (/[?&]fmt=long\b/.test(location.search) && [1920, 1080]))) || [1080, 1920];
+const W = FRAME_SIZE[0], H = FRAME_SIZE[1], WIDE = W > H;
 const TAU = Math.PI * 2;
 const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;

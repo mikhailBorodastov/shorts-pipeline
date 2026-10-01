@@ -333,6 +333,9 @@ def generate(A, vid, montage=None):
                  "const SCENE_B = MONTAGE.units.map(u => u.at);\n"
                  "if (window.VO && VO.total < MONTAGE.len) VO.total = MONTAGE.len;   // монтаж длиннее голоса — ролик длиной в монтаж\n")
     A.write_text(os.path.join(pd, "src", "scenes.js"), SCENES_JS)
+    A.write_text(os.path.join(pd, "src", "format.js"), "// Кадр ролика (монтаж Claude Studio): по формату видео.\nwindow.FRAME_SIZE = "
+                 + ("[1920, 1080]" if plan.get("mode") == "long" else "[1080, 1920]") + ";\n")
+    _patch_format(pd)
     _patch_index(pd, prefab_scripts)
     report.update(len=total, sfx=len(sfx_cues), music=len(music), voice=bool(words))
     return report
@@ -345,6 +348,16 @@ def _scoped(src, dst, el):
         "// СГЕНЕРИРОВАНО монтажом (server/montage_api.py _scoped): prefabs.js сцены в своей области видимости — разные локации в одном ролике.\n"
         "window.SCENE_PREFABS = window.SCENE_PREFABS || {};\n"
         f"window.SCENE_PREFABS[{json.dumps(el)}] = (function () {{\n{code}\n;return {{ PREFABS: typeof PREFABS !== 'undefined' ? PREFABS : {{}}, PICS: typeof PICS !== 'undefined' ? PICS : {{}} }};\n}})();\n")
+
+
+def _patch_format(pd):
+    """Старые проекты: подключить src/format.js перед lib.js (index.html, review.html)."""
+    for f in ("index.html", "review.html"):
+        p = os.path.join(pd, "src", f)
+        if os.path.isfile(p):
+            s = open(p, encoding="utf-8").read()
+            if "format.js" not in s and '<script src="lib.js"></script>' in s:
+                open(p, "w", encoding="utf-8").write(s.replace('<script src="lib.js"></script>', '<script src="format.js"></script>\n<script src="lib.js"></script>', 1))
 
 
 def _patch_index(pd, prefabs):

@@ -122,6 +122,7 @@
 <script>window.THREE_READY = new Promise(r => (window.__3dok = r));</script>
 <script type="module" src="vendor/boot3d.js"></script>
 <script src="/tpl/lib.js"></script>
+<script>{ const c = document.getElementById('c'); if (c && WIDE) { c.width = W; c.height = H; } }</script>
 <script>
   const IMG = {}, SEQ = {};
   const seqFrame = () => null;

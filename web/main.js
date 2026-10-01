@@ -114,7 +114,8 @@ const StageEditor = {
     this.close();
     if (!want) return;
     this.el = want;
-    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + r.id)}&el=${encodeURIComponent(r.sub)}`;
+    const dd = Store.get('plan:' + r.id) || {};
+    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + r.id)}&el=${encodeURIComponent(r.sub)}` + (dd.mode === 'long' ? '&fmt=long' : '');   // длинное видео — кадр 16:9
     this.frame = h('div.stage-editor', h('iframe', { src, title: 'Оформление сцены', allow: 'fullscreen' }));
     document.body.append(this.frame);
     requestAnimationFrame(() => { const f = this.frame && this.frame.querySelector('iframe'); if (f) f.focus(); });
@@ -124,7 +125,7 @@ const StageEditor = {
   openFix(vid, el, ts, vt) {
     this.close();
     this.el = `fix:${vid}/${el}`;
-    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + vid)}&el=${encodeURIComponent(el)}&fix=1&t=${ts}&vt=${vt}`;
+    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + vid)}&el=${encodeURIComponent(el)}&fix=1&t=${ts}&vt=${vt}` + ((Store.get('plan:' + vid) || {}).mode === 'long' ? '&fmt=long' : '');
     this.frame = h('div.stage-editor', h('iframe', { src, title: 'Правка в кадре', allow: 'fullscreen' }));
     document.body.append(this.frame);
   },

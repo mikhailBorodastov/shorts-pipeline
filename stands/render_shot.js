@@ -26,7 +26,7 @@ const BROWSERS = [
     args: ['--force-device-scale-factor=1', '--disable-gpu-vsync', '--enable-unsafe-swiftshader'] });
   try {
     const page = await browser.newPage();
-    await page.setViewport({ width: 1080, height: 1920 });
+    await page.setViewport(/[?&]fmt=long\b/.test(url) ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 });
     await page.setCacheEnabled(false);                       // the stand and the engine change while we work: never an old copy
     page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('[console] ' + m.text()); });
     page.on('response', r => { if (r.status() >= 400) errors.push(`[${r.status()}] ${r.url()}`); });

@@ -1118,6 +1118,8 @@ def produce(job):
                                capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if not os.path.isfile(os.path.join(dst, "build.sh")):
                 raise RuntimeError("new_project.py: " + (r.stdout + r.stderr).strip()[-400:])
+        if doc.get("mode") == "long":                     # длинное видео — кадр 16:9 (src/format.js)
+            write_text(os.path.join(dst, "src", "format.js"), "// Кадр ролика: длинное видео 16:9.\nwindow.FRAME_SIZE = [1920, 1080];\n")
     else:
         name = (job.params.get("name") or "").strip().rstrip(".")
         if not name or any(c in name for c in BAD_NAME):

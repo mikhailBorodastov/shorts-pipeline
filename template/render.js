@@ -21,9 +21,11 @@ const EDGE = BROWSERS.find(p => fs.existsSync(p));
 if (!EDGE) { console.error('Не найден Chrome/Edge. Укажи путь: CHROME="C:/.../chrome.exe" node render.js ...'); process.exit(1); }
 const URL = `http://localhost:${process.env.REVIEW_PORT || 8765}/src/${process.env.RENDER_PAGE || 'index.html'}`;   // RENDER_PAGE=demo.html renders another page
 
+const fmt0 = () => { try { return JSON.parse((fs.readFileSync('src/format.js', 'utf8').match(/FRAME_SIZE\s*=\s*(\[[^\]]+\])/) || [])[1]) || [1080, 1920]; } catch (e) { return [1080, 1920]; } };   // кадр проекта (src/format.js)
 async function openPage(browser) {
   const page = await browser.newPage();
-  await page.setViewport({ width: 1080, height: 1920 });
+  const fmt = (() => { try { return JSON.parse((fs.readFileSync('src/format.js', 'utf8').match(/FRAME_SIZE\s*=\s*(\[[^\]]+\])/) || [])[1]); } catch (e) { return null; } })() || [1080, 1920];
+  await page.setViewport({ width: fmt[0], height: fmt[1] });
   page.on('console', m => { if (m.type() === 'error' || m.type() === 'warn') console.log('[page]', m.text()); });
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   // the local server sometimes refuses a request when 4 pages load at once: reload until scripts and assets are all there
@@ -65,7 +67,7 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       const page = await openPage(browser);
       for (let i = 0; i < times.length; i++) save(await grab(page, times[i]), path.join(dir, `s${String(i).padStart(3, '0')}.png`));
       const cols = Math.min(times.length, 6);
-      execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', path.join(dir, 's%03d.png'), '-vf', `scale=360:640,tile=${cols}x${Math.ceil(times.length / cols)}`, '-frames:v', '1', out]);
+      execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', path.join(dir, 's%03d.png'), '-vf', `scale=${fmt0()[0] > fmt0()[1] ? '640:360' : '360:640'},tile=${cols}x${Math.ceil(times.length / cols)}`, '-frames:v', '1', out]);
       console.log('wrote', out);
     } else if (mode === 'thumb') {
       const out = a1 || 'out/thumbnail.png';
