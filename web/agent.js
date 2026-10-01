@@ -127,9 +127,11 @@ const AgentPanel = {
         h('p', 'Попроси что-нибудь словами — агент сделает это командами студии, а ты увидишь каждый шаг.'),
         h('p.dim.small', 'Например: «поставь вокруг стола три стула и сделай наезд на ёжика за 2 секунды». Посреди работы можно дописать или остановить, всё сделанное — отменить.'),
         d && h('button.claude', { onclick: () => this.build(), title: 'Агент проходит путь до mp4: сценарий → голос → монтаж → сборка → проверка кадров' }, '✨ Собрать ролик'))),
-      notes.length ? h('div.ag-notes', h('div.dim.small', `📌 пометки сцены (${notes.length})`),
-        notes.slice(0, 6).map(n => h('div.ag-pin', h('span.grow', `${n.who ? n.who + ' · ' : ''}${n.t != null ? n.t + ' с · ' : ''}${n.text}`),
-          h('button', { title: 'Отдать агенту сейчас', onclick: () => this.say(`Сделай по пометке ${n.id}: «${n.text}» (${n.who || 'сцена'}, ${n.t} с). Потом закрой её: scene ops … set comments.${n.id}.status = "done".`) }, '✨')))) : '',
+      notes.length ? h('div.ag-notes', h('div.row', h('span.dim.small', `📌 пометки сцены (${notes.length})`), h('span.sp'),
+          !this.busy && h('button.claude', { title: 'Отдать агенту все открытые пометки одной просьбой — он исправит и закроет каждую', onclick: () => this.fixAll(notes) }, `✨ Исправить все (${notes.length})`)),
+        h('div.ag-pins', notes.map(n => h('div.ag-pin', h('span.grow', `${n.who ? n.who + ' · ' : ''}${n.t != null ? n.t + ' с · ' : ''}${n.text}`),
+          h('button', { title: 'Отдать агенту только эту', disabled: this.busy, onclick: () => this.fixAll([n]) }, '✨'),
+          h('button', { title: 'Отметить исправленной вручную', onclick: () => this.noteDone(n) }, '✓'))))) : '',
       h('form.ag-form', { onsubmit: ev => { ev.preventDefault(); const t = ev.target.querySelector('textarea'); const v = t.value.trim(); if (!v) return; t.value = ''; this.say(v); } },
         h('textarea', { rows: 3, placeholder: this.busy ? 'Дописать агенту посреди работы…' : 'Просьба Claude (Enter — отправить, Shift+Enter — строка)',
           onkeydown: ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.target.form.requestSubmit(); } } }),
@@ -148,6 +150,17 @@ const AgentPanel = {
     if (c.t != null) b.push(`⏱ ${(+c.t).toFixed(2)} с`);
     if (c.sel && c.sel.length) b.push('выбрано: ' + c.sel.slice(0, 2).map(s => s.replace(/^\S+ /, '')).join(', '));
     return b.join(' · ');
+  },
+  // ✨ по пометкам: одна просьба со всеми — агент правит, проверяет кадром и закрывает каждую (scene done)
+  fixAll(notes) {
+    const c = this.ctx(), el = c.el || 'EL';
+    const list = notes.map((n, i) => `${i + 1}. [${n.id}] ${n.who ? n.who + ', ' : ''}${n.t != null ? n.t + ' с: ' : ''}${n.text}`).join('\n');
+    this.say(`Исправь по пометкам автора в этой сцене (${notes.length}):\n${list}\n\nСделай все, проверь кадрами на их моментах, потом закрой исправленные: scene done ${'PLAN'} ${el} ${notes.map(n => n.id).join(',')} "что сделано". Что не получилось — не закрывай и скажи.`);
+  },
+  noteDone(n) {                                               // ✓ вручную — из редактора (операция сцены, отменяется Ctrl+Z)
+    const f = document.querySelector('.stage-editor iframe');
+    try { f.contentWindow.ED.commit([{ op: 'set', path: ['comments', n.id, 'status'], value: 'done' }], `📌 ✓ ${n.text.slice(0, 40)}`); setTimeout(() => this.draw(), 300); }
+    catch (e) { UI.toast('Открой сцену в редакторе', 'err'); }
   },
   sceneNotes() {                                              // пометки (📌 note) открытой сцены — из редактора
     const f = document.querySelector('.stage-editor iframe');

@@ -1031,7 +1031,8 @@ def run_job(A, job):
 # ---------------------------------------------------------------- CLI (python ideas_server.py scene …)
 def cli(A, argv):
     """scene show PLAN EL | scene brief PLAN EL | scene frame PLAN EL t[,t2] | scene ops PLAN EL '<JSON>' --desc "…" [--by claude|author] | scene history PLAN EL [n]
-    | scene undo PLAN EL | scene version PLAN EL ["заметка"] | scene clip PLAN EL | scene validate PLAN EL | scene finish PLAN EL"""
+    | scene undo PLAN EL | scene version PLAN EL ["заметка"] | scene clip PLAN EL | scene validate PLAN EL | scene finish PLAN EL
+    | scene done PLAN EL NOTE_ID[,ID2…] ["что сделано"] — закрыть пометки автора (📌) как исправленные"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
@@ -1054,6 +1055,21 @@ def cli(A, argv):
         ops = json.loads(a[2])
         print(apply(A, key, el, ops if isinstance(ops, list) else [ops], by=A._opt(a, "--by", "claude"), desc=A._opt(a, "--desc", ""),
                     allow=(A._opt(a, "--allow", "") or "").split(",") if A._opt(a, "--allow") else ()))
+        return True
+    if cmd == "done":                          # 📌 пометки исправлены: status done + что сделано (пометка уходит из списка открытых)
+        d = load_scene(A, key, el)
+        have = {c.get("id"): c for c in d.get("comments") or []}
+        ids = [i for i in a[2].split(",") if i.strip()]
+        miss = [i for i in ids if i not in have]
+        if miss:
+            raise ValueError("нет пометок: " + ", ".join(miss) + " (открытые — в scene brief)")
+        what = a[3] if len(a) > 3 and not a[3].startswith("--") else ""
+        ops = []
+        for i in ids:
+            ops.append({"op": "set", "path": ["comments", i, "status"], "value": "done"})
+            if what:
+                ops.append({"op": "set", "path": ["comments", i, "reply"], "value": what})
+        print(apply(A, key, el, ops, by=A._opt(a, "--by", "claude"), desc="📌 исправлено: " + ", ".join((have[i].get("text") or i)[:40] for i in ids), allow=("*",)))
         return True
     if cmd == "history":
         for h_ in history(A, key, el, int(a[2]) if len(a) > 2 else 30):

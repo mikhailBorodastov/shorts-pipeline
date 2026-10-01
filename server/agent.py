@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 7                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 8                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -67,6 +67,8 @@ def system_prompt(A, vid, mode):
 - python {sp} scene brief {vid} EL                         — сцена редактора: объекты, свет, камера, префабы, authored, комментарии
 - python {sp} scene ops {vid} EL '<JSON-массив операций>' --desc "что сделано"  — ОДНА пачка правок сцены (в историю, отменяется)
 - python {sp} scene frame {vid} EL 2.5[,4]                  — кадр сцены в момент t → путь PNG; посмотри его через Read
+- python {sp} scene done {vid} EL ID1,ID2 "что сделано"      — закрыть 📌 пометки автора, которые исправил (id — в scene brief); ОБЯЗАТЕЛЬНО после правки по пометкам,
+  закрывай только проверенные кадром; если пометку сделать не получилось — не закрывай и скажи почему
 - python {sp} scene history {vid} EL | scene undo {vid} EL  — история / отменить последнюю пачку
 - python {sp} set plan:{vid} путь.через.точки '<JSON>'      — поле видео (например montage — монтаж целиком)
 - python {sp} montage brief {vid}                          — монтаж: юниты, сцены (маркеры, склейки, длина), слова голоса с номерами, звуки, музыка
