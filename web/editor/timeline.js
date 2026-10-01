@@ -23,6 +23,18 @@ export function initTimeline(ED) {
   const X = t => 12 + (t - T.t0) * T.pps;
   const Tof = x => T.t0 + (x - 12) / T.pps;
 
+  // каналы ключей позы: кости (armL.rot), цели лап (ik.armR), лицо (face.mouth), посадка / разворот
+  function poseChannels(o) {
+    const set = new Set();
+    for (const k of o.pose || []) {
+      for (const [b, f] of Object.entries(k.bones || {})) for (const ff of Object.keys(f || {})) set.add(b + '.' + ff);
+      for (const b of Object.keys(k.ik || {})) set.add('ik.' + b);
+      for (const f of Object.keys(k.face || {})) set.add('face.' + f);
+      for (const f of ['sit', 'facing']) if (f in k) set.add(f);
+    }
+    return [...set].sort();
+  }
+  const hasCh = (k, ch) => { const [a, b] = ch.split('.'); return a === 'ik' ? !!(k.ik && b in k.ik) : a === 'face' ? !!(k.face && b in k.face) : b ? !!(k.bones && k.bones[a] && b in k.bones[a]) : a in k; };
   // which rows: markers, camera, animated or selected things, sounds
   function rows() {
     const d = ED.doc, out = [{ kind: 'markers', label: '⏷ маркеры' }, { kind: 'camera', label: '🎥 камера', id: 'camera' }];
@@ -31,7 +43,11 @@ export function initTimeline(ED) {
       if (!show(o)) continue;
       const kind = kindOf(d, o.id), open = T.open.has(o.id);
       out.push({ kind: 'thing', id: o.id, tkind: kind, label: o.name, open });
-      if (ED.isChar && ED.isChar(o.id)) { out.push({ kind: 'clips', id: o.id, tkind: kind, label: '🎞 клипы' }); out.push({ kind: 'poses', id: o.id, tkind: kind, label: '🦴 поза' }); }
+      if (ED.isChar && ED.isChar(o.id)) {
+        const popen = T.open.has('pose:' + o.id);
+        out.push({ kind: 'clips', id: o.id, tkind: kind, label: '🎞 клипы' }); out.push({ kind: 'poses', id: o.id, tkind: kind, label: '🦴 поза', open: popen });
+        if (popen) for (const ch of poseChannels(o)) out.push({ kind: 'posech', id: o.id, tkind: kind, ch, label: '  ' + ch });   // Dope Sheet: каналы позы
+      }
       if (open) for (const p of kind === 'lights' ? ['pos', 'intensity'] : ['pos', 'rot', 'scale', 'hide']) out.push({ kind: 'prop', id: o.id, tkind: kind, prop: p, label: PN[p] });
     }
     out.push({ kind: 'sounds', label: '🔊 звуки' });
@@ -45,9 +61,14 @@ export function initTimeline(ED) {
     names.innerHTML = '';
     T.rows.forEach((r, i) => {
       const d = document.createElement('div');
-      d.className = 'tn' + (r.kind === 'prop' || r.kind === 'clips' || r.kind === 'poses' ? ' sub' : '') + (r.id && ED.sel.has(r.id) && r.kind === 'thing' ? ' sel' : '');
+      d.className = 'tn' + (r.kind === 'prop' || r.kind === 'clips' || r.kind === 'poses' || r.kind === 'posech' ? ' sub' : '') + (r.id && ED.sel.has(r.id) && r.kind === 'thing' ? ' sel' : '');
       d.style.top = RULER + i * ROWH - T.sy + 'px';
       d.setAttribute('role', 'listitem');
+      if (r.kind === 'poses') {                            // раскрыть позу по каналам (Dope Sheet)
+        const tw = document.createElement('span'); tw.textContent = r.open ? '▾ ' : '▸ '; tw.style.cursor = 'pointer'; tw.title = 'раскрыть позу по каналам: кости, цели лап, лицо';
+        tw.onclick = e => { e.stopPropagation(); const k = 'pose:' + r.id; if (T.open.has(k)) T.open.delete(k); else T.open.add(k); ED.tlDirty = true; };
+        d.append(tw);
+      }
       if (r.kind === 'thing') {
         const tw = document.createElement('span'); tw.textContent = r.open ? '▾' : '▸'; tw.style.cursor = 'pointer'; tw.title = 'раскрыть по свойствам';
         tw.onclick = e => { e.stopPropagation(); if (T.open.has(r.id)) T.open.delete(r.id); else T.open.add(r.id); ED.tlDirty = true; };
@@ -149,6 +170,16 @@ export function initTimeline(ED) {
           diamond(x, cy, 5.5, sel ? '#ffffff' : rel ? '#6b5a8f' : k.refine === 'open' ? '#ff9f43' : '#b48cff', sel ? '#4d9cff' : null);
           if (k.note) { g.fillStyle = '#cfc9ff'; g.font = '10px Inter, system-ui, sans-serif'; g.fillText('💬', x + 6, cy + 4); }
           hits.push({ x, y: cy, r: 7, ref: { kind: 'pose', id: r.id, kid: k.id, t0: k.t } });
+        }
+      } else if (r.kind === 'posech') {                    // канал позы: ромбы там, где ключ позы задаёт этот канал (тянешь — едет весь ключ)
+        const o = find(ED.doc, r.id); if (!o) return;
+        const K = (o.pose || []).filter(k => hasCh(k, r.ch)).sort((a, b) => a.t - b.t);
+        g.strokeStyle = 'rgba(180,140,255,0.3)'; g.lineWidth = 2;
+        for (let j = 0; j < K.length - 1; j++) { g.beginPath(); g.moveTo(X(K[j].t), cy); g.lineTo(X(K[j + 1].t), cy); if (K[j].ease === 'hold') g.setLineDash([2, 3]); g.stroke(); g.setLineDash([]); }
+        for (const k of K) {
+          const x = X(k.t), sel = isSel('pose', r.id, null, k.id);
+          diamond(x, cy, 4.5, sel ? '#ffffff' : k.ease === 'hold' ? '#8a73c9' : '#cdb6ff', sel ? '#4d9cff' : null);
+          hits.push({ x, y: cy, r: 6, ref: { kind: 'pose', id: r.id, kid: k.id, t0: k.t } });
         }
       } else if (r.kind === 'sounds') {
         const cues = ED.cues || [];
@@ -278,8 +309,9 @@ export function initTimeline(ED) {
     if (hh && !refs(hh).every(selHas)) ED.keySel = refs(hh).slice();
     const S = ED.keySel;
     const items = [];
-    const keysOnly = S.filter(s => !['markers', 'cuts', 'sounds', 'clips', 'pose'].includes(s.kind));
+    const keysOnly = S.filter(s => !['markers', 'cuts', 'sounds', 'clips'].includes(s.kind));
     if (keysOnly.length) for (const [k, label] of EASES) items.push([`кривая: ${label}`, () => setEase(keysOnly, k, label)]);
+    if (S.length > 1) items.push(['⟷ растянуть / сжать по времени…', scaleKeys]);
     if (S.length) items.push(['копировать (Ctrl+C)', copy], ['удалить (Delete)', delKeys]);
     if (S.length && ED.objMenu) { const k0 = S[0]; items.push(['💬 Claude про это…', () => { if (k0.t0 != null) ED.setT(k0.t0); ED.objMenu({ clientX: e.clientX, clientY: e.clientY }, k0.id || (k0.kind === 'camera' || k0.kind === 'cuts' ? 'camera' : null)); }]); }   // S7: комментарий на ключе
     if (T.clip) items.push([`вставить на курсор (${T.clip.length})`, paste]);
@@ -296,7 +328,17 @@ export function initTimeline(ED) {
     m.onkeydown = ev => { const bs = [...m.querySelectorAll('button')], i = bs.indexOf(document.activeElement); if (ev.key === 'ArrowDown') { ev.preventDefault(); bs[(i + 1) % bs.length].focus(); } if (ev.key === 'ArrowUp') { ev.preventDefault(); bs[(i - 1 + bs.length) % bs.length].focus(); } if (ev.key === 'Escape') { m.hidden = true; cv.focus(); } };
     const b0 = m.querySelector('button'); if (b0) b0.focus();
   }
-  const pathOf = s => (s.kind === 'camera' ? ['camera', 'keys', s.kid] : [s.kind, s.id, 'keys', s.prop, s.kid]);
+  const pathOf = s => (s.kind === 'camera' ? ['camera', 'keys', s.kid] : s.kind === 'pose' ? ['objects', s.id, 'pose', s.kid] : [s.kind, s.id, 'keys', s.prop, s.kid]);
+  // ⟷ растянуть / сжать выделенные ключи вокруг первого (×2 — вдвое медленнее, ×0.5 — вдвое быстрее)
+  async function scaleKeys() {
+    const S = ED.keySel.map(x => Object.assign({}, x, { t0: tNow(x) })).filter(x => x.t0 != null);
+    if (S.length < 2) return;
+    const f = parseFloat(String(await ED.ask('Во сколько раз растянуть? (2 — медленнее вдвое, 0.5 — быстрее вдвое)', '1.5') || '').replace(',', '.'));
+    if (!(f > 0) || f === 1) return;
+    const p0 = Math.min(...S.map(x => x.t0));
+    const ops = S.flatMap(x => moveKeysOps([x], (p0 + (x.t0 - p0) * f) - x.t0));
+    ED.commit(ops, `ключи ×${f}: ${S.length} шт. от ${p0.toFixed(2)} с`);
+  }
   function setEase(S, k, label) { ED.commit(S.map(s => ({ op: 'set', path: [...pathOf(s), 'ease'], value: k })), `кривая «${label}»: ${S.length} ключ(а)`); }
   function delKeys() {
     const S = ED.keySel; if (!S.length) { ED.msg('Выдели ключи на таймлайне'); return; }
