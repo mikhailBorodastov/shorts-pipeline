@@ -16,7 +16,7 @@ const Pages = {
     return [
       h('a.logo', { href: '#/' }, h('span.l1', 'Claude'), h('span.l2', 'Studio')),
       cs.length > 0 && h('label.chan', { title: 'Канал (проект): у каждого свой стиль, библиотека и видео' },
-        sel(cs.map(c => ({ value: c.id, label: `${c.icon || '📺'} ${c.name}` })), C.id, v => Pages.useChannel(v), { class: 'box', 'aria-label': 'Канал' })),
+        sel([...cs.map(c => ({ value: c.id, label: `${c.icon || '📺'} ${c.name}` })), { value: '__new', label: '+ новый канал…' }], C.id, v => v === '__new' ? go('#/newchan') : Pages.useChannel(v), { class: 'box', 'aria-label': 'Канал' })),
       h('div.newbtns',
         h('button.new.short', { onclick: () => Pages.newPlan('short'), title: 'Идея → вопросы → название → препродакшен → сцены → сценарий → … → упаковка' }, '⚡ + шортс'),
         h('button.new.long', { onclick: () => Pages.newPlan('long'), title: 'Длинное видео на 8–15 минут' }, '🎬 + длинное видео')),
@@ -30,7 +30,7 @@ const Pages = {
   },
 
   async useChannel(id) {
-    try { await api('POST', '/api/studio/use', { channel: id }); LIB.items = null; Pages._style = undefined; await App.refreshState(); go('#/'); App.render(); }
+    try { await api('POST', '/api/studio/use', { channel: id }); LIB.items = null; Pages._style = undefined; if (window.CH) CH.files = null; await App.refreshState(); go('#/'); App.render(); }
     catch (e) { UI.toast(e.message, 'err'); }
   },
 

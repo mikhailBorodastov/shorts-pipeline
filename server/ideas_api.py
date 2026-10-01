@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 12
+API_VERSION = 13
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -66,6 +66,7 @@ import assets  # noqa: E402  поиск и скачивание бесплатн
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
 import char_api  # noqa: E402  персонажи со скелетом (S4): библиотека, позы, версии
 import agent  # noqa: E402  агент S7: живая сессия Claude, лог, отмена запуска
+import channel_api  # noqa: E402  новый канал и его стиль (S9): интервью, файлы стиля, герой
 import pack_api  # noqa: E402  упаковка S8: права, packaging.md, обложки в проект
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
@@ -83,7 +84,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -121,6 +122,10 @@ def chapi():
 
 def agapi():
     return _fresh(agent, "agt")
+
+
+def chnapi():
+    return _fresh(channel_api, "chn")
 
 
 def pkapi():
@@ -830,6 +835,8 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
+        elif job.kind in ("chanq", "chanstyle", "chanhero"):    # S9: интервью канала, сборка стиля, герой канала
+            chnapi().run_job(sys.modules[__name__], job)
         elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
             mnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("charrig", "charemotions"):          # персонажи (S4): сохранение скелета, эмоции; charparts — обычная задача Claude ниже
@@ -1221,6 +1228,12 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
+    if p.startswith("/api/channel/"):
+        try:
+            if chnapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p == "/api/agent":
         try:
             if agapi().handle_get(sys.modules[__name__], h, p, q):
@@ -1346,6 +1359,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p.startswith("/api/channel/") and chnapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/pack/") and pkapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/agent/") and agapi().handle_post(sys.modules[__name__], h, p, body):
@@ -1410,6 +1425,7 @@ def cli(argv):
     | op KEY '<JSON: операция или список операций set/add/del/move>'
     | produce ID  (🚀 проект ролика в папке видео)
     | scene show|ops|history|undo|version|clip|validate|finish ID EL …  (сцены редактора, scene_api.cli)
+    | channel new "Имя" [--icon] [--about] | channel style|hero ID  (S9, channel_api.cli)
     | montage show|gen|build <видео>  (монтаж S6, montage_api.cli)
     | char list|show|pose|skeleton|version …  (персонажи со скелетом, char_api.cli)
     | lib list|show|publish …  (библиотека канала, studio_api.cli)"""
@@ -1493,6 +1509,8 @@ def cli(argv):
         return True
     if cmd == "scene":
         return scapi().cli(sys.modules[__name__], a)
+    if cmd == "channel":
+        return chnapi().cli(sys.modules[__name__], a)
     if cmd == "montage":
         return mnapi().cli(sys.modules[__name__], a)
     if cmd == "char":

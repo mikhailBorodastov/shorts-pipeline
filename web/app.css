@@ -650,3 +650,20 @@ body.agent-open .stage-editor { right: 380px; }
 .pk-field textarea, .pk-field input { width: 100%; }
 .pk-titles { display: flex; flex-direction: column; gap: 4px; }
 .pk-t .sel { color: var(--key); }
+
+/* 📺 канал и стиль (S9, channel.js) */
+.chq { border-left: 3px solid var(--line); padding: 6px 10px; margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+.chq.ok { border-color: var(--ok); }
+.chq textarea { width: 100%; }
+.palette { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.swatch { display: grid; grid-template-columns: 44px 1fr 28px; gap: 4px; align-items: center; background: var(--panel2); border-radius: 8px; padding: 6px; }
+.swatch input[type=color] { width: 40px; height: 40px; border: 0; padding: 0; background: none; grid-row: span 2; }
+.swatch .small { grid-column: 2; }
+.fonts { display: flex; flex-direction: column; gap: 8px; }
+.fonts label { display: flex; gap: 8px; align-items: center; }
+.fontprev { font-size: 26px; font-weight: 800; }
+.capgrid { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.capprev { width: 270px; height: 480px; border-radius: 10px; }
+.capform { display: flex; flex-direction: column; gap: 8px; }
+.herorefs { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.herorefs img { height: 140px; border-radius: 8px; cursor: zoom-in; }

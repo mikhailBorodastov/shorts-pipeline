@@ -97,6 +97,7 @@ const App = {
     document.title = 'Claude Studio';
     if (r.page === 'lib') return r.id === 'char' && r.tab ? CharSheet.view(r.tab) : Pages.lib();
     if (r.page === 'style') return Pages.style();
+    if (r.page === 'newchan') return Pages.newChannel();
     if (r.page === 'help') return Pages.help();
     return Pages.home();
   },
