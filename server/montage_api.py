@@ -68,8 +68,8 @@ def default(A, vid, doc):
     sc = scenes(A, vid, doc)
     vo = voice(vid)
     units, at = [], 0.0
-    for s in sc[:1]:                                         # одна prefabs.js на проект (ТЗ §2) — пока одна сцена
-        units.append({"id": "u1", "scene": s["el"], "at": 0, "len": s["len"], "map": [[0, 0], [s["len"], s["len"]]], "trans": {"type": "cut", "dur": 0}})
+    for i, s in enumerate(sc):                               # все сцены редактора подряд (у каждой — свои префабы, см. _scoped)
+        units.append({"id": f"u{i + 1}", "scene": s["el"], "at": round(at, 3), "len": s["len"], "map": [[0, 0], [s["len"], s["len"]]], "trans": {"type": "cut", "dur": 0}})
         at += s["len"]
     has_vo = bool(vo and vo["words"] and not vo["studio"])
     return {"units": units, "voice": {"on": has_vo}, "captions": {"on": has_vo}, "sfx": [], "music": [], "overlays": [], "len": round(max(at, (vo or {}).get("total") or 0) if has_vo else at, 3)}
@@ -234,7 +234,9 @@ def generate(A, vid, montage=None):
             report["warn"].append(f"нет сцены {el}"); continue
         dst = os.path.join(S, "scenes", el)
         _copy(os.path.join(wd, "prefabs.js"), os.path.join(dst, "prefabs.js"))
-        prefab_scripts.append(f"../{STUDIO_DIR}/scenes/{el}/prefabs.js")
+        if el not in [x.split("/")[-2] for x in prefab_scripts]:  # у каждой сцены свои префабы — в своей области видимости (одинаковые имена не мешают)
+            _scoped(os.path.join(dst, "prefabs.js"), os.path.join(dst, "prefabs.scoped.js"), el)
+            prefab_scripts.append(f"../{STUDIO_DIR}/scenes/{el}/prefabs.scoped.js")
         # картинки префабов: '/files/<plan>/…' -> assets/studio/files/…
         pf = open(os.path.join(wd, "prefabs.js"), encoding="utf-8").read()
         for ref in set(re.findall(r"/files/" + re.escape(vid) + r"/([^'\"\s]+)", pf)):
@@ -276,10 +278,6 @@ def generate(A, vid, montage=None):
         unit_js.append({"id": u["id"], "el": el, "name": sc.get("name") or el, "at": float(u.get("at", 0)), "len": float(u.get("len", sc.get("len") or 6)),
                         "map": u.get("map") or [[0, 0], [u.get("len", 6), u.get("len", 6)]], "trans": u.get("trans") or {"type": "cut", "dur": 0}})
         report["units"].append(u["id"])
-    pf_text = {open(os.path.join(S, "scenes", e, "prefabs.js"), encoding="utf-8").read() for e in {x["el"] for x in unit_js}
-               if os.path.isfile(os.path.join(S, "scenes", e, "prefabs.js"))}
-    if len(pf_text) > 1:                                      # копии одной локации (одинаковые prefabs.js) собираются вместе; разные — пока нет
-        report["warn"].append("у сцен разные prefabs.js — в ролике пока работает prefabs.js первой сцены (ТЗ S6 §2)")
     for x in M.get("sfx") or []:
         for f, dt, g in _sound_files(A, vid, x.get("src") or "", pd, "m_" + x["id"]):
             sfx_cues.append({"t": round(float(x.get("at") or 0) + dt, 3), "src": f, "gain": round(float(x.get("gain") if x.get("gain") is not None else 1) * g, 3), "align": x.get("align") or ""})
@@ -303,6 +301,14 @@ def generate(A, vid, montage=None):
             report["warn"].append("в проекте есть голос, а в монтаже он выключен — голос останется в vo_timing.js (выключи его там или включи в монтаже)")
     os.makedirs(os.path.join(pd, "build"), exist_ok=True)
     A.write_text(os.path.join(pd, "build", "music.json"), json.dumps(music, ensure_ascii=False, indent=1))
+    vj = os.path.join(pd, "build", "vo_timing.json")              # монтаж длиннее голоса — ролик длиной в монтаж (звук: audio.py читает total отсюда)
+    try:
+        vo_j = json.load(open(vj, encoding="utf-8"))
+        if float(vo_j.get("total") or 0) < total:
+            vo_j["total"] = total
+            A.write_text(vj, json.dumps(vo_j, ensure_ascii=False, indent=1))
+    except (OSError, ValueError):
+        pass
     # --- src/montage.js + src/scenes.js
     scene_data = {x["el"]: json.load(open(os.path.join(S, "scenes", x["el"], "scene.json"), encoding="utf-8")) for x in unit_js}
     cap_style, cap_fonts = {}, []                              # S9: субтитры по стилю канала (style/captions.json) и свои шрифты канала (style/fonts -> assets/fonts)
@@ -324,11 +330,21 @@ def generate(A, vid, montage=None):
                  f"const MONTAGE_SFX = {json.dumps(sfx_cues, ensure_ascii=False)};\n"
                  f"const STUDIO_SCENES = {json.dumps(scene_data, ensure_ascii=False)};\n"
                  f"const SCENE_URLS = {{ lib: '../{STUDIO_DIR}/lib/', el: '../{STUDIO_DIR}/el/', anims: '../{STUDIO_DIR}/anims/', env: '../{STUDIO_DIR}/env/' }};\n"
-                 "const SCENE_B = MONTAGE.units.map(u => u.at);\n")
+                 "const SCENE_B = MONTAGE.units.map(u => u.at);\n"
+                 "if (window.VO && VO.total < MONTAGE.len) VO.total = MONTAGE.len;   // монтаж длиннее голоса — ролик длиной в монтаж\n")
     A.write_text(os.path.join(pd, "src", "scenes.js"), SCENES_JS)
-    _patch_index(pd, prefab_scripts[:1])
+    _patch_index(pd, prefab_scripts)
     report.update(len=total, sfx=len(sfx_cues), music=len(music), voice=bool(words))
     return report
+
+
+def _scoped(src, dst, el):
+    """prefabs.js сцены -> своя область видимости: window.SCENE_PREFABS[el] = { PREFABS, PICS } (const и function внутри — свои у каждой сцены)."""
+    code = open(src, encoding="utf-8").read()
+    open(dst, "w", encoding="utf-8").write(
+        "// СГЕНЕРИРОВАНО монтажом (server/montage_api.py _scoped): prefabs.js сцены в своей области видимости — разные локации в одном ролике.\n"
+        "window.SCENE_PREFABS = window.SCENE_PREFABS || {};\n"
+        f"window.SCENE_PREFABS[{json.dumps(el)}] = (function () {{\n{code}\n;return {{ PREFABS: typeof PREFABS !== 'undefined' ? PREFABS : {{}}, PICS: typeof PICS !== 'undefined' ? PICS : {{}} }};\n}})();\n")
 
 
 def _patch_index(pd, prefabs):
@@ -350,9 +366,9 @@ SCENES_JS = r"""// =============================================================
 // Юнит монтажа = сцена редактора (STUDIO_SCENES, prefabs.js) на отрезке ролика; карта времени MONTAGE.units[].map: [время сцены, время ролика | "w:<слово>"].
 // ======================================================================
 const ASSETS = { images: {}, sequences: {} };
-(() => {                                                     // картинки префабов (PICS: '/files/<plan>/…') — из assets/studio/files/
-  const P = typeof PICS !== 'undefined' ? PICS : {};
-  for (const [k, v] of Object.entries(P)) ASSETS.images[k] = String(v).replace(/^\/files\/[^/]+\//, '../assets/studio/files/');
+(() => {                                                     // картинки префабов всех сцен (PICS: '/files/<plan>/…') — из assets/studio/files/
+  for (const S of Object.values(window.SCENE_PREFABS || {}))
+    for (const [k, v] of Object.entries(S.PICS || {})) ASSETS.images[k] = String(v).replace(/^\/files\/[^/]+\//, '../assets/studio/files/');
 })();
 const CAPTION_STYLE = MONTAGE.captions ? (MONTAGE.capStyle || undefined) : { off: true };   // стиль субтитров канала (S9)
 
@@ -404,7 +420,7 @@ window.STUDIO_READY = async () => {
     const sc = STUDIO_SCENES[u.el];
     const LIB = await loadSceneProps(scenePropRefs(sc), MONTAGE.plan, load, {}, sc);
     await loadSceneEnvs(sc, MONTAGE.plan, u.el);
-    MONTAGE_WORLDS[u.el] = sceneWorld(sc, typeof PREFABS !== 'undefined' ? PREFABS : {}, LIB);
+    MONTAGE_WORLDS[u.el] = sceneWorld(sc, ((window.SCENE_PREFABS || {})[u.el] || {}).PREFABS || {}, LIB);
   }
 };
 
