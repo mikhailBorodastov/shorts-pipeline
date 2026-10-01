@@ -394,7 +394,7 @@ def hero_setup(A, cid):
     A.apply_ops("plan:" + vid, [
         {"op": "set", "path": ["heroSetup"], "value": True},
         {"op": "set", "path": ["idea"], "value": f"Служебное видео канала «{doc.get('name')}»: главный герой {hn} — персонаж со скелетом для библиотеки и пустая сцена для проверки."},
-        {"op": "add", "path": ["elements"], "item": {"id": ch, "kind": "char", "name": hn, "desc": desc, "why": "главный герой канала", "status": "", "refs": refs, "by": "studio", "dim": "3d", "make": hero.get("make") or "blender"}},
+        {"op": "add", "path": ["elements"], "item": {"id": ch, "kind": "char", "name": hn, "desc": desc, "why": "главный герой канала", "status": "", "refs": refs, "by": "studio", "dim": "3d", "make": hero.get("make") or "blender", "form": "rig"}},
         {"op": "add", "path": ["elements"], "item": {"id": sc, "kind": "scene", "name": "Пустая сцена", "desc": "Пол и задник цветами канала — проверить героя в 3D.", "why": "проверка героя",
                                                      "status": "", "refs": [], "by": "studio", "uses": [ch]}},
     ])

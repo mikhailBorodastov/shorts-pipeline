@@ -88,7 +88,8 @@ def system_prompt(A, vid, mode):
 
 Режим «✨ Собрать» — доведи видео до собранного ролика в ревью, как Claude Code по _studio/CLAUDE.md (шаги 0 и A), но без викторины:
 1. Прочитай видео (show) и сцены редактора (scene brief каждой). Проект ролика — {vdir.replace(chr(92), '/')} (если его нет — python {sp} produce {vid}).
-2. Сценарий — script.md проекта в формате сценариста (### 0:00–0:04 — НАЗВАНИЕ, **Картинка:**, **VO:** + строки «> …»), шапка voice / rate, подача — _studio/prompts/style-guide.md.
+2. Сценарий — script.md проекта в формате сценариста (### 0:00–0:04 — НАЗВАНИЕ, **Картинка:**, **VO:** + строки «> …»); голос — из style/voice.json канала (строки voice / rate в шапке — только если нужен другой),
+   подача — стайл-гайд канала (style/style-guide.md) и _studio/prompts/style-guide.md; правила канала (channel.json → rules / ruleDefs) соблюдай.
    Картинку пиши сценами редактора (их названия). Длина — как просит видео (коротко, если не сказано). Проверь: montage check, исправь ❌.
 3. Голос: montage tts. Потом montage brief — слова с номерами.
 4. Монтаж: set plan:{vid} montage '<JSON>' — юниты сцен по порядку сценария (at, len, map [[0,0],[t маркера,"w:i"],…,[len сцены, len юнита]], trans), voice/captions on,

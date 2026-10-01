@@ -87,7 +87,15 @@ def parse_script(path="script.md"):
     """Scenes = '## ' or '### ' headings that contain a voice-over; everything else (packaging, sources…) is ignored.
        Settings (voice, rate, произношение, вопрос) are read from the lines before the first scene."""
     text = open(path, encoding="utf-8").read()
-    cfg = {"voice": "ru-RU-DmitryNeural", "rate": "+25%", "pron": {}, "rise": []}
+    cfg = {"voice": "ru-RU-DmitryNeural", "rate": "+25%", "pitch": "+0Hz", "pron": {}, "rise": []}
+    # голос канала Claude Studio (S9): <канал>/style/voice.json — по умолчанию; строки voice: / rate: в шапке script.md важнее
+    chv = os.path.join(os.path.dirname(os.path.abspath(path)), "..", "..", "style", "voice.json")
+    if os.path.isfile(chv):
+        try:
+            v = json.load(open(chv, encoding="utf-8"))
+            cfg.update({k: v[k] for k in ("voice", "rate", "pitch") if v.get(k)})
+        except ValueError:
+            pass
     heads = list(SCENE_HEAD.finditer(text))
     head = text[:heads[0].start()] if heads else text
     for line in head.splitlines():
@@ -140,7 +148,7 @@ async def synth(i, text, cfg):
     spoken = text
     for k, v in cfg["pron"].items():
         spoken = spoken.replace(k, v)
-    comm = edge_tts.Communicate(spoken, cfg["voice"], rate=cfg["rate"], boundary="WordBoundary")
+    comm = edge_tts.Communicate(spoken, cfg["voice"], rate=cfg["rate"], pitch=cfg.get("pitch") or "+0Hz", boundary="WordBoundary")
     path = os.path.join(OUT, f"sec{i}.mp3")
     words = []
     with open(path, "wb") as f:
