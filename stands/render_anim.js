@@ -14,6 +14,39 @@ let port = opt('--port');
 if (!port) { try { port = fs.readFileSync(path.join(__dirname, '..', '..', '.studio', '.port'), 'utf8').trim(); } catch (e) { port = '8790'; } }
 const n = opt('--n', '8');
 const base = `http://127.0.0.1:${port}/render/char.html?char=${encodeURIComponent(char)}&anim=${encodeURIComponent(anim)}&strip=1&n=${n}&size=${Math.max(1200, n * 230)}x560&parts=element`;
+// 3D-персонаж (rig: 'model', S9+): лента — кадры 3D-стенда в неподвижном ракурсе по длине клипа
+const model3d = (() => { try { const r = spawnSync(process.execPath, ['-e', `fetch('http://127.0.0.1:${port}${char}').then(r=>r.text()).then(t=>process.stdout.write(/rig:\\s*'model'/.test(t)?'1':'0')).catch(()=>process.stdout.write('0'))`], { encoding: 'utf8' }); return r.stdout.trim() === '1'; } catch (e) { return false; } })();
+if (model3d) {
+  const dur = (() => { try { const r = spawnSync(process.execPath, ['-e', `fetch('http://127.0.0.1:${port}${anim}').then(r=>r.json()).then(a=>process.stdout.write(String(a.dur||1)))`], { encoding: 'utf8' }); return +r.stdout || 1; } catch (e) { return 1; } })();
+  const N = +n, ts = Array.from({ length: N }, (_, i) => (dur * i / Math.max(1, N - 1)).toFixed(2));
+  const url = `http://127.0.0.1:${port}/tpl/stand3d.html?prop=${encodeURIComponent(char)}&anim=${encodeURIComponent(anim)}&still=1&parts=element`;
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, '_shot3d');
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'render_shot.js'), url, tmp, ts.join(',')], { encoding: 'utf8' });
+  const py = process.platform === 'win32' ? 'python' : 'python3';
+  const s = spawnSync(py, ['-c', `
+import sys, glob, os
+from PIL import Image, ImageDraw
+d, ts = sys.argv[1], sys.argv[2].split(',')
+ims = []
+for t in ts:
+    f = os.path.join(d, 'element_' + str(float(t)).rstrip('0').rstrip('.') + '.png')
+    if not os.path.isfile(f):
+        f = os.path.join(d, 'element_' + t + '.png')
+    if os.path.isfile(f):
+        im = Image.open(f).convert('RGB'); w, h = im.size; im = im.crop((0, int(h * 0.12), w, int(h * 0.88))).resize((230, int(230 * h * 0.76 / w)))
+        ImageDraw.Draw(im).text((8, 8), t + ' s', fill=(40, 40, 40)); ims.append(im)
+if ims:
+    out = Image.new('RGB', (230 * len(ims), ims[0].height), 'white')
+    for i, im in enumerate(ims): out.paste(im, (230 * i, 0))
+    out.save(sys.argv[3])
+`, tmp, ts.join(','), path.join(dir, 'strip.png')], { encoding: 'utf8' });
+  fs.rmSync(tmp, { recursive: true, force: true });
+  const log = ((r.stdout || '') + (r.stderr || '') + (s.stderr || '')).split('\n').filter(l => l && !l.startsWith('wrote') && l.trim() !== 'ok');
+  if (log.length) console.log(log.join('\n'));
+  console.log(`ok: ${path.join(dir, 'strip.png')} (кадры клипа, 3D)`);
+  process.exit(0);
+}
 fs.mkdirSync(dir, { recursive: true });
 const errs = new Set();
 for (const [name, q] of [['strip.png', '']]) {

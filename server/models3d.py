@@ -63,6 +63,43 @@ V = [o.matrix_world @ v.co for o in meshes for v in o.data.vertices]
 lo = mathutils.Vector((min(v.x for v in V), min(v.y for v in V), min(v.z for v in V)))
 hi = mathutils.Vector((max(v.x for v in V), max(v.y for v in V), max(v.z for v in V)))
 h = hi.z - lo.z; cx = (lo.x + hi.x) / 2; cy = (lo.y + hi.y) / 2; z0 = lo.z
+kind = sys.argv[sys.argv.index("--") + 1:][3] if len(sys.argv[sys.argv.index("--") + 1:]) > 3 else "auto"
+if kind == "auto":
+    kind = "quadruped" if (hi.y - lo.y) > 1.15 * h and (hi.y - lo.y) > (hi.x - lo.x) else "biped"
+if kind == "quadruped":
+    def avg(vs, k, d): return sum(getattr(v, k) for v in vs) / len(vs) if vs else d
+    L = hi.y - lo.y; feet = [v for v in V if v.z <= z0 + 0.25 * h]
+    def foot(sx, sy):
+        c = [v for v in feet if (v.x - cx) * sx > 0 and (v.y - cy) * sy > 0]
+        return mathutils.Vector((avg(c, "x", cx + sx * 0.15 * h), avg(c, "y", cy + sy * 0.3 * L), z0)) if c else mathutils.Vector((cx + sx * 0.15 * h, cy + sy * 0.3 * L, z0))
+    bpy.ops.object.armature_add(location=(0, 0, 0)); A = bpy.context.object; A.name = "Rig"
+    bpy.ops.object.mode_set(mode="EDIT"); E = A.data.edit_bones
+    zb = z0 + 0.62 * h; yf = lo.y + 0.25 * L; yb = hi.y - 0.22 * L       # перед — к -Y Blender
+    r = E[0]; r.name = "root"; r.head = (cx, cy, z0); r.tail = (cx, cy, z0 + 0.1 * h)
+    def B(n, a, b, p):
+        x = E.new(n); x.head = a; x.tail = b; x.parent = E[p]; return x
+    B("hips", (cx, yb, zb), (cx, cy, zb), "root"); B("spine", (cx, cy, zb), (cx, yf, zb), "hips")
+    B("neck", (cx, yf, zb), (cx, lo.y + 0.12 * L, z0 + 0.82 * h), "spine"); B("head", (cx, lo.y + 0.12 * L, z0 + 0.82 * h), (cx, lo.y, z0 + 0.9 * h), "neck")
+    for nm, sx, sy, par in (("FL", 1, -1, "spine"), ("FR", -1, -1, "spine"), ("BL", 1, 1, "hips"), ("BR", -1, 1, "hips")):
+        f = foot(sx, sy); top = mathutils.Vector((f.x, f.y, zb - 0.05 * h)); knee = top.lerp(f, 0.5)
+        B("thigh." + nm, tuple(top), tuple(knee), par); B("shin." + nm, tuple(knee), tuple(f), "thigh." + nm)
+    tail = [v for v in V if v.y > hi.y - 0.12 * L and v.z > z0 + 0.35 * h]
+    if tail:
+        tp = mathutils.Vector((avg(tail, "x", cx), max(v.y for v in tail), avg(tail, "z", zb)))
+        a = mathutils.Vector((cx, yb, zb))
+        B("tail.1", tuple(a), tuple(a.lerp(tp, 0.34)), "hips"); B("tail.2", tuple(a.lerp(tp, 0.34)), tuple(a.lerp(tp, 0.67)), "tail.1"); B("tail.3", tuple(a.lerp(tp, 0.67)), tuple(tp), "tail.2")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    ok = True
+    for m in meshes:
+        bpy.ops.object.select_all(action="DESELECT"); m.select_set(True); A.select_set(True); bpy.context.view_layer.objects.active = A
+        try:
+            bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+        except Exception:
+            ok = False; bpy.ops.object.parent_set(type="ARMATURE_ENVELOPE")
+    bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_apply=True, export_yup=True, export_animations=True, export_skins=True, export_cameras=False, export_lights=False)
+    json.dump({"height": h, "kind": "quadruped", "bones": [{"name": b.name, "parent": b.parent.name if b.parent else None} for b in A.data.bones], "animations": [],
+               "rigged": True, "autorig": True, "weights": "heat" if ok else "envelope"}, open(info_path, "w", encoding="utf-8"), ensure_ascii=False)
+    print("AUTORIG_OK"); sys.exit(0)
 def band(z1, z2): return [v for v in V if z0 + z1 * h <= v.z <= z0 + z2 * h]
 def avg(vs, k, d): return sum(getattr(v, k) for v in vs) / len(vs) if vs else d
 # руки: самые дальние по |x| точки в полосе плеч-кистей (T- или A-поза)
@@ -102,6 +139,47 @@ json.dump({"height": h, "bones": [{"name": b.name, "parent": b.parent.name if b.
            "rigged": True, "autorig": True, "weights": "heat" if ok else "envelope"}, open(info_path, "w", encoding="utf-8"), ensure_ascii=False)
 print("AUTORIG_OK")
 '''
+
+
+MERGE_ANIMS = r'''
+import bpy, sys, json, os
+args = sys.argv[sys.argv.index("--") + 1:]
+src, out, pairs = args[0], args[1], json.loads(args[2])
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+main = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+if not main: print("NO_ARMATURE"); sys.exit(4)
+main.animation_data_create()
+if main.animation_data.action:                       # своя анимация модели — тоже дорожкой
+    a = main.animation_data.action; t = main.animation_data.nla_tracks.new(); t.name = a.name; t.strips.new(a.name, 0, a); main.animation_data.action = None
+done = []
+for name, path in pairs:
+    before = set(bpy.data.objects)
+    bpy.ops.import_scene.gltf(filepath=path)
+    new = [o for o in bpy.data.objects if o not in before]
+    arm = next((o for o in new if o.type == "ARMATURE" and o.animation_data and o.animation_data.action), None)
+    if arm:
+        act = arm.animation_data.action; act.name = name
+        t = main.animation_data.nla_tracks.new(); t.name = name; t.strips.new(name, 0, act); done.append(name)
+    for o in new: bpy.data.objects.remove(o, do_unlink=True)
+bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_apply=True, export_yup=True, export_animations=True, export_animation_mode="NLA_TRACKS",
+                          export_skins=True, export_cameras=False, export_lights=False)
+print("MERGE_OK " + json.dumps(done))
+'''
+
+
+def merge_anims(glb, anims, out_dir):
+    """Анимации из отдельных glb (тот же скелет) -> клипы основной модели (gltf:<имя>). -> список имён."""
+    if not anims:
+        return []
+    src = os.path.join(out_dir, "_premerge.glb")
+    shutil.copy2(glb, src)
+    log = _blender(MERGE_ANIMS, src, os.path.join(out_dir, "model.glb"), json.dumps([[k, v] for k, v in anims.items()]))
+    m = re.search(r"MERGE_OK (.*)", log)
+    if not m:
+        shutil.copy2(src, os.path.join(out_dir, "model.glb"))
+        return []
+    return json.loads(m.group(1))
 
 
 def _blender(script, *args, timeout=900):
@@ -150,13 +228,13 @@ def normalize(src, out_dir):
     return d
 
 
-def auto_rig(glb, out_dir):
+def auto_rig(glb, out_dir, kind="auto"):
     os.makedirs(out_dir, exist_ok=True)
     out, info = os.path.join(out_dir, "model.glb"), os.path.join(out_dir, "info.json")
     src = glb
     if os.path.abspath(glb) == os.path.abspath(out):
         src = os.path.join(out_dir, "_unrigged.glb"); shutil.copy2(glb, src)
-    log = _blender(AUTORIG, src, out, info)
+    log = _blender(AUTORIG, src, out, info, kind)
     if "AUTORIG_OK" not in log:
         raise RuntimeError("авто-скелет не встал: " + log.strip()[-400:])
     d = json.load(open(info, encoding="utf-8"))
@@ -193,7 +271,26 @@ ROLES = [  # (наша кость, слова, исключить, ось, k д�
 ]
 
 
+def quad_map(info):
+    names = {sanitize(b["name"]) for b in info.get("bones") or []}
+    out = {}
+    for k, b, ax, kk in (("body", "spine", "x", 1), ("head", "head", "x", 1), ("neck", "neck", "x", 1), ("root", "root", "y", 1),
+                         ("tail", "tail1", "x", -1), ("tail2", "tail2", "x", -1), ("tail3", "tail3", "x", -1)):
+        if b in names:
+            out[k] = {"bone": b, "axis": ax, "k": kk}
+    for leg in ("FL", "FR", "BL", "BR"):
+        if "thigh" + leg in names:
+            out["leg" + leg] = {"bone": "thigh" + leg, "axis": "x", "k": -1}
+        if "shin" + leg in names:
+            out["shin" + leg] = {"bone": "shin" + leg, "axis": "x", "k": 1}
+    if "legFL" in out:                                          # общие кости позы студии (ходьба, клипы двуногих) — передними лапами
+        out["armL"], out["armR"], out["legL"], out["legR"] = out["legFL"], out.get("legFR", out["legFL"]), out.get("legBL", out["legFL"]), out.get("legBR", out["legFL"])
+    return out
+
+
 def bone_map(info):
+    if info.get("kind") == "quadruped":
+        return quad_map(info)
     """{ head: {bone, axis, k}, body, armL/R, forearmL/R, legL/R, shinL/R, handL/R, footL/R } по именам костей (три.js-имена)."""
     names = [sanitize(b["name"]) for b in info.get("bones") or []]
     raw = {sanitize(b["name"]): b["name"] for b in info.get("bones") or []}
@@ -440,9 +537,14 @@ def char_job(A, job):
         meta["ref"] = A.rel_data(ref)
         log("Blender проверяет модель…")
         info = normalize(glb, wd)
+        if meta.get("anims"):                                   # Meshy: ходьба / бег отдельными glb — в клипы модели
+            log("вклеиваю анимации провайдера в модель…")
+            got = merge_anims(os.path.join(wd, "model.glb"), meta["anims"], wd)
+            info = normalize(os.path.join(wd, "model.glb"), wd)
+            meta["merged"] = got
     if not info.get("rigged") or len(info.get("map") or {}) < 6:
         log("скелета нет — ставлю авто-скелет…")
-        info = auto_rig(os.path.join(wd, "model.glb"), wd)
+        info = auto_rig(os.path.join(wd, "model.glb"), wd, prm.get("body") or ("quadruped" if (meta.get("rigType") or "") == "quadruped" else "auto"))
         meta["autorig"] = info.get("weights")
     sk = prm.get("skeleton") or e.get("skeleton") or "biped"
     slug = re.sub(r"[^a-z0-9-]+", "-", (e.get("slug") or eid).lower()).strip("-") or eid

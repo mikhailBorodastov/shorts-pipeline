@@ -65,6 +65,7 @@ function character(def) {
     def.modelKey = 'ch:' + def.id;
     if (typeof PROP_MODELS !== 'undefined') PROP_MODELS[def.modelKey] = /^(\/|https?:)/.test(def.model || '') ? def.model : base + (def.model || 'model.glb');
     def.build = (w, o) => { const c = modelChar(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.scenePose(T); c.applyPose(T); } }; };
+    def.ikModel = true;                                           // rigSolveIK не трогает кости — IK решает modelChar по арматуре
   } else
   def.build = (w, o) => { const c = charCard(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.scenePose(T); } }; };
   RIG.chars[def.id] = def; CHAR_LAST = def;
@@ -387,6 +388,7 @@ function rigIK2(R, pose, ida, idb, tgt, bend = 1) {
 }
 function rigSolveIK(char, pose) {
   if (!pose.ik) return pose;
+  if (char.ikModel) return Object.assign({}, pose, { ikModel: pose.ik });   // 3D-модель: цели — в modelChar.solveIK
   const out = JSON.parse(JSON.stringify(pose)); out.bones = out.bones || {};
   for (const [bone, tgt] of Object.entries(pose.ik)) {
     if (!tgt) continue;
@@ -641,7 +643,7 @@ function modelChar(w, char, opt = {}) {
   G.keyLayer = T => rigKeyLayer(char, so, T);
   G.keyed = T => rigPose(G.basePose, G.keyLayer(T));
   G.env = T => (so.lipsync && so.lipsync.sound ? rigEnvAt(so.lipsync.sound, T) : 0);
-  G.scenePose = (T, base) => rigPose(rigSceneLayer(char, so, T, base || G.basePose, G.env || null), G.keyLayer(T));
+  G.scenePose = (T, base) => { const p = rigPose(rigSceneLayer(char, so, T, base || G.basePose, G.env || null), G.keyLayer(T)); G.ikTargets = p.ikModel || (P.pose && P.pose.ik) || null; return p; };
   const morph = (name, v) => { if (!name) return; for (const m of meshes) { const i = m.morphTargetDictionary[name]; if (i != null) m.morphTargetInfluences[i] = v; } };
   const tmp = new THREE.Quaternion();
   G.applyPose = T => {
@@ -670,10 +672,38 @@ function modelChar(w, char, opt = {}) {
     }
     const K = p.card || {};
     inner.position.y = K.y || 0; inner.rotation.z = K.rz || 0; inner.rotation.y = K.ry || 0; inner.scale.y = 1 + (K.sy || 0);
+    if (G.ikTargets) G.solveIK(G.ikTargets);
     const F = char.face || {}, f = p.face || {};                // лицо — shape keys модели (если есть)
     if (F.mouth) for (const [k, sk] of Object.entries(F.mouth)) morph(sk, f.mouth === k ? 1 : 0);
     if (F.lid) morph(F.lid, f.lid != null ? 1 - f.lid : (blinkAt(T, 3) > 0.5 ? 1 : 0));
     if (F.brows) for (const [k, sk] of Object.entries(F.brows)) morph(sk, f.brows === k ? 1 : 0);
+  };
+  // IK (S9+): цель кончика конечности [x, y] — в долях роста от ног, в плоскости персонажа (x — вправо, y — вверх), как у бумажных героев. CCD, 10 проходов.
+  const IKC = { armL: ['armL', 'forearmL', 'handL'], armR: ['armR', 'forearmR', 'handR'], legL: ['legL', 'shinL', 'footL'], legR: ['legR', 'shinR', 'footR'] };
+  const byK = Object.fromEntries(map.map(m => [m.k, m.b]));
+  const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), vt = new THREE.Vector3(), qa = new THREE.Quaternion(), qp = new THREE.Quaternion();
+  G.solveIK = targets => {
+    for (const [limb, tgt] of Object.entries(targets || {})) {
+      const ch = IKC[limb], up = ch && byK[ch[0]], lo = ch && byK[ch[1]];
+      if (!up || !lo || !tgt) continue;
+      const end = byK[ch[2]] || lo.children.find(c => c.isBone) || lo;
+      G.updateMatrixWorld(true);
+      const hM = char.h || 1.8, base = new THREE.Vector3(); up.getWorldPosition(base);
+      const loc = G.worldToLocal(base.clone());                       // глубина цели — как у плеча / бедра
+      vt.set(tgt[0] * hM / (G.scale.x || 1), tgt[1] * hM / (G.scale.y || 1), loc.z); G.localToWorld(vt);
+      for (let it = 0; it < 10; it++) {
+        for (const b of [lo, up]) {
+          b.getWorldPosition(v1); end.getWorldPosition(v2);
+          const a = v2.sub(v1).normalize(), c = vt.clone().sub(v1).normalize();
+          if (a.lengthSq() < 1e-8 || c.lengthSq() < 1e-8) continue;
+          qa.setFromUnitVectors(a, c);
+          b.parent.getWorldQuaternion(qp);
+          const wq = qp.clone().multiply(b.quaternion); wq.premultiply(qa);
+          b.quaternion.copy(qp.invert().multiply(wq));
+          b.updateMatrixWorld(true);
+        }
+      }
+    }
   };
   G.applyPose(0);
   return G;

@@ -205,6 +205,11 @@
     let params = {};
     try { params = JSON.parse(q.get('params') || '{}'); } catch (e) {}
     PROP.o = { id: 'prop', name: def.name || 'пропс', params: Object.assign({}, def.params || {}, params) };
+    if (q.get('anim')) {                                        // S9+: клип на 3D-персонаже (лента «+ научить» для скелета модели)
+      const ar = await fetch(q.get('anim') + (q.get('anim').includes('?') ? '&' : '?') + 'v=' + Date.now());
+      if (ar.ok) { const a = await ar.json(); rigAnim(a); PROP.o.clips = [{ id: 'c1', t: 0, dur: a.dur || 1, anim: a.id, speed: 1, loop: !!a.loop }]; PROP.len = a.dur || 1; }
+    }
+    if (params.clips) PROP.o.clips = params.clips;
     let fit = { d: 3, y: 0.5 };
     const w = world3d({ fx: { preset: 'day', dof: null, vignette: { offset: 0.35, darkness: 0.35 }, grade: { sat: 0.05, contrast: 0.04, bright: 0.02 } }, bg: '#ece6da', fov: 26,
       build(w) {
@@ -213,6 +218,7 @@
         w.plane({ size: [40, 40], flat: true, color: '#e6dfd1' });
         const before = new Set(w.scene.children);
         const G = new THREE.Group(), r = def.build ? def.build(w, PROP.o) : null;
+        PROP.tick = r && !r.isObject3D && r.tick;                 // персонаж: поза, клипы, IK — каждый кадр
         for (const c of w.scene.children.filter(c => !before.has(c))) G.add(c);
         if (r && r.isObject3D && !r.parent) G.add(r);
         w.scene.add(G); P3.live(w, G); PROP.G = G;
@@ -225,8 +231,9 @@
         if (q.get('hog') === '1') hogCard(w, { pos: [-(Math.hypot(sz.x, sz.z) / 2 + 0.3), 0, 0.1], h: 0.9, name: 'ёжик для масштаба' });
       },
       update(w, lt) {
-        if (PROP.G) PROP.G.rotation.y = propAngle(lt);
+        if (PROP.G) PROP.G.rotation.y = q.get('still') ? +(q.get('still') === '1' ? 0.45 : q.get('still')) : propAngle(lt);
         if (PROP.def.tick) PROP.def.tick(lt, PROP.o, PROP.G);
+        if (PROP.tick) PROP.tick(lt);
         const el = 0.32;
         w.cam.position.set(0, fit.y + Math.sin(el) * fit.d, Math.cos(el) * fit.d); w.target.set(0, fit.y, 0);
       } });
