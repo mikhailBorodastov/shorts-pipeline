@@ -387,6 +387,20 @@ Object.assign(Plan, {
     }));
   },
 
+  // 📝 какие сцены сценария показывает эта сцена (S11): монтаж ставит её под их голос — «⚡ Разложить по сценарию»; можно несколько подряд
+  scriptLink(d, key, e) {
+    if (!d.project || !Plan.voiceLoad) return null;
+    const V = Plan.voiceLoad(d) || {}, secs = (V.sections || []).map(x => x.title).filter(Boolean);
+    if (!secs.length) return null;
+    const cur = (e.script && (e.script.titles || (e.script.title ? [e.script.title] : []))) || [];
+    const strip = t => (t || '').replace(/^[\s\d:.,–—-]+/, '').toLowerCase();
+    const on = t => cur.some(c => strip(c) === strip(t));
+    const set = list => Store.set(key, ['elements', e.id, 'script'], list.length ? { title: list[0], titles: list } : null, true);
+    return [h('label', '📝 Сцены сценария', h('span.dim', ' — под чей голос монтаж поставит эту сцену; можно несколько подряд')),
+      h('div.row.wrap', secs.map(t => h('button.chip', { class: on(t) ? 'sel' : '', title: on(t) ? 'Убрать' : 'Эта сцена показывает этот кусок сценария',
+        onclick: () => set(on(t) ? cur.filter(c => strip(c) !== strip(t)) : secs.filter(x => on(x) || x === t)) }, t.replace(/^[\d:.,–—\s-]+—\s*/, ''))))];
+  },
+
   // «Что в сцене»: link characters and props to a scene — Claude puts their drafts into it
   sceneCast(d, key, e) {
     const P = ['elements', e.id, 'uses'], uses = e.uses || [];
@@ -425,6 +439,7 @@ Object.assign(Plan, {
           h('label', e.kind === 'sound' ? 'Как звучит' : 'Как выглядит'),
           area(key, [...P, 'desc'], { cls: 'box', ph: e.kind === 'sound' ? 'гулкий металлический лязг, эхо в шахте…' : 'материал, цвет, эпоха, состояние, размер…' }),
           h('label', 'Где в ролике', e.script && e.script.title && h('span.dim', ' — 📝 сцена сценария «' + e.script.title + '»')), area(key, [...P, 'why'], { cls: 'box', ph: 'в каком бите или сцене' }),
+          e.kind === 'scene' && Plan.scriptLink(d, key, e),
           e.kind === 'scene' && Plan.sceneCast(d, key, e),
           h('label', 'Референсы', h('span.dim', ' — Ctrl+V, перетащи или 📎; Claude смотрит их, когда рисует')),
           Plan.elRefs(d, key, e),

@@ -121,6 +121,15 @@ const StageEditor = {
     requestAnimationFrame(() => { const f = this.frame && this.frame.querySelector('iframe'); if (f) f.focus(); });
   },
   close() { if (this.frame) this.frame.remove(); this.frame = null; this.el = null; },
+  // 🎞 из монтажа (S11): обычная правка сцены в моменте; закрыл — назад в монтаж, он пересобирается сам
+  openScene(vid, el, ts) {
+    this.close();
+    this.el = `mt:${vid}/${el}`;
+    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + vid)}&el=${encodeURIComponent(el)}&t=${(+ts || 0).toFixed(2)}&back=montage` + ((Store.get('plan:' + vid) || {}).mode === 'long' ? '&fmt=long' : '');
+    this.frame = h('div.stage-editor', h('iframe', { src, title: 'Оформление сцены', allow: 'fullscreen' }));
+    document.body.append(this.frame);
+    requestAnimationFrame(() => { const f = this.frame && this.frame.querySelector('iframe'); if (f) f.focus(); });
+  },
   // ✋ правка в кадре из ревью (S8): сцена в моменте кадра; правки уходят пометкой (fixes[] видео), страница остаётся на «Ревью»
   openFix(vid, el, ts, vt) {
     this.close();
@@ -136,6 +145,11 @@ addEventListener('message', ev => {                  // 🛠 «Мастерск�
 addEventListener('message', ev => {
   if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'editor-close') return;
   const r = App.route;
+  if (ev.data.back === 'montage') {                   // S11: из монтажа — назад, ролик пересобирается под новую сцену
+    StageEditor.close();
+    if (window.Montage && Montage.afterEdit) Montage.afterEdit(r.id, ev.data.el);
+    return;
+  }
   if (ev.data.back === 'review') {                    // из «✋ правки в кадре»: назад в ревью, пометка — в списке над ним
     StageEditor.close();
     if (ev.data.fix) UI.toast('✋ Пометка сохранена — «🔨 Пересобрать с правками», когда соберёшь все');

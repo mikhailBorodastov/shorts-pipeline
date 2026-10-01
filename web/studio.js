@@ -150,6 +150,7 @@ Object.assign(Plan, {
         h('div.card-head', h('h3', '🎙 Голос'),
           h('span.dim', src.kind === 'rec' ? `🎤 запись диктора «${src.file}»` : voiced.some(x => x.file) ? `🤖 черновой голос нейросетью (${r.voice || ''} ${r.rate || ''})` : voiced.length ? 'голоса ещё нет' : 'в сценарии нет текста для голоса — ролик без диктора'),
           r.total && h('span.dim', ` · ролик ${(+r.total).toFixed(1)} с`), h('span.sp'),
+          !voiced.length && secs.length > 0 && h('button', { disabled: !!job, title: 'Ролик без диктора: разметить длины тихих сцен по таймкодам сценария — по ним «⚡ Разложить по сценарию» на монтаже', onclick: () => Plan.voiceJob(d, '/api/voice/tts', { video: d.id }, '⏱ Размечаю тайминги сцен…') }, '⏱ разметить тайминги'),
           voiced.length > 0 && h('button', { disabled: !!job, title: 'Озвучить сценарий нейросетью (tts.py) — для таймингов, пока нет записи. Запись диктора уйдёт в сторону (build/vo_rec)', onclick: () => {
             if (src.kind === 'rec' && !confirm('Сейчас голос — запись диктора. Заменить её черновым голосом нейросети? (запись останется в «Записи» — нарежешь снова)')) return;
             Plan.voiceJob(d, '/api/voice/tts', { video: d.id }, '🔊 Озвучиваю сценарий нейросетью…');

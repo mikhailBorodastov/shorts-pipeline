@@ -734,3 +734,4 @@ body.agent-open .stage-editor { right: 380px; }
 .vo-sec.silent { opacity: .7; }
 .vo-sec audio, .vo-recs audio { height: 32px; max-width: 360px; }
 .vo-difflist { display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow: auto; }
+.chip.sel { background: #23405f; border-color: #4d9cff; }

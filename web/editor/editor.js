@@ -616,7 +616,7 @@ addEventListener('keydown', e => {
 
 function back() {
   if (ED.pending) { ED.msg('Ещё сохраняю — секунду'); return; }
-  if (window.parent !== window) parent.postMessage({ type: 'editor-close', el: ED.el, ...(ED.fix ? { back: 'review' } : {}), ...(ED.info && ED.info.ws ? { ws: ED.info.ws } : {}) }, location.origin);
+  if (window.parent !== window) parent.postMessage({ type: 'editor-close', el: ED.el, ...(ED.fix ? { back: 'review' } : q.get('back') === 'montage' ? { back: 'montage' } : {}), ...(ED.info && ED.info.ws ? { ws: ED.info.ws } : {}) }, location.origin);
   else history.length > 1 ? history.back() : (location.href = '/');
 }
 
@@ -770,6 +770,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
       if (k && k.el === ED.el) { ED.t = k.t || 0; ED.select((k.sel || []).filter(id => id === 'camera' || find(ED.doc, id))); ED.undo = k.undo || []; ED.redo = k.redo || []; if (k.why) setTimeout(() => ED.msg('🎨 ' + k.why)); }
     } catch {}
     if (ED.fix) startFix();
+    else if (q.get('t')) { ED.t = Math.max(0, +q.get('t') || 0); ED.dirty = ED.tlDirty = ED.uiDirty = true; }   // из монтажа (S11): сцена в моменте двойного клика
     step(ED.t); ED.vp.fromScene();                               // the free camera starts where the scene camera is at t
     document.getElementById('app').classList.remove('loading');
     requestAnimationFrame(loop);

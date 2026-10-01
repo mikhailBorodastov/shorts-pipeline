@@ -79,7 +79,53 @@ const Montage = {
     } catch (e) { this.status('⚠ ' + e.message); }
     MT.genBusy = false;
   },
-  status(s) { const e = $('.mt-status'); if (e) e.textContent = s; },
+  status(s) { MT.statusTxt = s; const e = $('.mt-status'); if (e) e.textContent = s; },
+
+  // ---- S11: ⚡ раскладка по сценарию (без Claude), ✨ монтаж агентом, двойной клик -> сцена, после правки сцены — пересборка сама
+  async auto(d) {
+    if (d.montage && (d.montage.units || []).length && !confirm('Разложить заново по сценарию? Сцены встанут под свои секции голоса (звуки, музыка и надписи останутся). Отменить — Ctrl+Z на странице / история видео.')) return;
+    try {
+      this.status('раскладываю по сценарию…');
+      const r = await api('POST', '/api/montage/auto', { video: d.id });
+      await Store.load('plan:' + d.id, true); this.load(d, true);
+      this.status((r.report || []).join(' · '));
+      UI.toast('⚡ Разложено: ' + (r.montage.units || []).length + ' сцен' + ((r.report || []).some(x => /нет сцены|⚠|обрезана/.test(x)) ? ' — есть замечания в строке статуса' : ''));
+      MontagePreview.reload(0);
+    } catch (e) { UI.toast(e.message, 'err'); }
+  },
+  smart(d) {
+    const wish = prompt('✨ Смонтировать: что важно? (можно пусто)\nНапример: «финал подольше, комната короче, ностальгическая музыка», «двойной клик ровно на щелчке мыши»', '');
+    if (wish === null) return;
+    AgentPanel.toggle(true);
+    AgentPanel.say('🎞 Смонтируй ролик из сценария с голосом, сцен препродакшена и звуков (режим монтажа).' + (wish.trim() ? ' Пожелания автора: ' + wish.trim() : ''), { mode: 'montage', model: 'opus' });
+  },
+  async openAt(d, vt) {
+    try { const a = await api('GET', `/api/montage/at?video=${encodeURIComponent(d.id)}&t=${vt}`); StageEditor.openScene(d.id, a.el, a.ts); }
+    catch (e) { UI.toast(e.message, 'err'); }
+  },
+  async afterEdit(vid, el) {                            // сцена поменялась: длина -> карты юнитов (простое растяжение подстраивается), предпросмотр пересобирается
+    const d = Store.get('plan:' + vid); if (!d) return;
+    await Store.load('plan:' + vid, true);
+    const old = (MT.info[vid] || {}).scenes || [];
+    let fresh = null;
+    try { fresh = await api('GET', '/api/montage?video=' + encodeURIComponent(vid)); MT.info[vid] = fresh; } catch (e) { return UI.toast(e.message, 'err'); }
+    const dd = Store.get('plan:' + vid), M = dd && dd.montage;
+    const was = (old.find(s => s.el === el) || {}).len, now = ((fresh.scenes || []).find(s => s.el === el) || {}).len;
+    let changed = 0;
+    if (M && was && now && Math.abs(was - now) > 1e-3) {
+      const N = this.clone(M);
+      for (const u of N.units || []) {
+        if (u.scene !== el || !Array.isArray(u.map) || u.map.length !== 2) continue;
+        const [, b] = u.map;
+        if (Math.abs(b[0] - was) < 1e-3 && typeof b[1] === 'number') { b[0] = now; changed++; }   // сцена была растянута на юнит целиком — растягиваем новую длину
+      }
+      if (changed) { MT.d = dd; MT.key = 'plan:' + vid; Store.set('plan:' + vid, ['montage'], N, true); }
+    }
+    MT.d = Store.get('plan:' + vid); MT.key = 'plan:' + vid;
+    App.render();
+    await this.regen();
+    UI.toast('🎞 Сцена обновлена — предпросмотр пересобран' + (changed ? ` (длина ${was} → ${now} с, подогнал под голос)` : '') + '. mp4 — «🔨 Собрать»');
+  },
 
   // ---------------- страница этапа
   view(d, key) {
@@ -101,12 +147,15 @@ const Montage = {
         h('div.card-head', h('h3', '🎞 Монтаж'),
           h('span.dim', `${(M.len || 0).toFixed(1)} с · ${(M.units || []).length} ${plural((M.units || []).length, 'сцена', 'сцены', 'сцен')} · голос ${this.voiceOn(d) ? 'вкл' : this.words(d).length ? 'выкл' : 'нет'}`),
           h('span.sp'),
-          h('span.mt-status.dim.small', d.montage ? '' : 'монтаж по умолчанию — первая правка сохранит его'),
+          h('span.mt-status.dim.small', MT.statusTxt || (d.montage ? '' : 'монтаж по умолчанию — первая правка сохранит его')),
           h('button', { onclick: () => this.regen(), title: 'Пересобрать файлы проекта и перезагрузить предпросмотр' }, '↻ предпросмотр'),
+          h('button', { onclick: () => this.auto(d), title: 'Без Claude, за секунду: каждая сцена сценария ← её сцена препродакшена (📝), стоит под своим голосом и растянута / ускорена под него. Звуки и музыка остаются' }, '⚡ Разложить по сценарию'),
+          h('button.claude', { onclick: () => this.smart(d), title: 'Claude (Opus) соберёт финал: сцены под голос, важные моменты — к словам, звуки к действиям, музыка, проверит кадрами и соберёт mp4' }, '✨ Смонтировать'),
           Claude.btn({ label: 'Собрать', icon: '🔨', action: 'montagebuild', key, scope: 'montage', params: { video: d.id }, noClaude: true,
-            title: 'Кадры, звук и mp4 (build.sh) — 1–3 минуты', onResult: () => { this.load(d, true); UI.toast('Ролик собран — смотри «Ревью»'); } }),
-          h('button.claude', { onclick: () => AgentPanel.build(), title: 'Агент (Opus) сам напишет сценарий, озвучит, смонтирует и соберёт — шаги видны в панели справа' }, '✨ Собрать агентом'),
-          out && h('a.btn', { href: `#/p/${d.id}/review`, title: out }, '👀 Ревью →'))),
+            title: 'Кадры, звук и mp4 (build.sh) — 1–3 минуты', onResult: () => { this.load(d, true); MT.vidRev = Date.now(); UI.toast('Ролик собран — ниже «🎬 Готовый ролик»'); } }))),
+      d.project && ReviewFix.bar(d, key),
+      out && h('details.card.mt-out', { open: !!MT.outOpen, ontoggle: e => { MT.outOpen = e.target.open; } }, h('summary', h('b', '🎬 Готовый ролик'), h('span.dim.small', ' · ' + out)),
+        MT.outOpen && h('video', { controls: true, preload: 'metadata', src: `/api/montage/video?video=${encodeURIComponent(d.id)}&r=${MT.vidRev || 0}`, style: { maxHeight: '70vh', display: 'block', margin: '8px auto' } })),
       h('div.mt-layout',
         h('div.mt-left', this.toolbar(d, key, M), h('div.mt-tl', this.timeline(d, M)), h('div.mt-props', this.props(d, M))),
         h('div.mt-prevslot', h('span.dim.small', 'предпросмотр'))),
@@ -161,6 +210,8 @@ const Montage = {
     for (const u of M.units || []) {
       const sc = (I.scenes || []).find(s => s.el === u.scene) || {}, P = this.pairs(d, u);
       const b = bar('units', u, u.at || 0, u.len || 0, sc.name || u.scene, 'unit');
+      b.title = (sc.name || u.scene) + ' — двойной клик: открыть сцену в этом моменте (после правки ролик пересоберётся сам)';
+      b.ondblclick = ev => { ev.stopPropagation(); Montage.openAt(d, +this.xToT(ev).toFixed(2)); };
       sceneRow.append(b);
       for (const c of sc.cuts || []) { const tv = this.s2v(P, c); if (tv > (u.at || 0) && tv < (u.at || 0) + u.len) sceneRow.append(h('div.mt-cut', { style: { left: X(tv) + 'px' }, title: 'склейка камеры ' + c + ' с сцены' })); }
       for (const m of sc.markers || []) {
@@ -359,10 +410,15 @@ setInterval(() => {                                      // прогресс «�
 }, 1000);
 
 Object.assign(Plan, { montage(d, key) { return Montage.view(d, key); } });
+window.Montage = Montage;
 
 // ---------------- 👀 Ревью (S8): «✋ поправить кадр» — сцена в моменте паузы, правки -> пометка (fixes[]), «🔨 Пересобрать с правками» — агент
 const ReviewFix = {
   async grab(d) {
+    if (App.route.tab === 'montage') {                 // S11: ревью внутри монтажа — кадр из предпросмотра (курсор монтажа)
+      try { const a = await api('GET', `/api/montage/at?video=${encodeURIComponent(d.id)}&t=${MT.t}`); return StageEditor.openFix(d.id, a.el, a.ts, MT.t); }
+      catch (e) { return UI.toast(e.message, 'err'); }
+    }
     const f = document.querySelector('iframe.projframe');
     if (!f) return UI.toast('Ревью ещё не открылось', 'err');
     const id = uid('q');
@@ -395,7 +451,7 @@ const ReviewFix = {
     const fx = (d.fixes || []).filter(x => x.status !== 'drop'), open = fx.filter(x => x.status === 'open');
     const can = !!d.montage;
     return h('section.card.rf', h('div.row',
-      h('button.primary', { disabled: !can, title: can ? 'Поставь ревью на паузу в нужном кадре — откроется сцена в этом моменте, правки уйдут пометкой' : 'Только для роликов, собранных монтажом Studio', onclick: () => this.grab(d) }, '✋ поправить кадр'),
+      h('button.primary', { disabled: !can, title: can ? 'Поставь предпросмотр на паузу в нужном кадре — откроется сцена в этом моменте, правки уйдут пометкой (их внесёт «🔨 Пересобрать с правками»). Сразу править сцену — двойной клик по ней на таймлайне' : 'Сначала смонтируй ролик', onclick: () => this.grab(d) }, '✋ поправить кадр'),
       h('span.dim.small', open.length ? `открытых правок: ${open.length}` : 'пауза в кадре → ✋ → подвинь, поверни, поменяй позу, напиши почему'),
       h('span.sp'),
       open.length > 0 && h('button.claude', { onclick: () => this.rebuild(d), title: 'Агент (Opus) внесёт правки в сцены как твои, проверит кадры и пересоберёт ролик' }, `🔨 Пересобрать с правками (${open.length})`)),

@@ -40,6 +40,8 @@ def scenes(A, vid, doc):
             continue
         cam = s.get("camera") or {}
         out.append({"el": e["id"], "name": e.get("name") or s.get("name"), "len": s.get("len") or 6, "cuts": [c["t"] for c in cam.get("cuts") or []],
+                    "script": (e.get("script") or {}).get("title", ""),          # S11: сцена сценария, по которой сделана
+                    "scripts": (e.get("script") or {}).get("titles") or ([(e.get("script") or {}).get("title")] if (e.get("script") or {}).get("title") else []),
                     "markers": [{"t": m["t"], "name": m.get("name", ""), "id": m.get("id")} for m in s.get("markers") or []],
                     "sounds": len(s.get("sounds") or [])})
     return out
@@ -59,7 +61,8 @@ def voice(vid):
         for w in s.get("words") or []:
             words.append({"w": w["w"], "t": round(s["start"] + w["t"], 3), "e": round(s["start"] + w["t"] + w.get("d", 0), 3), "i": i})
             i += 1
-    return {"total": vo.get("total"), "words": words, "sections": [{"start": s["start"], "dur": s.get("dur"), "file": s.get("file"), "silent": s.get("silent")} for s in vo.get("sections") or []],
+    return {"total": vo.get("total"), "words": words, "sections": [{"start": s["start"], "dur": s.get("dur"), "file": s.get("file"), "silent": s.get("silent"), "title": s.get("title", "")}
+                                                                  for s in vo.get("sections") or []],
             "studio": bool(vo.get("studio"))}
 
 
@@ -508,7 +511,83 @@ def run_job(A, job):
     return False
 
 
+# ---------------------------------------------------------------- S11: раскладка по сценарию (без Claude)
+def _tnorm(s):
+    s = re.sub(r"^[\s\d:.,–—-]+", "", s or "")                  # «0:04–0:07.15 — ДВОЙНОЙ КЛИК» -> «ДВОЙНОЙ КЛИК»
+    return re.sub(r"[^\wа-яё]+", "", s.lower().replace("ё", "е"))
+
+
+def auto_layout(A, vid):
+    """Каждой сцене сценария (секции голоса) — сцена препродакшена (по e.script.title, иначе по порядку); юнит стоит там, где звучит
+    его секция, и длится до следующей; сцена растягивается / ускоряется под эту длину (map). Без голоса — сцены подряд своей длиной.
+    Возвращает (монтаж, отчёт). Звуки сцен идут сами; sfx / музыку — агент или руками."""
+    doc = A.load("plan:" + vid)
+    sc = scenes(A, vid, doc)
+    if not sc:
+        raise ValueError("нет сцен в редакторе — в препродакшене нарисуй сцены (3D-сцена сама уходит в редактор)")
+    old = doc.get("montage") or {}
+    vo = voice(vid)
+    secs = [s for s in ((vo or {}).get("sections") or [])] if vo and not vo.get("studio") else []
+    report = []
+    units = []
+    if not secs:
+        at = 0.0
+        for i, s in enumerate(sc):
+            units.append({"id": f"u{i + 1}", "scene": s["el"], "at": round(at, 3), "len": s["len"], "map": [[0, 0], [s["len"], s["len"]]], "trans": {"type": "cut", "dur": 0}})
+            at += s["len"]
+        report.append("голоса нет — сцены подряд своей длиной")
+        total = at
+    else:
+        by_title = {}
+        for s in sc:
+            for t in s.get("scripts") or []:                    # сцена может покрывать несколько сцен сценария подряд
+                by_title.setdefault(_tnorm(t), s)
+        st = [_tnorm(x.get("title")) for x in secs]
+        free = [s for s in sc if not any(_tnorm(t) in st for t in s.get("scripts") or [])]
+        total = float(vo.get("total") or 0)
+        pick = []                                               # секция -> (сцена, как)
+        for sec in secs:
+            s = by_title.get(_tnorm(sec.get("title")))
+            how = "по сценарию"
+            if not s and free:
+                s, how = free.pop(0), "по порядку"
+            pick.append((s, how))
+        i = 0
+        while i < len(secs):
+            sec, (s, how) = secs[i], pick[i]
+            if not s:
+                report.append(f"«{sec.get('title')}» — нет сцены (сделай в препродакшене или отметь в карточке сцены «📝 сцены сценария»)"); i += 1; continue
+            j = i
+            while j + 1 < len(secs) and pick[j + 1][0] is s:    # подряд та же сцена — один юнит на все её секции
+                j += 1
+            at = 0.0 if not units else float(sec["start"])
+            end = float(secs[j + 1]["start"]) if j + 1 < len(secs) else max(total, float(secs[j]["start"]) + float(secs[j].get("dur") or 0))
+            if j > i:
+                how += f", секции {i + 1}–{j + 1}"
+            i = j
+            ln = round(max(0.3, end - at), 3)
+            k = s["len"] / ln if ln else 1
+            if k > 1.45:                                       # сцена сильно длиннее голоса: не гоним в 2–3 раза — играет как есть, хвост обрезан
+                mp, note = [[0, 0], [ln, ln]], f" — сцена длиннее на {s['len'] - ln:.1f} с: обрезана (ускорить / укоротить — в сцене или «✨ Смонтировать»)"
+            else:
+                mp, note = [[0, 0], [s["len"], ln]], (f" — скорость ×{k:.2f}" + (" ⚠ медленно" if k < 0.7 else "") if abs(k - 1) > 0.03 else "")
+            units.append({"id": f"u{len(units) + 1}", "scene": s["el"], "at": round(at, 3), "len": ln, "map": mp, "trans": {"type": "cut", "dur": 0}})
+            report.append(f"«{sec.get('title')}» ← «{s['name']}» ({how}), {ln:.2f} с" + note)
+            i += 1
+    spoken = any(not x.get("silent") for x in secs)               # только тихие биты (ролик без диктора) — голос и субтитры выключены
+    M = {"units": units, "voice": {"on": spoken}, "captions": {"on": spoken and (old.get("captions") or {"on": True}).get("on", True)},
+         "sfx": old.get("sfx") or [], "music": old.get("music") or [], "overlays": old.get("overlays") or [],
+         "len": round(max([total] + [u["at"] + u["len"] for u in units]), 3)}
+    return M, report
+
+
 def handle_get(A, h, p, q):
+    if p == "/api/montage/video":                            # S11: готовый ролик (out/*.mp4) — смотреть прямо на монтаже
+        pd = vdir((q.get("video") or [""])[0])
+        outs = [x for x in sorted(glob.glob(os.path.join(pd or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")]
+        if not outs:
+            h.send_error(404); return True
+        A._send_file(h, outs[-1]); return True
     if p == "/api/montage":
         h._json(get(A, (q.get("video") or [""])[0])); return True
     if p == "/api/montage/at":
@@ -527,6 +606,11 @@ def handle_post(A, h, p, body):
                 "why": (body.get("why") or "").strip(), "status": "open", "created": now_ms(), "desc": (body.get("desc") or "")[:300]}
         A.apply_ops("plan:" + body["video"], [{"op": "add", "path": ["fixes"], "item": item}])
         h._json({"ok": True, "fix": item}); return True
+    if p == "/api/montage/auto":                             # S11: ⚡ разложить по сценарию — сохраняет монтаж и файлы предпросмотра
+        M, rep = auto_layout(A, body["video"])
+        A.apply_ops("plan:" + body["video"], [{"op": "set", "path": ["montage"], "value": M}])
+        generate(A, body["video"])
+        h._json({"montage": M, "report": rep}); return True
     if p == "/api/montage/build":
         j = A.start_job("montagebuild", "plan:" + body["video"], "montage", {})
         h._json({"job": j.info()}); return True
@@ -544,7 +628,11 @@ def cli(A, argv):
         print(f"Проект: {g['folder']} ({'есть' if g['project'] else 'нет — studio.py produce'}) · монтаж {'сохранён' if g['saved'] else 'по умолчанию'} · длина {M.get('len')} с")
         print("Монтаж:", json.dumps({k: M.get(k) for k in ("units", "voice", "captions", "sfx", "music", "overlays", "len")}, ensure_ascii=False))
         for s in g["scenes"]:
-            print(f"Сцена EL={s['el']} «{s['name']}» {s['len']} с · склейки {s['cuts']} · маркеры {[(m['t'], m['name']) for m in s['markers']]} · звуков {s['sounds']}")
+            print(f"Сцена EL={s['el']} «{s['name']}» {s['len']} с" + (f" · 📝 сцена сценария «{s['script']}»" if s.get("script") else "")
+                  + f" · склейки {s['cuts']} · маркеры {[(m['t'], m['name']) for m in s['markers']]} · звуков {s['sounds']}")
+        if vo.get("sections") and not vo.get("studio"):
+            print("Секции голоса (сцены сценария): " + "; ".join(f"[{i}] {x.get('title')} {x['start']}–{round(x['start'] + (x.get('dur') or 0), 2)} с" + (" (тихий бит)" if x.get("silent") else "")
+                                                         for i, x in enumerate(vo["sections"])))
         W = [w for w in vo.get("words") or []] if not vo.get("studio") else []
         print(f"Голос: {'нет (python tts.py / montage tts)' if not W else str(vo.get('total')) + ' с'}")
         if W:
@@ -579,6 +667,15 @@ def cli(A, argv):
         return True
     if cmd == "show":
         print(json.dumps(get(A, vid), ensure_ascii=False, indent=1)); return True
+    if cmd == "auto":                                        # S11: разложить по сценарию (без Claude); --save — записать в видео
+        M, rep = auto_layout(A, vid)
+        print("\n".join(rep))
+        if "--save" in argv:
+            A.apply_ops("plan:" + vid, [{"op": "set", "path": ["montage"], "value": M}])
+            print("монтаж сохранён:", len(M["units"]), "юнитов,", M["len"], "с")
+        else:
+            print(json.dumps(M, ensure_ascii=False))
+        return True
     if cmd == "gen":
         print(json.dumps(generate(A, vid), ensure_ascii=False, indent=1)); return True
     if cmd == "build":

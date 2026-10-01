@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 11                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 12                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -73,6 +73,7 @@ def system_prompt(A, vid, mode):
 - python {sp} scene history {vid} EL | scene undo {vid} EL  — история / отменить последнюю пачку
 - python {sp} set plan:{vid} путь.через.точки '<JSON>'      — поле видео (например montage — монтаж целиком)
 - python {sp} montage brief {vid}                          — монтаж: юниты, сцены (маркеры, склейки, длина), слова голоса с номерами, звуки, музыка
+- python {sp} montage auto {vid} --save                     — разложить по сценарию без Claude: сцена сценария ← сцена препродакшена (📝), растянуть / ускорить под голос
 - python {sp} montage gen {vid} | montage build {vid}      — файлы проекта из монтажа / собрать mp4 (долго, 1–3 мин)
 - python {sp} montage tts {vid} | montage check {vid} | montage snap {vid} 1.5,4,8   — голос по script.md / проверка сценария по гайду / кадры ролика (PNG → Read)
 - python {sp} voice show {vid} | voice align {vid}          — голос: откуда (запись диктора / нейросеть), сцены, расхождения записи со сценарием; align — тайминги заново после правки VO под запись (НЕ montage tts — он затрёт запись)
@@ -113,6 +114,18 @@ def system_prompt(A, vid, mode):
 
 {C.SCENE_RULES}"""
     build = ""
+    if mode == "montage":
+        build = f"""
+
+Режим «🎞 Смонтировать» (S11) — собери финал из готового: сценарий с голосом + сцены препродакшена (редактор) + звуки. Сценарий и сцены НЕ переписывай.
+1. montage brief — секции голоса (сцены сценария) и сцены редактора (у каждой «📝 сцена сценария»). Начни с montage auto {vid} --save — каркас: каждая сцена
+   стоит под своей секцией голоса и растянута / ускорена под неё (map [[0,0],[длина сцены, длина юнита]]).
+2. Доведи: важные моменты сцены (маркеры, склейки камеры) притяни к словам, которые их описывают — точки map [t сцены, "w:i"]; скорость в пределах ×0.7–1.45,
+   сильнее — режь (map без растяжения, лишнее за концом юнита не видно) и скажи автору. Переходы — cut (внутри мысли), slide / push / zoom / iris (смена мысли).
+3. Звуки: звуки сцен идут сами; sfx — из звуков препродакшена (el:<id>, «Звуки препродакшена» в brief) и библиотеки (lib:<id>) к моментам из сценария «*(Звук: …)*»
+   и действиям в кадре; пики ударов — align: peak; не больше 2–3 звуков на секунду. Музыка — если она есть в препродакшене или сценарии.
+4. set plan:{vid} montage '<JSON>' целиком → montage gen → montage snap на 3–5 моментах (стыки, пики) → посмотри PNG, поправь → montage build.
+Пожелания автора в просьбе — главнее. В ответе — что где стоит, какие сцены ускорены / обрезаны и что автору посмотреть."""
     if mode == "script":
         build = f"""
 
@@ -432,7 +445,7 @@ def get_session(A, vid, model, mode):
             raise RuntimeError("агент ещё работает — дождись или останови")
         s.close()
     s = SESS[vid] = Session(A, vid, model, mode)
-    s.add("note", f"новая сессия · {model}" + (" · ✨ сборка" if mode == "build" else " · 📝 сценарий" if mode == "script" else ""))
+    s.add("note", f"новая сессия · {model}" + (" · ✨ сборка" if mode == "build" else " · 📝 сценарий" if mode == "script" else " · 🎞 монтаж" if mode == "montage" else ""))
     return s
 
 

@@ -122,6 +122,7 @@ const Plan = {
   view(d, tab, sub) {
     const key = 'plan:' + d.id, M = REF.modes[d.mode] || REF.modes.short, tabs = tabsOf(d);
     if (tab === 'scenes' && isIdea(d)) tab = 'pre';                 // S11: вкладки «Сцены» нет — редактор открывается из карточки сцены
+    if (tab === 'review' && isIdea(d)) tab = 'montage';             // S11: ревью — внутри монтажа
     if (!tabs.some(t => t.key === tab)) tab = tabs.some(t => t.key === d.stage) ? d.stage : tabs[0].key;
     if (isIdea(d) && d.stage !== tab) setTimeout(() => Store.set(key, ['stage'], tab), 0);     // the last opened stage (the project screen shows it)
     if (d.service === 'workshop') return h('div.plan', this.libHead(d, key, sub), h('div.tabbody', this.pre(d, key, M, sub)));   // рабочие копии библиотеки

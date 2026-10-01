@@ -954,11 +954,6 @@
     "icon": "🎞"
    },
    {
-    "key": "review",
-    "label": "Ревью",
-    "icon": "👀"
-   },
-   {
     "key": "pack",
     "label": "Упаковка",
     "icon": "📦"
