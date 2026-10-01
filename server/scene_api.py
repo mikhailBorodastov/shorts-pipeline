@@ -364,6 +364,85 @@ def _agent_run():
 
 
 def apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edit", undoes=None, prefabs=None):
+    """Пачка правок сцены + S11: предметы, которых не было в препродакшене (добавил автор или агент), сразу становятся его элементами."""
+    r = _apply(A, key, el, ops, by, desc, batch, allow, kind, undoes, prefabs)
+    if kind not in ("undo", "restore") and by != "studio" and r.get("ops"):
+        try:
+            adopt(A, key, el, r["ops"])
+        except Exception as ex:                             # препродакшен — бонус: правка сцены уже сохранена
+            print("! adopt:", ex)
+    return r
+
+
+def _prefab_kind(A, key, el, ref):
+    try:
+        src = open(os.path.join(work_dir(A, _pid(key), el), "prefabs.js"), encoding="utf-8").read()
+    except OSError:
+        return ""
+    m = re.search(r"\b" + re.escape(ref) + r"\s*:\s*\{\s*kind\s*:\s*['\"](\w+)", src)
+    return m.group(1) if m else ""
+
+
+def adopt(A, key, el, ops):
+    """S11 ч.4: добавленные в сцену объекты без элемента препродакшена -> элементы: el:<id> — связь, lib:<предмет> — импорт (или тот же элемент),
+    свой префаб сцены — новый пропс «сделан в сцене» (живёт в prefabs.js сцены; «📦 Сделать отдельным ассетом» вынесет его). У объекта появляется src.el,
+    элемент входит в состав сцены (uses). В библиотеку — по ✓ («📚 в библиотеку»)."""
+    plan = A.load(key)
+    if plan.get("service"):
+        return
+    els = plan.get("elements") or []
+    sc = A._by_id(els, el)
+    if not sc or sc.get("ws"):
+        return
+    added = [o.get("item") for o in ops if o.get("op") == "add" and list(o.get("path") or []) == ["objects"] and isinstance(o.get("item"), dict)]
+    norm = lambda s: re.sub(r"[^\wа-яё]+", "", (s or "").lower().replace("ё", "е"))
+    by_name = {norm(x.get("name")): x for x in els if x.get("kind") in ("char", "prop") and x.get("status") != "drop"}
+    plan_ops, links, uses = [], [], list(sc.get("uses") or [])
+    for it in added:
+        if it.get("type") == "group":
+            continue
+        src = it.get("src") or {}
+        ref = src.get("prefab") or ""
+        if src.get("el") or not ref:
+            continue
+        eid = None
+        if ref.startswith("el:"):
+            eid = ref[3:].split("@")[0]
+            if not A._by_id(els, eid):
+                continue
+        elif ref.startswith("lib:"):
+            lid = ref[4:].split("@")[0]
+            if lid.split("/")[0] not in ("props", "characters"):
+                continue
+            x = next((x for x in els if (x.get("lib") or {}).get("id") == lid and x.get("status") != "drop"), None)
+            eid = x["id"] if x else A.stapi().import_to_video(A, key, lid, int(ref.split("@")[1]) if "@" in ref else None,
+                                                               f"в сцене «{sc.get('name', '')}» (добавлен в редакторе)")["el"]
+        else:
+            if _prefab_kind(A, key, el, ref) in ("env", "overlay"):
+                continue
+            x = by_name.get(norm(it.get("name")))
+            if x:
+                eid = x["id"]
+            else:
+                eid = A.new_id("e")
+                item = {"id": eid, "kind": "prop", "name": (it.get("name") or ref).strip()[:60],
+                        "desc": f"сделан в сцене «{sc.get('name', '')}» (префаб {ref}) — живёт в коде этой сцены",
+                        "why": f"сцена «{sc.get('name', '')}»", "status": "", "refs": [], "by": "scene", "dim": "3d",
+                        "from": {"scene": el, "obj": it.get("id"), "prefab": ref}}
+                plan_ops.append({"op": "add", "path": ["elements"], "item": item})
+                by_name[norm(item["name"])] = item
+        links.append({"op": "set", "path": ["objects", it["id"], "src", "el"], "value": eid})
+        if eid not in uses:
+            uses.append(eid)
+    if uses != list(sc.get("uses") or []):
+        plan_ops.append({"op": "set", "path": ["elements", el, "uses"], "value": uses})
+    if plan_ops:
+        A.apply_ops(key, plan_ops)
+    if links:
+        _apply(A, key, el, links, by="studio", desc="📦 связь с препродакшеном", kind="edit")
+
+
+def _apply(A, key, el, ops, by="author", desc="", batch=None, allow=(), kind="edit", undoes=None, prefabs=None):
     """One batch under the lock: apply, validate (schema + ids), authored, rev, history. -> {rev, prev, undo, batch, warn}."""
     if not isinstance(ops, list) or not ops:
         raise ValueError("нет операций")

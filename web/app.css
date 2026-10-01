@@ -735,3 +735,5 @@ body.agent-open .stage-editor { right: 380px; }
 .vo-sec audio, .vo-recs audio { height: 32px; max-width: 360px; }
 .vo-difflist { display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow: auto; }
 .chip.sel { background: #23405f; border-color: #4d9cff; }
+
+.s11from { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; border: 1px dashed var(--line, #444); border-radius: 8px; }

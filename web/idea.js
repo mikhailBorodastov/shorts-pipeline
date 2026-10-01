@@ -588,7 +588,11 @@ Object.assign(Plan, {
           Claude.running(key, 'charmodel:' + e.id) && h('span.dim.small', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.scope === 'charmodel:' + e.id && j.status === 'running') || {}).summary || 'делаю…')),
         !cur && rig && e.make !== 'blender' && Claude.btn({ label: '🦴 Собрать персонажа', icon: '', action: 'charparts', key, scope, params: { el: e.id },
           title: e.make === 'blender' ? 'Claude (Opus) соберёт 3D-модель в Blender со скелетом-арматурой, снимет поворотный стол и позы — 15–40 минут' : 'Claude (Opus) нарисует персонажа частями, предложит скелет, пять проверочных поз и лица — 10–20 минут' }),
-        !cur && !rig && Claude.btn({ label: prop3 ? (has2d ? 'Сделать в 3D' : 'Сделать 3D-пропс') : 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
+        !cur && e.from && e.from.scene && h('div.s11from', h('span', '🎬 Сделан в сцене «' + (((d.elements || []).find(x => x.id === e.from.scene) || {}).name || e.from.scene) + '» — живёт в её коде'),
+          h('a.btn', { href: `#/p/${d.id}/pre/${e.from.scene}/stage` }, 'открыть сцену'),
+          Claude.btn({ label: 'Сделать отдельным ассетом', icon: '📦', action: 'element', key, scope, params: { el: e.id, extract: true },
+            title: 'Claude (Opus) вынесет предмет из кода сцены в отдельный 3D-пропс: его можно ставить в другие сцены и положить в библиотеку (после ✓). Вид не меняется. 5–15 минут.' })),
+        !cur && !rig && !(e.from && e.from.scene) && Claude.btn({ label: prop3 ? (has2d ? 'Сделать в 3D' : 'Сделать 3D-пропс') : 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
           title: prop3 ? 'Claude (Opus) соберёт объёмный пропс (фигурами, из модели или в Blender), снимет четыре ракурса, сам посмотрит и поправит. 5–15 минут.'
             : e.kind === 'scene' && (d.engine || '2d') === '3d' ? 'Claude соберёт 3D-сцену и сразу перенесёт её в редактор (предметы, расстановка, камера — данными), сравнит кадры «было / стало». 10–20 минут.'
             : 'Claude нарисует элемент нашим тулкитом по описанию и референсам, сам посмотрит и поправит. 3–10 минут.' })),

@@ -1258,6 +1258,26 @@ def element_spec(docs, params, sysp, genre):
     elif base:
         base = None
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
+    fr = e.get("from") or {}
+    if params.get("extract") and fr.get("scene"):              # S11 ч.4: предмет, сделанный в редакторе сцены, -> отдельный 3D-пропс
+        params["_prop3"], params["_three"] = True, False
+        sw = P.resolve(f"render/{plan['id']}/{fr['scene']}/work")
+        rp = _fwd(os.path.join(P.STANDS, "render_prop.js"))
+        sample = _fwd(os.path.join(P.STANDS, "samples", "crt3d", "prefab.js"))
+        prompt = f"""Задача: вынести предмет «{e.get('name')}» из кода сцены в отдельный 3D-пропс препродакшена — чтобы его можно было ставить в другие сцены и положить в библиотеку.
+Сейчас он — префаб «{fr.get('prefab')}» в {_fwd(os.path.join(sw, 'prefabs.js'))} (объект {fr.get('obj')} в {_fwd(os.path.join(sw, 'scene.json'))}).
+Запиши {_fwd(os.path.join(wd, 'prefab.js'))}: prop3d({{ name, h, params, build(w, o) {{ … return G; }} }}) — формат и пример: {_fwd(os.path.join(P.DOCS, 'studio', 'stage3-props.md'))}, {sample}.
+- Перенеси код рисования этого предмета (и только нужные ему функции и константы) как есть; всё — внутри файла, без глобальных имён, которые могут столкнуться
+  с другими prefab.js (оберни помощников в объект или замыкание). 0 — центр низа, перед смотрит на +z: если префаб строился «по месту» (home), сдвинь к началу координат.
+- Карточка (kind 'card', 2D-рисунок) -> P3.sticker / тонкая коробка с наклейкой; коробка (kind 'box') -> P3.box с гранями-наклейками; group — как есть внутри build.
+- params префаба — в params; каналы (channels), если были, — тоже.
+Проверь: node {rp} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']} — 4 ракурса и лист element.png; посмотри через Read, поправь, если не похоже на предмет в сцене.
+В ответе: summary — что вынесено и что поменялось; fn — пусто; note — что автору проверить."""
+        sysp_x = "Ты — технический художник Claude Studio: выносишь предметы бумажной 3D-анимации из кода сцены в отдельные пропсы, не меняя их вид. Отвечай строго JSON по схеме."
+        dirs = [d for d in (wd, sw, P.STANDS, os.path.join(P.DOCS, "studio"), P.ENGINE) if os.path.isdir(d)]
+        return {"system": sysp_x, "prompt": prompt, "cwd": wd, "timeout": 2400,
+                "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"], "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {rp}:*)"],
+                "dirs": dirs, "schema": S({"summary": STR, "fn": STR, "note": STR})}
     three = e.get("kind") == "scene" and plan.get("engine") == "3d"
     params["_three"] = three
     shot = _fwd(os.path.join(P.STANDS, "render_shot.js"))
@@ -1898,6 +1918,7 @@ SCENE_RULES = """Сцена — документ scene.json (формат — _p
   (поверх своих keys и клипов — их не трогай, свои ключи двигают его относительно `to`), в t0 не прыгает; после until набранный сдвиг остаётся.
   «Ёжик сел в кресло и едет с ним» — ёжику links [{to: кресло, from: момент посадки}] (ключи pos ёжика, которые повторяли путь кресла, тогда убери);
   «клавиатура и мышь на выдвижной полке» — им links [{to: полка, from: 0}]. Ставь операцией set по пути ["objects", id, "links"] целиком.
+- Новый предмет в сцене (S11): объект со своим префабом сцены, lib: или el:, которого нет в препродакшене, САМ становится элементом препродакшена («сделан в сцене», src.el) — давай ему понятное русское name (по нему элемент и называется; совпало с существующим элементом — свяжется с ним).
 - Предмет в руке персонажа (S10.2): keys["hold.handR"|"hold.handL"] = [{id, t, v: "<ref 3D-пропса>" | null}] — ступенькой: с t в лапе предмет, null — отпустил;
   hold: {handR: ref} — всё время. Ref — как src.prefab пропса (lib:props/<slug>@N или el:<id>@vN; список — scene brief / библиотека).
   Как держать (место в кисти, поворот, размер, поза руки — «трубка у уха») — хват персонажа grips.json, его ставят в мастерской «✋ Предметы»
