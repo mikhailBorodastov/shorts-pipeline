@@ -146,3 +146,11 @@ input[type=number] { width: 64px; }
 .links .lrow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .links .lt { padding: 0 4px; font-variant-numeric: tabular-nums; }
 .links select { width: 100%; }
+
+/* 🛠 мастерская ассета (workshop.js) */
+#ws { padding: 6px 8px; border-bottom: 1px solid var(--line, #3a3a3e); display: flex; flex-direction: column; gap: 6px; }
+#ws .ws-tabs { display: flex; gap: 4px; }
+#ws .ws-tabs button.sel { background: #23405f; }
+#ws .ws-body { display: flex; flex-direction: column; gap: 6px; }
+#ws .ws-body button { text-align: left; }
+#ws .ws-body button.primary { background: var(--accent, #d97757); color: #fff; }

@@ -463,6 +463,18 @@ def props_rev(A, key, doc):
     return best
 
 
+def ws_info(A, plan, e):
+    """Служебная сцена мастерской (S10): ассет — элемент видео (его id, вид, версия, откуда из библиотеки)."""
+    w = e.get("ws")
+    if not w:
+        return None
+    a = A._by_id(plan.get("elements"), w.get("el")) or {}
+    rs = a.get("renders") or []
+    r = next((x for x in rs if x.get("id") == a.get("render")), rs[-1] if rs else {}) or {}
+    return {"asset": a.get("id"), "name": a.get("name", ""), "kind": a.get("kind"), "lib": a.get("lib"), "v": r.get("v"), "skeleton": r.get("fn") if r.get("rigchar") else None,
+            "model3d": bool(r.get("model3d")), "rigchar": bool(r.get("rigchar")), "service": plan.get("service")}
+
+
 def prefabs_rev(A, key, el):
     """Время правки prefabs.js рабочей копии (агент или автор поменяли вид предметов -> редактор перезагружает страницу)."""
     try:
@@ -855,6 +867,7 @@ def handle_get(A, h, p, q):
         sounds = [{"id": x["id"], "name": x.get("name", ""), "ready": bool(A.pr().el_mix(x))} for x in plan.get("elements") or [] if x.get("kind") == "sound" and x.get("status") != "drop"]
         h._json({"scene": doc, "rev": doc.get("rev", 0), "work": rel, "prefabs": f"/rscene/{rel}/prefabs.js", "history": history(A, key, el, 60),
                  "locked": LOCKS.get(skey(key, el)), "limits": LIM, "cues": sound_cues(A, key, dict(doc, _el=el)), "soundEls": sounds,
+                 "ws": ws_info(A, plan, e),
                  "element": {"id": el, "name": e.get("name", ""), "stage": e.get("stage") or {}, "plan": plan.get("name", ""), "v": (e.get("stage") or {}).get("v"),
                              "versions": [{"v": r.get("v"), "id": r.get("id"), "feedback": r.get("feedback", ""), "img": r.get("img", "")} for r in e.get("renders") or [] if r.get("stage")]},
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},

@@ -117,6 +117,11 @@ function trellisDlg(key, e, cur, mode = 'draft') {
   draw();
   const close = UI.modal(mode === 'retex' ? `🎨 Перетекстурить «${e.name}» v${cur.v}` : `🖥 TRELLIS локально · ${prop ? '3D-пропс' : 'герой'} «${e.name}»`, body);
 }
+// 🛠 мастерская ассета (S10, server/ws_api.py): служебная сцена редактора с одним персонажем / пропсом
+async function wsOpen(body) {
+  try { UI.toast('Открываю мастерскую…'); const r = await api('POST', '/api/ws/open', body); go(`#/p/${r.video}/pre/${r.el}/stage`); }
+  catch (e) { UI.toast(e.message, 'err'); }
+}
 // 📚 из библиотеки в препродакшен (studio_api.import_to_video): выбрать предмет, версию и написать, что это в ролике и где — Claude это прочтёт
 async function libImport(d, key, K) {
   const kind = K.key === 'char' ? 'characters' : 'props';
@@ -296,7 +301,7 @@ Object.assign(Plan, {
     if (sub) { const e = els.find(x => x.id === sub); if (e) return Plan.element(d, key, M, e); }
     const focus = h('input.box', { key: key + '|pfocus', placeholder: 'чего не хватает? Claude учтёт', style: { width: '260px' },
       value: Local.get('pfocus:' + d.id) || '', oninput: e => Local.set('pfocus:' + d.id, e.target.value) });
-    const live = els.filter(e => e.status !== 'drop'), ready = live.filter(e => e.status === 'ok').length;
+    const live = els.filter(e => e.status !== 'drop' && !e.ws), ready = live.filter(e => e.status === 'ok').length;
     return [
       hint('pre', HINTS2.pre),
       ideaBanner(d),
@@ -316,7 +321,7 @@ Object.assign(Plan, {
   },
 
   kindBox(d, key, K, focus) {
-    const all = (d.elements || []).filter(e => e.kind === K.key);
+    const all = (d.elements || []).filter(e => e.kind === K.key && !e.ws);   // ws — служебные сцены мастерской
     const list = [...all.filter(e => e.status !== 'drop'), ...all.filter(e => e.status === 'drop')];
     const live = all.filter(e => e.status !== 'drop').length, ok = all.filter(e => e.status === 'ok').length;
     const cast = (d.elements || []).filter(e => (e.kind === 'char' || e.kind === 'prop') && e.status !== 'drop');
@@ -515,6 +520,7 @@ Object.assign(Plan, {
         cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         (p3 || (rc && cur.model3d)) && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
+        (rc || p3) && h('button', { onclick: () => wsOpen({ src: 'el:' + e.id, key }), title: 'Мастерская: скелет, позы, анимации (клипы), предметы в руках — в служебной сцене редактора' }, '🛠 Мастерская'),
         trl && cur.meta.stage === 'draft' && h('button.primary', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'trellis', undefined, { mode: 'final', base: cur.id }),
           title: 'Та же фигура (те же сиды), но 1536³, текстура 2048 и полная сетка — 3–8 минут' }, '⬆ Довести'),
         trl && h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, cur, 'retex'), title: 'Форма та же — новая раскраска: по другой картинке или новым сидом' }, '🎨 Перекрасить'),

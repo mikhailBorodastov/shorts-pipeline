@@ -139,6 +139,7 @@ addEventListener('message', ev => {
     Store.load('plan:' + r.id, true).then(() => App.render()).catch(() => {});
     return;
   }
+  if (ev.data.ws) { const w = ev.data.ws; go(w.lib && w.service ? `#/lib/item/${w.lib.id}` : `#/p/${r.id}/pre/${w.asset}`); return; }   // 🛠 мастерская (S10)
   go(`#/p/${r.id}/pre/${r.sub}`);
   Store.load('plan:' + r.id).then(() => App.render()).catch(() => {});
 });

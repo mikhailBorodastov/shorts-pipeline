@@ -72,6 +72,7 @@ import channel_api  # noqa: E402  новый канал и его стиль (S9
 import pack_api  # noqa: E402  упаковка S8: права, packaging.md, обложки в проект
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
+import ws_api  # noqa: E402  мастерская ассета (S10): служебная сцена, клип из ключей позы, в библиотеку
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -152,6 +153,10 @@ def mnapi():
 
 def scapi():
     return _fresh(scene_api, "scn")
+
+
+def wsapi():
+    return _fresh(ws_api, "ws")
 
 
 def stapi():
@@ -1230,7 +1235,7 @@ def handle_get(h):
                  "channels": [{k: c.get(k) for k in ("id", "name", "icon", "lang", "formats")} for c in P.channels()],
                  "channel": ch and {k: v for k, v in ch.items() if k != "dir"},
                  "plans": [dict(plan_summary(d), stage=d.get("stage") or "idea", folder=d.get("_folder"), channel=d.get("_channel"))
-                           for d in plans(ch["id"] if ch else None)]}); return True
+                           for d in plans(ch["id"] if ch else None) if not d.get("service")]}); return True   # служебное (🛠 Мастерская) — не в списке роликов
     if p == "/api/revs":
         jobs = [j.info() for j in JOBS.values() if j.status == "running" or time.time() - j.finished < 90]
         h._json({"docs": all_revs(), "jobs": jobs, "web": web_mtime(), "api": API_VERSION}); return True
@@ -1395,6 +1400,8 @@ def handle_post(h):
             h._json({"ok": True, "rev": old["rev"]}); return True
         if p in ("/api/settings", "/api/local3d/stop") and stgapi().handle_post(sys.modules[__name__], h, p, body):
             return True
+        if p.startswith("/api/ws/") and wsapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/channel/") and chnapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/pack/") and pkapi().handle_post(sys.modules[__name__], h, p, body):
@@ -1553,6 +1560,8 @@ def cli(argv):
         return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":
         return stapi().cli(sys.modules[__name__], a)
+    if cmd == "ws":
+        return wsapi().cli(sys.modules[__name__], a)
     if cmd == "model":
         return m3d().cli(sys.modules[__name__], a)
     if cmd == "produce":

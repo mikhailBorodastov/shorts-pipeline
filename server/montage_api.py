@@ -33,7 +33,7 @@ def scenes(A, vid, doc):
     """Сцены редактора этого видео: [{el, name, len, cuts, markers, sounds}]."""
     out = []
     for e in doc.get("elements") or []:
-        if e.get("kind") != "scene" or not (e.get("stage") or {}).get("work") or e.get("status") == "drop":
+        if e.get("kind") != "scene" or not (e.get("stage") or {}).get("work") or e.get("status") == "drop" or e.get("ws"):   # ws — служебная сцена мастерской
             continue
         s = _scene_doc(A, vid, e["id"])
         if not s:

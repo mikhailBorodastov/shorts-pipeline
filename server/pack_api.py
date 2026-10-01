@@ -22,7 +22,7 @@ def used_scenes(plan):
     m = plan.get("montage") or {}
     els = [u["scene"] for u in m.get("units") or []]
     if not els:
-        els = [e["id"] for e in plan.get("elements") or [] if e.get("kind") == "scene" and (e.get("stage") or {}).get("work") and e.get("status") != "drop"]
+        els = [e["id"] for e in plan.get("elements") or [] if e.get("kind") == "scene" and (e.get("stage") or {}).get("work") and e.get("status") != "drop" and not e.get("ws")]
     return list(dict.fromkeys(els))
 
 

@@ -2,6 +2,7 @@
 // время и воспроизведение (Premiere), звуки дорожки, хоткеи (keymap.json), версии, клип, меню, блокировка на время работы агента.
 // ТЗ: _pipeline/docs/studio/stage1-editor.md. Модули: viewport.js (3D), panels.js (дерево и свойства), timeline.js, agent.js, ops.js, keys.js.
 import { initAnim } from './anim.js';
+import { initWorkshop } from './workshop.js';
 import { applyBatch, structural, clone, newId } from './ops.js';
 import { find, kindOf, keyAllOps, delKeysAtOps, allKeys, setOps, valueAt, EPS } from './keys.js';
 import { initViewport } from './viewport.js';
@@ -587,7 +588,7 @@ addEventListener('keydown', e => {
 
 function back() {
   if (ED.pending) { ED.msg('Ещё сохраняю — секунду'); return; }
-  if (window.parent !== window) parent.postMessage({ type: 'editor-close', el: ED.el, ...(ED.fix ? { back: 'review' } : {}) }, location.origin);
+  if (window.parent !== window) parent.postMessage({ type: 'editor-close', el: ED.el, ...(ED.fix ? { back: 'review' } : {}), ...(ED.info && ED.info.ws ? { ws: ED.info.ws } : {}) }, location.origin);
   else history.length > 1 ? history.back() : (location.href = '/');
 }
 
@@ -711,6 +712,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     ED.panels = initPanels(ED);
     ED.tl = initTimeline(ED);
     ED.agent = initAgent(ED);
+    if (ED.info.ws) initWorkshop(ED);                               // 🛠 мастерская ассета (S10): сборка / анимация, клип из ключей позы
     splitters();
     $('back').onclick = back;
     $('autokey').onclick = () => { ED.autokey = !ED.autokey; $('autokey').setAttribute('aria-pressed', ED.autokey); ED.msg(ED.autokey ? '⏺ Автоключ включён: правка анимированного свойства ставит ключ' : 'Автоключ выключен: правка меняет значение, ключи не ставятся'); };

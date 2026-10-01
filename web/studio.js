@@ -14,7 +14,7 @@ Object.assign(Plan, {
 
   // ---------------- 🎥 Сцены ----------------
   scenes(d, key) {
-    const scenes = (d.elements || []).filter(e => e.kind === 'scene' && e.status !== 'drop');
+    const scenes = (d.elements || []).filter(e => e.kind === 'scene' && e.status !== 'drop' && !e.ws);
     return [
       hint('scenes', HINTS3.scenes),
       h('section.card',

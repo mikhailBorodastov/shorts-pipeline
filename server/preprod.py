@@ -48,7 +48,7 @@ def slug(s, n=40):
 
 
 def live(d):
-    return [e for e in d.get("elements") or [] if e.get("status") != "drop"]
+    return [e for e in d.get("elements") or [] if e.get("status") != "drop" and not e.get("ws")]   # ws — служебная сцена мастерской (S10)
 
 
 def el_slugs(d):
