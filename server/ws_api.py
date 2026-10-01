@@ -160,7 +160,93 @@ def publish(A, key, asset):
     return {"summary": job.summary, "as": as_}
 
 
+# ---------------------------------------------------------------- 🦴 сборка: данные скелета ассета и карта костей 3D-модели (как retarget-маппинг в HumanIK / Rigify)
+OUR_BONES = {"biped": ["body", "head", "armL", "forearmL", "handL", "armR", "forearmR", "handR", "legL", "shinL", "footL", "legR", "shinR", "footR", "jaw"],
+             "quadruped": ["body", "head", "legFL", "shinFL", "legFR", "shinFR", "legBL", "shinBL", "legBR", "shinBR", "tail"]}
+
+
+def _asset(A, key, asset):
+    e = A._by_id(A.load(key).get("elements"), asset)
+    if not e:
+        raise ValueError("элемент не найден")
+    rs = e.get("renders") or []
+    r = next((x for x in rs if x.get("id") == e.get("render")), rs[-1] if rs else None)
+    if not r:
+        raise ValueError("у ассета нет версии")
+    return e, r, P.resolve("render/" + r["dir"])
+
+
+def setup_info(A, key, asset):
+    """Что показать во вкладке «🦴 Сборка»: тип рига, адрес prefab.js для редактора суставов (риг частей), карта костей 3D-модели."""
+    e, r, d = _asset(A, key, asset)
+    pf = open(os.path.join(d, "prefab.js"), encoding="utf-8").read() if os.path.isfile(os.path.join(d, "prefab.js")) else ""
+    rig = (re.search(r"rig:\s*['\"](\w+)['\"]", pf) or [None, ""])[1]
+    out = {"rig": rig or ("parts" if os.path.isfile(os.path.join(d, "rig.json")) else ""), "skeleton": (re.search(r"skeleton:\s*['\"]([\w-]+)['\"]", pf) or [None, ""])[1],
+           "prefab": f"/rscene/{r['dir']}/prefab.js", "rid": r["id"], "v": r.get("v"), "el": e["id"]}
+    if out["rig"] == "model":
+        try:
+            info = json.load(open(os.path.join(d, "info.json"), encoding="utf-8"))
+        except (OSError, ValueError):
+            info = {}
+        m = {}
+        for mm in re.finditer(r"(\w+):\s*\{\s*bone:\s*['\"]([^'\"]*)['\"],\s*axis:\s*['\"](\w)['\"](?:,\s*k:\s*(-?[\d.]+))?(?:,\s*off:\s*(-?[\d.]+))?", pf):
+            m[mm.group(1)] = {"bone": mm.group(2), "axis": mm.group(3), "k": float(mm.group(4) or 1), **({"off": float(mm.group(5))} if mm.group(5) else {})}
+        if not info.get("bones") and os.path.isfile(os.path.join(d, "model.glb")):     # модель собрана в Blender без info.json — кости снимаем один раз
+            import tempfile
+            try:
+                bi = A.m3d().normalize(os.path.join(d, "model.glb"), tempfile.mkdtemp(prefix="bones_"))
+                info["bones"] = bi.get("bones") or []
+                json.dump(info, open(os.path.join(d, "info.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+            except Exception as ex:
+                print("! ws setup bones:", ex)
+        out.update(map=m or info.get("map") or {}, bones=[A.m3d().sanitize(b["name"]) for b in info.get("bones") or []],   # как их видит three.js (без точек)
+                   ours=OUR_BONES.get(out["skeleton"], OUR_BONES["biped"]), anims=info.get("animations") or [])
+    return out
+
+
+def save_bonemap(A, key, asset, mp):
+    """Карта костей 3D-героя -> новая версия элемента (та же модель, новый prefab.js) + кадры поворотного стола и проверочных поз."""
+    import shutil, subprocess
+    M = A.m3d()
+    e, r, d = _asset(A, key, asset)
+    pf = open(os.path.join(d, "prefab.js"), encoding="utf-8").read()
+    rs = e.get("renders") or []
+    v = max([x.get("v", 0) for x in rs] + [0]) + 1
+    pid = key[5:]
+    rel = f"{pid}/{asset}/v{v}"
+    wd = P.resolve("render/" + rel)
+    shutil.copytree(d, wd, ignore=shutil.ignore_patterns("element*.png", "pose_*", "_shots", "_fix"))
+    try:
+        info = json.load(open(os.path.join(wd, "info.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        info = {}
+    clean = {k: {"bone": str(x["bone"]), "axis": x.get("axis") if x.get("axis") in ("x", "y", "z") else "x", "k": 1 if float(x.get("k", 1)) >= 0 else -1}
+             for k, x in (mp or {}).items() if x and x.get("bone")}
+    info["map"] = clean
+    json.dump(info, open(os.path.join(wd, "info.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    cid = (re.search(r"id:\s*(\"[^\"]*\")", pf) or [None, '"hero"'])[1]
+    sk = (re.search(r"skeleton:\s*(\"[^\"]*\"|'[^']*')", pf) or [None, '"biped"'])[1].strip("'\"")
+    hh = float((re.search(r"h:\s*([\d.]+)", pf) or [None, "1.8"])[1])
+    A.write_text(os.path.join(wd, "prefab.js"), M.prefab_js(json.loads(cid), e.get("name") or "персонаж", sk, hh, info, "карта костей — мастерская"))
+    rp = os.path.join(P.STANDS, "render_prop.js"); url = f"/rscene/{rel}/prefab.js"; port = str(A._docs(key)["port"])
+    cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.run(["node", rp, url, wd, "--port", port], capture_output=True, timeout=300, creationflags=cf)
+    for name, pose in (("pose_up", {"bones": {"armL": {"rot": 1.2}, "armR": {"rot": 1.2}}}), ("pose_step", {"bones": {"legL": {"rot": 0.5}, "legR": {"rot": -0.4}, "armL": {"rot": -0.3}, "armR": {"rot": 0.3}}})):
+        subprocess.run(["node", rp, url, os.path.join(wd, name), "--port", port, "--params", json.dumps({"pose": pose})], capture_output=True, timeout=300, creationflags=cf)
+    img = A.save_file(pid, open(os.path.join(wd, "element.png"), "rb").read()) if os.path.isfile(os.path.join(wd, "element.png")) else r.get("img")
+    extra = [A.save_file(pid, open(os.path.join(wd, f), "rb").read()) for f in ("pose_up/element.png", "pose_step/element.png") if os.path.isfile(os.path.join(wd, f))]
+    rid = A.new_id("r")
+    item = dict({k: r[k] for k in ("fn", "rigchar", "model3d", "source", "meta") if k in r}, id=rid, v=v, dir=rel, img=img, extra=extra,
+                summary=f"карта костей поправлена в мастерской ({len(clean)} костей)", feedback="карта костей", ts=now_ms())
+    A.apply_ops(key, [{"op": "add", "path": ["elements", asset, "renders"], "item": item}, {"op": "set", "path": ["elements", asset, "render"], "value": rid}])
+    return {"v": v, "rid": rid, "bones": len(clean)}
+
+
 def handle_post(A, h, p, body):
+    if p == "/api/ws/setup":
+        h._json(setup_info(A, body.get("key", ""), body.get("asset", ""))); return True
+    if p == "/api/ws/bonemap":
+        h._json(save_bonemap(A, body.get("key", ""), body.get("asset", ""), body.get("map") or {})); return True
     if p == "/api/ws/open":
         h._json(open_ws(A, body.get("src", ""), body.get("key") or None)); return True
     if p == "/api/ws/clip":

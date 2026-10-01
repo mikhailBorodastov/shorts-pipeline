@@ -465,7 +465,7 @@ def tripo(img, key, out_dir, log, height=1.9, rig=True):
 # ---------------------------------------------------------------- prefab.js персонажа-модели
 def prefab_js(cid, name, skeleton, h, info, note=""):
     m = info.get("map") or {}
-    bones = ",\n    ".join(f"{k}: {{ bone: {json.dumps(v['bone'])}, axis: '{v['axis']}', k: {v['k']} }}" for k, v in m.items())
+    bones = ",\n    ".join(f"{k}: {{ bone: {json.dumps(v['bone'])}, axis: '{v['axis']}', k: {v.get('k', 1)}" + (f", off: {v['off']}" if v.get("off") else "") + " }" for k, v in m.items())
     clips = [a for a in info.get("animations") or []]
     idle = next((a for a in clips if re.search(r"idle|stand|breath", a, re.I)), None)
     return f"""// {name} — 3D-персонаж (models3d.py: {note or 'модель'}). Кости позы -> кости арматуры: bones (axis — ось модели, k — знак); клипы модели — gltf:<имя>.

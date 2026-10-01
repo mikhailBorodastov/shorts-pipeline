@@ -78,6 +78,108 @@ export function initWorkshop(ED) {
     if (k.face && Array.isArray(k.face.look)) out.face = Object.assign({}, k.face, { look: [-k.face.look[0], k.face.look[1]] });
     ED.commit([{ op: 'set', path: ['objects', OBJ, 'pose', k.id], value: out }], `отразить позу на ${ED.t.toFixed(2)} с (L↔R)`);
   }
+  // 👻 калька (onion skin, как в Toon Boom / Spine): позы t − Δ (голубая) и t + Δ (оранжевая) — полупрозрачно поверх 3D-вида, в рамке карточки персонажа
+  const ON = { on: false, d: 0.2, cv: null, off: null };
+  const mainCard = () => { const rec = ED.S && ED.S.objects.get(OBJ); let c = null; if (rec) rec.holder.traverse(x => { if (!c && x.char) c = x; }); return c; };
+  function onionSet(on) {
+    ON.on = on;
+    if (!ON.cv) {
+      ON.cv = document.createElement('canvas'); ON.cv.id = 'onion';
+      Object.assign(ON.cv.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', pointerEvents: 'none', zIndex: 3 });
+      document.getElementById('vp').append(ON.cv);
+      ON.off = document.createElement('canvas');
+    }
+    ON.cv.hidden = !on;
+  }
+  function cardRect(c) {                                      // экранная рамка плоскости карточки (самая большая плоскость внутри неё)
+    let mesh = null, best = 0;
+    const up = new THREE.Vector3();
+    c.traverse(x => {                                          // вертикальная плоскость с картинкой (тень карточки лежит на полу — её пропускаем)
+      if (!(x.isMesh && x.geometry && x.geometry.parameters && x.geometry.parameters.width)) return;
+      up.set(0, 0, 1).transformDirection(x.matrixWorld);
+      if (Math.abs(up.y) > 0.5) return;
+      const a = x.geometry.parameters.width * x.geometry.parameters.height; if (a > best) { best = a; mesh = x; }
+    });
+    if (!mesh) return null;
+    const cam = ED.view === 'camera' ? ED.S.w.cam : ED.vp.cam, R = ED.vp.R;
+    if (!cam || !R) return null;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const bb = mesh.geometry.boundingBox, el = R.domElement, pts = [];          // геометрия карточки сдвинута (низ у пола) — рамка по bounding box
+    for (const [x, y] of [[bb.min.x, bb.min.y], [bb.max.x, bb.min.y], [bb.max.x, bb.max.y], [bb.min.x, bb.max.y]]) {
+      const v = new THREE.Vector3(x, y, 0).applyMatrix4(mesh.matrixWorld).project(cam);
+      pts.push([(v.x + 1) / 2 * el.clientWidth, (1 - v.y) / 2 * el.clientHeight]);
+    }
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), flip: pts[1][0] < pts[0][0] };
+  }
+  (function onionTick() {
+    const c = ON.on && mainCard();
+    if (c && c.cardInfo && ON.cv) {
+      const vp = document.getElementById('vp'), dpr = devicePixelRatio || 1, cv = ON.cv;
+      if (cv.width !== vp.clientWidth * dpr || cv.height !== vp.clientHeight * dpr) { cv.width = vp.clientWidth * dpr; cv.height = vp.clientHeight * dpr; }
+      const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+      const r = cardRect(c), I = c.cardInfo;
+      ON.cur = ON.cur || document.createElement('canvas');                   // текущая поза — маска: где поза не изменилась, калька почти не видна
+      ON.cur.width = I.cw; ON.cur.height = I.ch;
+      const cc = ON.cur.getContext('2d'); cc.clearRect(0, 0, I.cw, I.ch);
+      try { rigDraw(cc, c.char, c.scenePose(ED.t), I.cw / 2, I.ch - I.foot, I.size, ED.t); } catch (e) {}
+      if (r) for (const [sgn, col] of [[-1, '#6fe0ff'], [1, '#ffa060']]) {
+        const t = Math.max(0, Math.min(ED.doc.len, ED.t + sgn * ON.d)), off = ON.off;
+        off.width = I.cw; off.height = I.ch;
+        const o = off.getContext('2d'); o.clearRect(0, 0, I.cw, I.ch);
+        try { rigDraw(o, c.char, c.scenePose(t), I.cw / 2, I.ch - I.foot, I.size, t); } catch (e) { continue; }
+        o.globalCompositeOperation = 'source-atop'; o.fillStyle = col; o.globalAlpha = 0.55; o.fillRect(0, 0, I.cw, I.ch);
+        o.globalCompositeOperation = 'destination-out'; o.globalAlpha = 0.85; o.drawImage(ON.cur, 0, 0);
+        o.globalAlpha = 1; o.globalCompositeOperation = 'source-over';
+        g.save(); g.globalAlpha = 0.6;
+        if (r.flip) { g.translate(r.x + r.w, r.y); g.scale(-1, 1); g.drawImage(off, 0, 0, r.w, r.h); } else g.drawImage(off, r.x, r.y, r.w, r.h);
+        g.restore();
+      }
+    }
+    requestAnimationFrame(onionTick);
+  })();
+
+  // 🦴 сборка: риг частей — редактор суставов (stands/skel.html) прямо здесь; 3D-модель — карта костей «наша ← модели» с осью и знаком
+  let SU = null;
+  async function setupLoad() { try { SU = await ED.api('/api/ws/setup', { key: ED.key, asset: W.asset }); } catch (e) { SU = { err: e.message }; } draw(); }
+  async function afterNewVersion(msg) {                     // новая версия ассета: объект мастерской переключить на неё и перезагрузить страницу
+    try { await ED.api('/api/ws/open', { src: 'el:' + W.asset, key: ED.key }); ED.reloadPage(msg); } catch (e) { ED.msg(e.message, 'err'); }
+  }
+  function jointEditor() {
+    const src = `/render/skel.html?char=${encodeURIComponent(SU.prefab)}&key=${encodeURIComponent(ED.key)}&el=${SU.el}&base=${SU.rid}`;
+    const p = ED.popup(`<h4>🦴 Суставы · ${W.name} v${SU.v}</h4><iframe src="${src}" style="width:min(1100px,88vw);height:72vh;border:0;border-radius:6px;background:#ece6da"></iframe><p class="dim small">Тяни суставы мышью, проверяй позами. «💾 Сохранить» — новая версия; мастерская переключится на неё сама.</p>`);
+    p.style.maxWidth = 'none';
+    const onMsg = async ev => {
+      if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'skel-saved') return;
+      removeEventListener('message', onMsg); p.hidden = true; p.innerHTML = '';
+      ED.msg('🦴 Сохраняю скелет — новая версия через полминуты…');
+      const id = ev.data.job && ev.data.job.id;
+      for (let i = 0; id && i < 120; i++) { await new Promise(r => setTimeout(r, 1500)); const j = await ED.api('/api/job?id=' + id).catch(() => null); if (j && j.status !== 'running') { if (j.status !== 'done') return ED.msg(j.error || j.status, 'err'); break; } }
+      afterNewVersion('скелет сохранён');
+    };
+    addEventListener('message', onMsg);
+  }
+  function boneTable() {
+    const wrap = el('div', 'ws-bones'), M = JSON.parse(JSON.stringify(SU.map || {}));
+    const tb = el('table', 'grid small');
+    const sel = (opts, v, on) => { const x = el('select'); for (const o of opts) { const op = el('option', '', o === '' ? '—' : o); op.value = o; if (o === v) op.selected = true; x.append(op); } x.onchange = () => on(x.value); return x; };
+    for (const b of SU.ours) {
+      const m = M[b] || {}, tr = el('tr');
+      const td = (...xs) => { const c = el('td'); c.append(...xs); return c; };
+      tr.append(td(el('b', '', b)),
+        td(sel([''].concat(SU.bones), m.bone || '', v => { if (v) M[b] = Object.assign({ axis: 'x', k: 1 }, M[b] || {}, { bone: v }); else delete M[b]; })),
+        td(sel(['x', 'y', 'z'], m.axis || 'x', v => { if (M[b]) M[b].axis = v; })),
+        td(sel(['1', '-1'], String(m.k == null ? 1 : (m.k < 0 ? -1 : 1)), v => { if (M[b]) M[b].k = +v; })));
+      tb.append(tr);
+    }
+    wrap.append(el('p', 'dim small', 'Наша кость ← кость модели, ось поворота и знак. Проверка — кадры «руки вверх» и «шаг» новой версии (карточка ассета) и ручки на лапах здесь.'), tb,
+      btn('💾 Сохранить карту (новая версия)', 'Та же модель, новый prefab.js; кадры поворотного стола и поз переснимутся', async () => {
+        ED.msg('💾 Сохраняю карту костей — новая версия, кадры…');
+        try { const r = await ED.api('/api/ws/bonemap', { key: ED.key, asset: W.asset, map: M }); afterNewVersion(`карта костей v${r.v}`); } catch (e) { ED.msg(e.message, 'err'); }
+      }, 'primary'));
+    return wrap;
+  }
+
   const nm = el('input'); nm.placeholder = 'имя клипа: «машет трубкой»'; nm.style.width = '100%';
   const lp = el('input'); lp.type = 'checkbox';
 
@@ -101,8 +203,17 @@ export function initWorkshop(ED) {
         }, 'primary'),
         btn('📂 Клип → ключи', 'Открыть готовый клип ключами позы — поправить и сохранить', loadClip),
         btn('⇋ Отразить позу', 'Ключ позы на курсоре: левое ↔ правое (кости и цели лап, взгляд)', mirror));
+      const on = el('label', 'small'), cb = el('input'); cb.type = 'checkbox'; cb.checked = ON.on; cb.onchange = () => onionSet(cb.checked);
+      const dd = el('input'); dd.type = 'number'; dd.step = '0.05'; dd.min = '0.03'; dd.value = ON.d; dd.style.width = '60px'; dd.oninput = () => { ON.d = Math.max(0.03, +dd.value || 0.2); };
+      on.append(cb, document.createTextNode(' 👻 калька ±'), dd, document.createTextNode(' с (голубая — раньше, оранжевая — позже)'));
+      if (!W.model3d) body.append(on);
     } else {
-      body.append(el('p', 'small', W.rigchar ? `Скелет: ${W.skeleton || '—'}${W.model3d ? ' · 3D-модель' : ''}` : '3D-пропс'),
+      if (W.rigchar && !SU) { setupLoad(); body.append(el('p', 'dim small', 'загружаю скелет…')); return; }
+      if (SU && SU.err) body.append(el('p', 'small', '⚠ ' + SU.err));
+      if (SU && SU.rig === 'parts') body.append(btn('🦴 Суставы и части', 'Редактор скелета: суставы мышью, пределы, проверочные позы — сохраняется новой версией', jointEditor, 'primary'));
+      if (SU && SU.rig === 'param') body.append(el('p', 'dim small', 'Скелет ёжика параметрический (лапы, ноги, голова, лицо — параметрами): суставы не двигаются, позы и анимации — во вкладке «🎞 Анимация».'));
+      if (SU && SU.rig === 'model') body.append(boneTable());
+      body.append(el('p', 'small', W.rigchar ? `Скелет: ${(SU && SU.skeleton) || W.skeleton || '—'}${W.model3d ? ' · 3D-модель' : ''} · v${(SU && SU.v) || W.v}` : '3D-пропс'),
         el('p', 'dim small', 'Суставы, части, пределы, «✨ собери / почини скелет», версии — в карточке ассета. Новая версия ассета сама появится здесь при следующем открытии мастерской.'),
         btn('↗ Карточка: скелет, версии', 'Открыть карточку ассета — редактор суставов, «✨ Claude, поправь», версии', () => parent.postMessage({ type: 'editor-close', el: ED.el, ws: Object.assign({}, W, { lib: null }) }, location.origin)),
         btn('📚 В библиотеку', W.lib ? `Новая версия ${W.lib.id} (сцены держат свою @N, основной станет новая)` : 'Опубликовать ассет в библиотеку канала', async () => {
