@@ -30,6 +30,9 @@ Object.assign(Pages, {
     if (CH.cid !== C.id) { CH.cid = C.id; CH.files = null; }
     if (!CH.files && !CH.loading) { CH.loading = true; api('GET', '/api/channel/style?channel=' + C.id).then(j => { CH.files = j; }).catch(e => { CH.files = { err: e.message }; }).finally(() => { CH.loading = false; App.render(); }); }
     if (!Store.get(ckey) && !CH.docLoading) { CH.docLoading = true; Store.load(ckey).then(() => App.render()).catch(() => {}).finally(() => { CH.docLoading = false; }); }
+    const busy = !!(Claude.running(ckey, 'chanstyle') || Claude.running(ckey, 'chancaps'));
+    if (CH.wasBusy && !busy) { CH.files = null; Store.load(ckey, true).then(() => App.render()).catch(() => {}); }
+    CH.wasBusy = busy;
     const d = Store.get(ckey), F = CH.files;
     const done = d && d.interview && d.interview.done;
     const tab = App.route.id || (done ? 'guide' : 'interview');
@@ -42,7 +45,7 @@ Object.assign(Pages, {
   },
 
   async chSave(kind, value, quiet) {
-    try { await api('POST', '/api/channel/stylefile', { channel: CH.cid, kind, value }); CH.files[kind] = value; if (!quiet) UI.toast('Сохранено (прошлая версия — в 🕘 Истории)'); CH.files.history = null; CH.reload = true; }
+    try { await api('POST', '/api/channel/stylefile', { channel: CH.cid, kind, value }); if (CH.files) CH.files[kind] = value; if (!quiet) UI.toast('Сохранено (прошлая версия — в 🕘 Истории)'); }
     catch (e) { UI.toast(e.message, 'err'); }
   },
   chReload() { CH.files = null; App.render(); },
@@ -111,47 +114,95 @@ Object.assign(Pages, {
 
   // ---------------- 🎙 голос и субтитры
   chVoice(C, d, ckey, F) {
-    const V = Object.assign({ voice: F.voices[0], rate: '+20%', pitch: '+0Hz' }, F.voice || {}), K = Object.assign({ font: 'Rubik', size: 70, color: '#ffffff', stroke: '#000000', y: 0.765, maxWords: 3, upper: false }, F.captions || {});
+    const V = Object.assign({ voice: F.voices[0], rate: '+20%', pitch: '+0Hz' }, F.voice || {});
+    const K = Object.assign({ font: 'Rubik', weight: 800, size: 70, color: '#ffffff', highlight: '#ffd84a', stroke: '#0c0828', strokeWidth: 16, shadow: false, box: '', boxAlpha: 0.75, y: 0.765, maxWords: 3, upper: false, anim: 'pop' }, F.captions || {});
     const saveV = () => Pages.chSave('voice', V, true), saveK = () => { Pages.chSave('captions', K, true); drawCap(); };
-    const phrase = h('input.box', { value: 'Тролль зашёл в рейд и сразу всё понял.', style: { width: '320px' } });
+    const phrase = h('input.box', { value: 'Ульджан зашёл в рейд и сразу всё понял, мон.', style: { width: '320px' }, oninput: () => drawCap() });
     const audio = h('audio', { controls: true, src: CH.voiceUrl || '' });
     const test = async () => { try { const r = await api('POST', '/api/channel/voicetest', { voice: V, text: phrase.value }); CH.voiceUrl = '/api/channel/voicefile?f=' + r.f; audio.src = CH.voiceUrl; audio.play().catch(() => {}); } catch (e) { UI.toast(e.message, 'err'); } };
+    Pages.chFonts(C, F);
     const cv = h('canvas.capprev', { width: 540, height: 960 });
-    const drawCap = () => {
-      const g = cv.getContext('2d'); g.fillStyle = '#3a3a44'; g.fillRect(0, 0, 540, 960);
-      g.fillStyle = '#55556a'; g.fillRect(0, 960 * 0.18, 540, 960 * 0.55);
-      const words = (K.upper ? phrase.value.toUpperCase() : phrase.value).split(/\s+/).slice(0, K.maxWords || 3).join(' ');
-      g.font = `800 ${(K.size || 70) / 2}px "${K.font}"`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
-      g.lineWidth = 8; g.strokeStyle = K.stroke || '#000'; g.strokeText(words, 270, 960 * (K.y || 0.765)); g.fillStyle = K.color || '#fff'; g.fillText(words, 270, 960 * (K.y || 0.765));
+    let said = 1;
+    const drawCap = () => {                                   // как в ролике (template main.js drawCaptions), половинный размер
+      const g = cv.getContext('2d'); g.clearRect(0, 0, 540, 960);
+      g.fillStyle = '#2d3140'; g.fillRect(0, 0, 540, 960); g.fillStyle = '#4a5068'; g.fillRect(0, 960 * 0.15, 540, 960 * 0.55);
+      const size = (K.size || 70) / 2, y = 960 * (K.y || 0.765);
+      const ws = phrase.value.split(/\s+/).filter(Boolean).slice(0, Math.max(1, K.maxWords || 3)).map(w => K.upper ? w.toUpperCase() : w);
+      g.font = `${K.weight || 800} ${size}px "${K.font}", Rubik`; g.textBaseline = 'middle'; g.textAlign = 'center'; g.lineJoin = 'round';
+      const wd = ws.map(w => g.measureText(w).width), gap = size * 0.38, total = wd.reduce((a, b) => a + b, 0) + gap * (ws.length - 1);
+      let x = 270 - total / 2;
+      if (K.box) { g.save(); g.globalAlpha = K.boxAlpha == null ? 0.75 : K.boxAlpha; g.fillStyle = K.box; g.beginPath(); g.roundRect(x - size * 0.4, y - size * 0.72, total + size * 0.8, size * 1.44, size * 0.28); g.fill(); g.restore(); }
+      ws.forEach((w, i) => {
+        const on = i < said;
+        g.save(); g.translate(x + wd[i] / 2, y);
+        if (K.shadow) { g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = size * 0.18; g.shadowOffsetY = size * 0.06; }
+        if ((K.strokeWidth ?? 16) > 0) { g.lineWidth = (K.strokeWidth ?? 16) / 2; g.strokeStyle = K.stroke || '#000'; g.strokeText(w, 0, 0); }
+        g.shadowColor = 'transparent'; g.fillStyle = on ? (K.highlight || '#ffd84a') : (K.color || '#fff'); g.fillText(w, 0, 0); g.restore();
+        x += wd[i] + gap;
+      });
     };
-    setTimeout(drawCap, 50);
-    const num = (obj, k, step, save) => h('input.box', { type: 'number', step, value: obj[k], style: { width: '80px' }, onchange: ev => { obj[k] = +ev.target.value; save(); } });
+    cv.onclick = () => { said = said % Math.max(1, K.maxWords || 3) + 1; drawCap(); };
+    document.fonts.ready.then(drawCap); setTimeout(drawCap, 60);
+    const num = (obj, k, step, save, w = '80px') => h('input.box', { type: 'number', step, value: obj[k] ?? '', style: { width: w }, onchange: ev => { obj[k] = +ev.target.value; save(); } });
     const txt = (obj, k, save, w = '110px') => h('input.box', { value: obj[k] || '', style: { width: w }, onchange: ev => { obj[k] = ev.target.value; save(); } });
+    const color = (k, label) => h('label', label, ' ', h('input', { type: 'color', value: /^#[0-9a-f]{6}$/i.test(K[k] || '') ? K[k] : '#000000', onchange: ev => { K[k] = ev.target.value; saveK(); } }));
+    const upload = (accept, kind, done) => () => { const i = h('input', { type: 'file', accept, onchange: async () => {
+      const f = i.files[0]; if (!f) return; const data = await new Promise(ok => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); });
+      try { const r = await api('POST', '/api/channel/upload', { channel: C.id, kind, name: f.name, data }); done(r); } catch (e) { UI.toast(e.message, 'err'); } } }); i.click(); };
+    const capsBusy = Claude.running('channel:' + C.id, 'chancaps');
     return [
-      h('section.card', h('div.card-head', h('h3', '🎙 Голос диктора'), V.note && h('span.dim.small', V.note)),
+      h('section.card', h('div.card-head', h('h3', '🎙 Голос диктора')),
+        V.note && h('p.dim.small', V.note),
         h('div.row', h('label', 'голос ', msel(F.voices.map(v => [v, v]), V.voice, v => { V.voice = v; saveV(); })), h('label', 'скорость ', txt(V, 'rate', saveV, '70px')), h('label', 'высота ', txt(V, 'pitch', saveV, '70px'))),
         h('div.row', phrase, h('button', { onclick: test }, '▶ послушать'), audio),
-        h('p.dim.small', 'Голос — edge-tts, его же возьмёт tts.py в проектах канала (style/voice.json).')),
-      h('section.card', h('div.card-head', h('h3', '💬 Субтитры')),
-        h('div.capgrid', cv, h('div.capform',
-          h('label', 'шрифт ', msel(F.fonts.map(f => [f, f]), K.font, v => { K.font = v; saveK(); })), h('label', 'кегль ', num(K, 'size', 2, saveK)),
-          h('label', 'цвет ', h('input', { type: 'color', value: K.color, onchange: ev => { K.color = ev.target.value; saveK(); } })),
-          h('label', 'обводка ', h('input', { type: 'color', value: K.stroke || '#000000', onchange: ev => { K.stroke = ev.target.value; saveK(); } })),
-          h('label', 'высота (доля кадра) ', num(K, 'y', 0.005, saveK)), h('label', 'слов за раз ', num(K, 'maxWords', 1, saveK)),
-          h('label', h('input', { type: 'checkbox', checked: !!K.upper, onchange: ev => { K.upper = ev.target.checked; saveK(); } }), ' ЗАГЛАВНЫМИ')))),
+        h('p.dim.small', 'Голос — edge-tts; его возьмёт tts.py в проектах канала (style/voice.json). Свой голос — запись и align.py, как раньше.')),
+      h('section.card', h('div.card-head', h('h3', '💬 Субтитры'), h('span.sp'),
+          h('button', { onclick: upload('.ttf,.otf,.woff,.woff2', 'font', r => { K.font = r.font; saveK(); CH.files = null; UI.toast('Шрифт «' + r.font + '» загружен'); }), title: 'Свой шрифт (.ttf / .otf / .woff2) — ляжет в style/fonts канала и поедет в ролики' }, '⬆ свой шрифт'),
+          h('button', { onclick: upload('image/*', 'capref', () => { CH.files = null; UI.toast('Картинка загружена — жми «✨ как на картинке»'); }), title: 'Скрин субтитров, которые нравятся (из любого ролика)' }, '⬆ пример субтитров'),
+          F.capRef && (capsBusy ? h('span.dim', h('span.spin'), ' Claude смотрит картинку…')
+            : h('button.claude', { onclick: async () => { try { const r = await api('POST', '/api/channel/captions-from-ref', { channel: C.id }); Claude.jobs[r.job.id] = r.job; App.render(); } catch (e) { UI.toast(e.message, 'err'); } } }, '✨ как на картинке'))),
+        K.note && h('p.dim.small', K.note),
+        h('div.capgrid', h('div', cv, h('div.dim.small', 'клик — следующее слово «сказано»')),
+          F.capRef && h('img.capref', { src: `/api/channel/file?channel=${C.id}&f=${encodeURIComponent(F.capRef)}&v=${Date.now() % 100000}`, title: 'пример автора' }),
+          h('div.capform',
+            h('label', 'шрифт ', msel(F.fonts.map(f => [f, f + ((F.chanFonts || []).includes(f) ? ' (свой)' : '')]), K.font, v => { K.font = v; saveK(); }), ' жирность ', num(K, 'weight', 100, saveK, '70px')),
+            h('label', 'кегль ', num(K, 'size', 2, saveK), ' слов за раз ', num(K, 'maxWords', 1, saveK, '60px')),
+            h('div.row', color('color', 'текст'), color('highlight', 'сказанное слово')),
+            h('div.row', color('stroke', 'обводка'), h('label', 'толщина ', num(K, 'strokeWidth', 1, saveK, '60px'))),
+            h('div.row', h('label', h('input', { type: 'checkbox', checked: !!K.box, onchange: ev => { K.box = ev.target.checked ? (K.box || '#000000') : ''; saveK(); App.render(); } }), ' подложка'),
+              K.box && color('box', 'цвет'), K.box && h('label', 'прозрачность ', num(K, 'boxAlpha', 0.05, saveK, '60px'))),
+            h('label', h('input', { type: 'checkbox', checked: !!K.shadow, onchange: ev => { K.shadow = ev.target.checked; saveK(); } }), ' тень'),
+            h('label', h('input', { type: 'checkbox', checked: !!K.upper, onchange: ev => { K.upper = ev.target.checked; saveK(); } }), ' ЗАГЛАВНЫМИ'),
+            h('label', 'появление слова ', msel([['pop', 'подпрыгивает'], ['rise', 'всплывает'], ['none', 'без анимации']], K.anim || 'pop', v => { K.anim = v; saveK(); })),
+            h('label', 'высота (доля кадра) ', num(K, 'y', 0.005, saveK))))),
     ];
   },
+  chFonts(C, F) {                                             // свои шрифты канала — в страницу, чтобы превью их показывало
+    for (const [fam, rel] of F.chanFontFiles || []) {
+      if ((CH.loadedFonts = CH.loadedFonts || new Set()).has(rel)) continue;
+      CH.loadedFonts.add(rel);
+      try { new FontFace(fam, `url(/api/channel/file?channel=${C.id}&f=${encodeURIComponent(rel)})`).load().then(x => { document.fonts.add(x); App.render(); }).catch(() => {}); } catch (e) {}
+    }
+  },
 
-  // ---------------- ⚙ правила
+  // ---------------- ⚙ правила (их выбирает «✨ Собрать стиль» — только нужные этому каналу)
   chRules(C, d, ckey) {
     const R = d.rules || {}, tk = d.toolkitChoice || {};
-    return h('section.card', h('div.card-head', h('h3', '⚙ Правила канала')),
-      h('label.row', h('input', { type: 'checkbox', checked: R.paperFacing !== false, onchange: ev => Store.set(ckey, ['rules', 'paperFacing'], ev.target.checked, true) }),
-        ' Paper Mario: персонажи-карточки поворачиваются к камере'),
-      h('label.row', 'не больше, градусов ', h('input.box', { type: 'number', value: R.facingMaxDeg ?? 35, style: { width: '80px' }, onchange: ev => Store.set(ckey, ['rules', 'facingMaxDeg'], +ev.target.value, true) })),
-      h('label.row', 'стиль 3D-предметов ', msel([['paper', 'бумажный макет'], ['toy', 'игрушка / пластилин'], ['flat', 'плоские цветные формы'], ['lowpoly', 'low-poly']], d.style3d || 'paper', v => Store.set(ckey, ['style3d'], v, true))),
-      h('label.row', 'тулкит рисования ', msel([['paper', 'бумажный (как у «Доедать будешь»)'], ['new', 'свой (style/toolkit.js)']], tk.kind || 'paper', v => Store.set(ckey, ['toolkitChoice', 'kind'], v, true))),
-      tk.note && h('p.dim.small', 'Что поменять в тулките: ' + tk.note));
+    const known = { paperFacing: { label: 'Paper Mario: персонажи-карточки поворачиваются к камере', type: 'bool' }, facingMaxDeg: { label: 'Поворот карточек к камере — не больше, градусов', type: 'number' },
+      style3d: { label: 'Стиль 3D-предметов', type: 'choice', options: ['paper', 'toy', 'flat', 'lowpoly', 'game'] }, toolkit: { label: '2D-тулкит рисования', type: 'choice', options: ['paper', 'new', 'none'] } };
+    const defs = (d.ruleDefs && d.ruleDefs.length) ? d.ruleDefs : Object.keys(R).filter(k => known[k]).map(k => ({ key: k, ...known[k] }));
+    const setRule = (k, v) => { Store.set(ckey, ['rules', k], v, true); if (k === 'style3d') Store.set(ckey, ['style3d'], v); if (k === 'toolkit') Store.set(ckey, ['toolkitChoice', 'kind'], v); };
+    const ctl = r => {
+      const v = R[r.key];
+      if (r.type === 'bool') return h('input', { type: 'checkbox', checked: v === true || v === 'true', onchange: ev => setRule(r.key, ev.target.checked) });
+      if (r.type === 'number') return h('input.box', { type: 'number', value: v ?? '', style: { width: '90px' }, onchange: ev => setRule(r.key, +ev.target.value) });
+      if (r.type === 'choice') return msel((r.options || []).map(o => [o, o]), v ?? '', x => setRule(r.key, x));
+      return h('input.box.grow', { value: v ?? '', onchange: ev => setRule(r.key, ev.target.value) });
+    };
+    return h('section.card', h('div.card-head', h('h3', '⚙ Правила канала'), h('span.dim.small', 'их выбирает «✨ Собрать стиль» — только те, что нужны этому каналу')),
+      defs.length ? h('div.rules-list', defs.map(r => h('div.rule', h('div.row', h('b.grow', r.label || r.key), ctl(r)), r.why && h('div.dim.small', r.why))))
+        : h('div.empty', 'Правил пока нет — их соберёт «✨ Собрать стиль» по интервью.'),
+      tk.note && h('p.dim.small', '2D-тулкит: ' + tk.note));
   },
 
   // ---------------- 🦸 герой

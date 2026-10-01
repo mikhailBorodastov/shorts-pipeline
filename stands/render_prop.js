@@ -1,5 +1,5 @@
 // Кадры 3D-пропса (S3): четыре ракурса поворотного стола + лист 2×2.
-//   node render_prop.js <url prefab.js, например /rscene/<plan>/<el>/v<N>/prefab.js> <папка> [--port 8790] [--style paper|toy] [--pins pins.json]
+//   node render_prop.js <url prefab.js, например /rscene/<plan>/<el>/v<N>/prefab.js> <папка> [--port 8790] [--style paper|toy] [--pins pins.json] [--params '<JSON>']
 // -> <папка>/element.png (лист), element_1.png … element_7.png (ракурсы ¾ спереди, другой бок, ¾ сзади, другой бок) и ошибки страницы.
 // С --pins (файл [{n, p: [x, y, z]}] в координатах пропса): pins.png (лист) и pins_1…pins_7.png — номера пинов на модели.
 const { spawnSync } = require('child_process');
@@ -14,10 +14,10 @@ if (prefab) prefab = prefab.replace(/\\/g, '/').replace(/^[A-Za-z]:\/Program Fil
 if (!prefab || !dir) { console.error('usage: node render_prop.js <url prefab.js> <dir> [--port N] [--style paper|toy] [--pins pins.json]'); process.exit(2); }
 let port = opt('--port');
 if (!port) { try { port = fs.readFileSync(path.join(__dirname, '..', '..', '.studio', '.port'), 'utf8').trim(); } catch (e) { port = '8790'; } }
-const style = opt('--style'), pinsFile = opt('--pins');
+const style = opt('--style'), pinsFile = opt('--pins'), params = opt('--params');   // --params '{"pose": {...}}' — персонаж-модель (S9) в позе
 const pins = pinsFile ? fs.readFileSync(pinsFile, 'utf8') : null;
 const url = `http://127.0.0.1:${port}/tpl/stand3d.html?prop=${encodeURIComponent(prefab)}&parts=element` + (style ? `&style=${style}` : '')
-  + (pins ? `&pins=${encodeURIComponent(JSON.stringify(JSON.parse(pins)))}` : '');
+  + (pins ? `&pins=${encodeURIComponent(JSON.stringify(JSON.parse(pins)))}` : '') + (params ? `&params=${encodeURIComponent(params)}` : '');
 const out = pins ? path.join(dir, '_pins') : dir;
 fs.mkdirSync(out, { recursive: true });
 const r = spawnSync(process.execPath, [path.join(__dirname, 'render_shot.js'), url, out, '1,3,5,7'], { encoding: 'utf8' });

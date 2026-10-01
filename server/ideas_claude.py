@@ -865,7 +865,7 @@ def charparts_spec(docs, params, sysp):
     base = next((r for r in renders if r.get("id") == params.get("base") and r.get("rigchar")), None)
     if base:
         bd = P.resolve("render/" + base["dir"])
-        for f in ("prefab.js", "rig.json"):
+        for f in ("prefab.js", "rig.json", "model.py", "model.glb"):
             src = os.path.join(bd, f)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(wd, f))
@@ -873,6 +873,9 @@ def charparts_spec(docs, params, sysp):
             shutil.copytree(os.path.join(bd, "costumes"), os.path.join(wd, "costumes"), dirs_exist_ok=True)
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
     slug = re.sub(r"[^a-z0-9-]+", "-", (e.get("slug") or e["id"]).lower()).strip("-") or e["id"]
+    if (e.get("make") or params.get("make")) == "blender":       # S9: 3D-персонаж в Blender (model.glb с арматурой) — rig 'model'
+        params["_blender"] = True
+        return charblender_spec(docs, params, sysp, e, wd, rel, v, slug, base)
     rc = _fwd(os.path.join(P.STANDS, "render_char.js"))
     cmd = f"node {rc} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']}"
     refs = [(r, P.resolve(r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
@@ -941,6 +944,77 @@ def charparts_spec(docs, params, sysp):
 В ответе: summary — что нарисовано и какой скелет (2–3 предложения); fn — тип скелета (или hog); note — что автору проверить (какие суставы подвинуть в редакторе скелета)."""
     return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 2400,
             "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"], "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(node {rc}:*)"],
+            "dirs": [wd, P.files(plan["id"]), P.STANDS, P.ENGINE, P.render(plan["id"])], "schema": S({"summary": STR, "fn": STR, "note": STR})}
+
+
+def charblender_spec(docs, params, sysp, e, wd, rel, v, slug, base):
+    """«🦴 со скелетом» для героя в 3D (S9): Claude (Opus) пишет model.py для Blender (меш + арматура + автовеса + материалы + shape keys лица),
+    собирает model.glb (blender_run.py), пишет prefab.js character({ rig: 'model', bones: {…} }), снимает поворотный стол и позы (render_prop.js), правит."""
+    plan = docs["plan"]
+    ch = docs.get("channel") or {}
+    br = _fwd(os.path.join(P.STANDS, "blender_run.py"))
+    rp = _fwd(os.path.join(P.STANDS, "render_prop.js"))
+    url = f"/rscene/{rel}/prefab.js"
+    refs = [(r, P.resolve(r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+    ref_lines = "\n".join(f"- {_fwd(p_)}" + (f" — {r['note']}" if r.get("note") else "") for r, p_ in refs) or "(референсов нет — опирайся на описание)"
+    guide = ""
+    try:
+        guide = open(os.path.join(ch.get("dir") or "", "style", "style-guide.md"), encoding="utf-8").read()[:5000]
+    except OSError:
+        pass
+    pal = ""
+    try:
+        pal = json.dumps(json.load(open(os.path.join(ch.get("dir") or "", "style", "palette.json"), encoding="utf-8")).get("colors") or [], ensure_ascii=False)
+    except (OSError, ValueError):
+        pass
+    fx = ((e.get("fx") or {}).get("main")) or {}
+    notes = [n["text"] for n in fx_notes(fx)] + ([fx["text"].strip()] if (fx.get("text") or "").strip() else [])
+    params["_fx"] = {"notes": fx_notes(fx), "text": (fx.get("text") or "").strip(), "pins": []} if notes else {}
+    edit = ""
+    if base:
+        edit = (f"ПРАВКА. Это версия v{v}; в папке уже лежат model.py, model.glb и prefab.js прошлой версии v{base.get('v')} — начни с них, сделай ровно то, что просит автор:\n"
+                + "\n".join(f"- «{t}»" for t in notes) + (f"\nПрошлая версия (лист): {_fwd(P.resolve(base['img']))}" if base.get("img") else ""))
+    prompt = f"""Задача: главный герой канала «{ch.get('name', '')}» — «{e.get('name', '')}» — как 3D-МОДЕЛЬ В BLENDER СО СКЕЛЕТОМ, чтобы его можно было ставить в сцены и двигать (позы, клипы, ходьба, эмоции).
+Описание: {e.get('desc') or '—'}
+
+Референсы (посмотри все через Read — силуэт, пропорции, цвета, детали):
+{ref_lines}
+
+Стиль канала (начало стайл-гайда) и палитра:
+{guide}
+Палитра: {pal}
+
+{edit}
+
+Как сделать (рабочая папка — текущая, {_fwd(wd)}):
+1. model.py — скрипт bpy (Blender 5.x, пустая сцена; экспорт делает обёртка). Стилизованная low-poly модель «как в игре» с крупными кистями, плечами, характерным силуэтом:
+   тело, голова с клыками и ушами, причёска, руки с кистями, ноги со ступнями, набедренная повязка / одежда — отдельными мешами и потом ОДНИМ объектом (join), или несколькими, но всё на одной арматуре.
+   Цвета — материалами (Principled BSDF, Base Color из палитры, roughness 0.8–1, без металла) или цветами вершин; рисованный вид — плоские цвета и чуть темнее в складках.
+   Арматура «Rig»: root (между ступнями) → hips → spine → chest → neck → head; плечи upper_arm.L/R → forearm.L/R → hand.L/R; ноги thigh.L/R → shin.L/R → foot.L/R; можно jaw, ear.L/R.
+   Привязка: parent_set(type='ARMATURE_AUTO'); проверь, что у каждой части есть веса (голова не тянется за рукой). Поза покоя — A-поза (руки вниз под ~35–45°) или T-поза.
+   Shape keys лица (по возможности): mouth_open, mouth_o, smile, blink — на меше головы (относительно Basis).
+   Низ модели — на z = 0, лицо — к -Y (станет +z, к камере), единицы — метры, рост ~{e.get('h') or '1.9'} м.
+2. Собери: python {br} model.py   → model.glb рядом (готово: … размеры). Ошибки — в model.log.
+3. prefab.js в этой папке:
+   character({{ id: '{slug}', name: '{e.get('name', '')}', skeleton: '<тип скелета латиницей, например troll>', rig: 'model', model: 'model.glb', h: <рост, м>, idle: null,
+     bones: {{ root: {{ bone: 'root', axis: 'y' }}, body: {{ bone: 'spine', axis: 'x' }}, head: {{ bone: 'head', axis: 'x' }},
+               armL: {{ bone: 'upper_arm.L', axis: 'z', k: …, off: 0 }}, armR: {{ bone: 'upper_arm.R', axis: 'z', k: … }}, forearmL: …, forearmR: …, legL: {{ bone: 'thigh.L', axis: 'x' }}, legR: …, shinL: …, shinR: … }},
+     face: {{ mouth: {{ open: 'mouth_open', o: 'mouth_o', smile: 'smile' }}, lid: 'blink' }},
+     emotions: {{ 'спокойный': {{ face: {{}} , ok: true }}, 'радость': {{ face: {{ mouth: 'smile' }} }}, 'удивление': {{ face: {{ mouth: 'o' }} }} }},
+     pose: {{}} }});
+   Поза — как у всех героев студии: bones.<кость>.rot (радианы) поворачивает кость арматуры вокруг axis в осях МОДЕЛИ (x — вправо, y — вверх, z — вперёд к камере) на off + k·rot от покоя.
+   Договорённость: armL / armR rot 0 — руки как в покое, +1.2 — рука поднята вбок-вверх (подбери k = ±1 так, чтобы ОБЕ руки поднимались при +), legL / legR + — нога вперёд (шаг), body + — наклон вперёд, head + — кивок вниз.
+   Движок — {_fwd(os.path.join(P.ENGINE, 'rig.js'))}: функция modelChar (прочитай её).
+4. Кадры (ровно так): node {rp} {url} {_fwd(wd)}            — поворотный стол в покое: element.png (лист 2×2) и element_1/3/5/7.png
+   Позы: node {rp} {url} {_fwd(os.path.join(wd, 'pose_up'))} --params '{{"pose": {{"bones": {{"armL": {{"rot": 1.2}}, "armR": {{"rot": 1.2}}}}}}}}'
+         node {rp} {url} {_fwd(os.path.join(wd, 'pose_step'))} --params '{{"pose": {{"bones": {{"legL": {{"rot": 0.5}}, "legR": {{"rot": -0.4}}, "armL": {{"rot": -0.3}}, "armR": {{"rot": 0.3}}}}}}}}'
+   Посмотри через Read: похоже ли на референсы (силуэт, цвета, клыки, уши, причёска), нет ли дыр и вывернутой геометрии, руки поднимаются обе и по-человечески, сетка не рвётся в суставах.
+   Исправь model.py / prefab.js, собери и сними снова — 2–4 прохода.
+
+В ответе: summary — что получилось (2–3 предложения); fn — тип скелета (как skeleton в prefab.js); note — что автору проверить."""
+    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 3000,
+            "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
+            "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(python {br}:*)", f"Bash(node {rp}:*)"],
             "dirs": [wd, P.files(plan["id"]), P.STANDS, P.ENGINE, P.render(plan["id"])], "schema": S({"summary": STR, "fn": STR, "note": STR})}
 
 
@@ -1502,14 +1576,20 @@ def apply(action, docs, params, res):
         if not os.path.isfile(main) and os.path.isfile(os.path.join(wd, "prefab.js")):   # Claude не снял кадры (команда не прошла) — снимаем сами
             subprocess.run(["node", os.path.join(P.STANDS, "render_char.js"), f"/rscene/{rel}/prefab.js", wd, "--port", str(docs["port"])],
                            capture_output=True, timeout=300)
-        if not os.path.isfile(main) or not (hogish or os.path.isfile(os.path.join(wd, "rig.json"))):
+        blender = bool(params.get("_blender"))
+        if blender and not os.path.isfile(main) and os.path.isfile(os.path.join(wd, "model.glb")):   # кадры не сняты — снимаем сами
+            subprocess.run(["node", os.path.join(P.STANDS, "render_prop.js"), f"/rscene/{rel}/prefab.js", wd, "--port", str(docs["port"])], capture_output=True, timeout=300)
+        if blender and (not os.path.isfile(main) or not os.path.isfile(os.path.join(wd, "model.glb"))):
+            raise RuntimeError("Claude не довёл 3D-героя до model.glb и кадров — попробуй ещё раз (лог Blender — model.log)")
+        if not blender and (not os.path.isfile(main) or not (hogish or os.path.isfile(os.path.join(wd, "rig.json")))):
             raise RuntimeError("Claude не довёл персонажа до кадров (element.png, rig.json) — попробуй ещё раз")
         img = docs["save"](plan["id"], open(main, "rb").read())
-        extra = [docs["save"](plan["id"], open(os.path.join(wd, f), "rb").read()) for f in ("rest.png", "clean.png", "emotions.png") if os.path.isfile(os.path.join(wd, f))]
+        extra = [docs["save"](plan["id"], open(os.path.join(wd, f), "rb").read()) for f in ("rest.png", "clean.png", "emotions.png", "pose_up/element.png", "pose_step/element.png")
+                 if os.path.isfile(os.path.join(wd, f))]
         fx = params.get("_fx") or {}
         rid = nid("r")
         fb = "; ".join(([fx["text"]] if fx.get("text") else []) + [n["text"] for n in fx.get("notes") or []])
-        item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "feedback": fb, "fx": fx, "fn": res.get("fn", ""), "rigchar": True,
+        item = {"id": rid, "v": v, "dir": rel, "img": img, "extra": extra, "feedback": fb, "fx": fx, "fn": res.get("fn", ""), "rigchar": True, **({"model3d": True} if blender else {}),
                 "summary": res.get("summary", ""), "note": res.get("note", ""), "ts": t}
         ops = [{"op": "add", "path": ["elements", eid, "renders"], "item": item}, {"op": "set", "path": ["elements", eid, "render"], "value": rid}]
         if e.get("form") != "rig":

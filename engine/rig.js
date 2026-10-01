@@ -61,6 +61,11 @@ function character(def) {
   if (def.rig === 'parts') def.rigUrl = base + 'rig.json';           // части: суставы, крепление частей, позы — данными (редактор скелета их двигает)
   // префаб сцены: kind 'group' — engine/scene.js собирает его как 3D-пропс (S.lib), см. charCard
   def.kind = 'group';
+  if (def.rig === 'model') {                                       // S9: 3D-персонаж из Blender (model.glb с арматурой) — modelChar
+    def.modelKey = 'ch:' + def.id;
+    if (typeof PROP_MODELS !== 'undefined') PROP_MODELS[def.modelKey] = /^(\/|https?:)/.test(def.model || '') ? def.model : base + (def.model || 'model.glb');
+    def.build = (w, o) => { const c = modelChar(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.scenePose(T); c.applyPose(T); } }; };
+  } else
   def.build = (w, o) => { const c = charCard(w, def, { name: (o && o.name) || def.name, o }); return { obj: c, tick: T => { c.pose = c.scenePose(T); } }; };
   RIG.chars[def.id] = def; CHAR_LAST = def;
   if (typeof PROPS3D !== 'undefined') PROPS3D[def.url] = def;     // loadSceneProps находит его так же, как 3D-пропс
@@ -542,7 +547,8 @@ function charCard(w, char, opt = {}) {
   // S5: всё, что задаёт объект сцены (клипы, ходьба, ключи позы, IK, эмоция, костюмы, липсинк) поверх base (база персонажа или поза поведения)
   c.env = T => (so.lipsync && so.lipsync.sound ? rigEnvAt(so.lipsync.sound, T) : 0);       // липсинк: громкость звука сцены
   c.scenePose = (T, base) => rigPose(rigSceneLayer(char, so, T, base || c.basePose, c.env || null), c.keyLayer(T));
-  c.keyLayer = T => {                                       // только то, что задают ключи (поверх позы поведения или базы)
+  c.keyLayer = T => rigKeyLayer(char, so, T);
+  c._keyLayerOld = T => {                                    // (было здесь; теперь rigKeyLayer — общий для карточки и 3D-модели)
     const K = (so.keys) || {};
     let p = {};
     for (const [prop, list] of Object.entries(K)) {
@@ -580,6 +586,80 @@ function charCard(w, char, opt = {}) {
     inner.position.y = K.y || 0; inner.rotation.z = K.rz || 0; inner.scale.y = 1 + (K.sy || 0); c._cardSet = true;
   });
   return c;
+}
+
+// ключи объекта сцены: pose.<кость>.<rot|len|sq>, face.<поле>, wear.<костюм>, emotion — только то, что задают ключи
+function rigKeyLayer(char, so, T) {
+  const K = (so && so.keys) || {};
+  let p = {};
+  for (const [prop, list] of Object.entries(K)) {
+    if (!list || !list.length) continue;
+    if (prop === 'emotion') { const e = evalKeys(list, T, undefined); if (e) p = rigPose(p, rigEmotion(char, e)); continue; }
+    const m = /^(pose|face|wear)\.(.+)$/.exec(prop);
+    if (!m) continue;
+    const v = evalKeys(list, T, undefined);
+    if (v === undefined) continue;
+    if (m[1] === 'pose') { const [b, f] = m[2].split('.'); p = rigPose(p, { bones: { [b]: { [f]: v } } }); }
+    else if (m[1] === 'face') p = rigPose(p, { face: { [m[2]]: v } });
+    else p = rigPose(p, { wear: { [m[2]]: v } });
+  }
+  return p;
+}
+
+// ---------------------------------------------------------------- rig 'model' (S9): 3D-персонаж из Blender — model.glb с арматурой
+// character({ rig: 'model', model: 'model.glb', h, skeleton: '<тип>', idle: '<клип glTF — база>', bones: { <кость позы>: { bone: '<кость арматуры>', axis: 'x'|'y'|'z'|[x,y,z], k, off } },
+//             face: { mouth: { open: '<shape key>', o: '<shape key>' }, lid: '<shape key моргания>', brows: { up: '<…>', angry: '<…>' } } })
+// Поза — та же, что у бумажных героев (bones.armL.rot …, клипы типа скелета, ключи позы, ходьба): rot кости позы = поворот кости арматуры вокруг axis
+// (в осях модели: x — вправо, y — вверх, z — вперёд к камере) на off + k·rot от позы покоя. card.y / rz / ry — вся модель (прыжок, наклон, поворот).
+function modelChar(w, char, opt = {}) {
+  const so = opt.o || {}, P = so.params || {};
+  const G = w.model(char.modelKey, { h: char.h || 1.8, matte: char.matte !== false, name: opt.name || char.name });
+  G.char = char;
+  const inner = G.inner || G, bones = {}, meshes = [];
+  G.traverse(x => { if (x.isBone) bones[x.name] = x; if (x.isMesh && x.morphTargetDictionary) meshes.push(x); });
+  G.updateMatrixWorld(true);
+  const gq = new THREE.Quaternion(); G.getWorldQuaternion(gq);
+  const axisOf = a => (Array.isArray(a) ? new THREE.Vector3(a[0], a[1], a[2]) : new THREE.Vector3(a === 'x' ? 1 : 0, a === 'y' ? 1 : 0, a === 'z' || !a ? 1 : 0)).normalize();
+  const map = [];
+  for (const [k, m] of Object.entries(char.bones || {})) {
+    const b = bones[m.bone || k];
+    if (!b) { console.warn('модель: нет кости', m.bone || k, 'у', char.id); continue; }
+    const qw = new THREE.Quaternion(); b.getWorldQuaternion(qw);
+    const toModel = gq.clone().invert().multiply(qw);           // кость в осях модели
+    map.push({ k, b, q0: b.quaternion.clone(), axis: axisOf(m.axis).applyQuaternion(toModel.invert()).normalize(), mul: m.k == null ? 1 : m.k, off: m.off || 0 });
+  }
+  G.bonesMap = map; G.armature = bones;
+  let mixer = null;                                             // клип glTF (idle) — база под позой
+  const gl = X3.models[char.modelKey], obj = inner.children[0] && inner.children[0].children[0];
+  if (char.idle && gl && gl.animations && gl.animations.length && obj) {
+    const clip = THREE.AnimationClip.findByName(gl.animations, char.idle) || gl.animations[0];
+    mixer = new THREE.AnimationMixer(obj); mixer.clipAction(clip).play();
+  }
+  G.pose = rigPose(char.pose, P.pose, P.emotion ? rigEmotion(char, P.emotion) : null);
+  G.basePose = G.pose;
+  G.keyLayer = T => rigKeyLayer(char, so, T);
+  G.keyed = T => rigPose(G.basePose, G.keyLayer(T));
+  G.env = T => (so.lipsync && so.lipsync.sound ? rigEnvAt(so.lipsync.sound, T) : 0);
+  G.scenePose = (T, base) => rigPose(rigSceneLayer(char, so, T, base || G.basePose, G.env || null), G.keyLayer(T));
+  const morph = (name, v) => { if (!name) return; for (const m of meshes) { const i = m.morphTargetDictionary[name]; if (i != null) m.morphTargetInfluences[i] = v; } };
+  const tmp = new THREE.Quaternion();
+  G.applyPose = T => {
+    const p = G.pose || {}, B = p.bones || {};
+    if (mixer) mixer.setTime(T); else for (const m of map) m.b.quaternion.copy(m.q0);
+    for (const m of map) {
+      const r = (B[m.k] && B[m.k].rot) || 0;
+      const a = m.off + m.mul * r;
+      if (a) m.b.quaternion.multiply(tmp.setFromAxisAngle(m.axis, a));
+    }
+    const K = p.card || {};
+    inner.position.y = K.y || 0; inner.rotation.z = K.rz || 0; inner.rotation.y = K.ry || 0; inner.scale.y = 1 + (K.sy || 0);
+    const F = char.face || {}, f = p.face || {};                // лицо — shape keys модели (если есть)
+    if (F.mouth) for (const [k, sk] of Object.entries(F.mouth)) morph(sk, f.mouth === k ? 1 : 0);
+    if (F.lid) morph(F.lid, f.lid != null ? 1 - f.lid : (blinkAt(T, 3) > 0.5 ? 1 : 0));
+    if (F.brows) for (const [k, sk] of Object.entries(F.brows)) morph(sk, f.brows === k ? 1 : 0);
+  };
+  G.applyPose(0);
+  return G;
 }
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { RIG, rigAnim, rigTrackAt, rigClipLayer, rigBlend, rigPose, rigPartsBones, rigIK2, rigSceneLayer, rigPath, rigGaitLayer };

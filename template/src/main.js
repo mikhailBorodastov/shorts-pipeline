@@ -187,23 +187,32 @@ function drawCaptions(T) {
   if (CAPTIONS.off) return;
   const ch = CHUNKS.find(c => T >= c.t0 && T < c.t1);
   if (!ch) return;
-  const size = CAPTIONS.size, y = H * CAPTIONS.y;
+  // стиль субтитров канала (S9, style/captions.json -> CAPTION_STYLE): font, weight, color, highlight, stroke, strokeWidth, shadow, box, boxAlpha, upper, anim
+  const K = CAPTIONS, size = K.size, y = H * K.y;
   ctx.save();
-  ctx.font = font(size, 800); ctx.textBaseline = 'middle';
-  const clean = w => w.replace(/\s[—–-]$/, '');
+  ctx.font = K.font ? `${K.weight || 800} ${size}px "${K.font}", ${FONT}` : font(size, K.weight || 800); ctx.textBaseline = 'middle';
+  const clean = w => { const t = w.replace(/\s[—–-]$/, ''); return K.upper ? t.toUpperCase() : t; };
   const widths = ch.ws.map(w => ctx.measureText(clean(w.w)).width);
-  const gap = size * 0.38;
-  let x = W / 2 - (widths.reduce((a, b) => a + b, 0) + gap * (ch.ws.length - 1)) / 2;
-  // karaoke: the whole chunk is visible, a word turns yellow when it is spoken and stays yellow
+  const gap = size * 0.38, total = widths.reduce((a, b) => a + b, 0) + gap * (ch.ws.length - 1);
+  let x = W / 2 - total / 2;
+  // karaoke: the whole chunk is visible, a word takes the highlight colour when it is spoken and keeps it
   const pin = E.outC(remap(T, ch.t0, ch.t0 + 0.15));
+  if (K.box) {                                                    // подложка под всей фразой
+    ctx.save(); ctx.globalAlpha = pin * (K.boxAlpha == null ? 0.75 : K.boxAlpha); ctx.fillStyle = K.box;
+    rr(ctx, x - size * 0.4, y - size * 0.72, total + size * 0.8, size * 1.44, size * 0.28); ctx.fill(); ctx.restore();
+  }
   ch.ws.forEach((w, i) => {
     const p = remap(T, w.t - 0.06, w.t + 0.16), said = T >= w.t - 0.06;
-    const s = said ? lerp(1.12, 1, E.outC(p)) : 1;
+    const s = said && K.anim !== 'none' && K.anim !== 'rise' ? lerp(1.12, 1, E.outC(p)) : 1;
+    const dy = K.anim === 'rise' ? (said ? 0 : size * 0.12) * 1 : 0;
     ctx.save();
-    ctx.translate(x + widths[i] / 2, y + (1 - pin) * 18); ctx.scale(s, s); ctx.globalAlpha = pin;
+    ctx.translate(x + widths[i] / 2, y + (1 - pin) * 18 + dy); ctx.scale(s, s); ctx.globalAlpha = pin * (K.anim === 'rise' && !said ? 0.55 : 1);
     ctx.textAlign = 'center'; ctx.lineJoin = 'round';
-    ctx.lineWidth = 16; ctx.strokeStyle = 'rgba(12,8,40,0.85)'; ctx.strokeText(clean(w.w), 0, 4);
-    ctx.fillStyle = said ? C.yellow : '#ffffff'; ctx.fillText(clean(w.w), 0, 0);
+    if (K.shadow) { ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = size * 0.18; ctx.shadowOffsetY = size * 0.06; }
+    const sw = K.strokeWidth == null ? 16 : K.strokeWidth;
+    if (sw > 0) { ctx.lineWidth = sw; ctx.strokeStyle = K.stroke || 'rgba(12,8,40,0.85)'; ctx.strokeText(clean(w.w), 0, K.stroke ? 0 : 4); }
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = said ? (K.highlight || C.yellow) : (K.color || '#ffffff'); ctx.fillText(clean(w.w), 0, 0);
     ctx.restore();
     x += widths[i] + gap;
   });

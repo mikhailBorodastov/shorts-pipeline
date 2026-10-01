@@ -220,7 +220,7 @@ def generate(A, vid, montage=None):
         src = os.path.join(P.STANDS if f == "paper.js" else P.ENGINE, f)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(pd, "src", f))
-    for f in ("review.js",):                                  # ревью проекта отвечает окну приложения (S8: момент паузы для «✋ поправить кадр»)
+    for f in ("review.js", "main.js"):                        # ревью отвечает окну приложения (S8); main.js — субтитры по стилю канала (S9)
         shutil.copy2(os.path.join(P.TPL_SRC, f), os.path.join(pd, "src", f))
     vo = voice(vid)
     words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []
@@ -305,7 +305,19 @@ def generate(A, vid, montage=None):
     A.write_text(os.path.join(pd, "build", "music.json"), json.dumps(music, ensure_ascii=False, indent=1))
     # --- src/montage.js + src/scenes.js
     scene_data = {x["el"]: json.load(open(os.path.join(S, "scenes", x["el"], "scene.json"), encoding="utf-8")) for x in unit_js}
-    mj = {"units": unit_js, "overlays": M.get("overlays") or [], "len": total, "captions": (M.get("captions") or {}).get("on", True), "plan": vid}
+    cap_style, cap_fonts = {}, []                              # S9: субтитры по стилю канала (style/captions.json) и свои шрифты канала (style/fonts -> assets/fonts)
+    try:
+        import channel_api
+        cdir = P.channel(P.index()["videos"].get(vid, {}).get("channel"))["dir"]
+        cap_style = json.load(open(os.path.join(cdir, "style", "captions.json"), encoding="utf-8"))
+        for fam, fp in channel_api.channel_fonts({"dir": cdir}):
+            os.makedirs(os.path.join(pd, "assets", "fonts"), exist_ok=True)
+            shutil.copy2(fp, os.path.join(pd, "assets", "fonts", os.path.basename(fp)))
+            cap_fonts.append([fam, "../assets/fonts/" + os.path.basename(fp)])
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    mj = {"units": unit_js, "overlays": M.get("overlays") or [], "len": total, "captions": (M.get("captions") or {}).get("on", True), "plan": vid,
+          "capStyle": {k: v for k, v in cap_style.items() if k != "note"}, "fonts": cap_fonts}
     A.write_text(os.path.join(pd, "src", "montage.js"),
                  "// СГЕНЕРИРОВАНО монтажом Claude Studio (S6, server/montage_api.py) — не правь руками, правь монтаж в приложении.\n"
                  f"const MONTAGE = {json.dumps(mj, ensure_ascii=False)};\n"
@@ -342,7 +354,7 @@ const ASSETS = { images: {}, sequences: {} };
   const P = typeof PICS !== 'undefined' ? PICS : {};
   for (const [k, v] of Object.entries(P)) ASSETS.images[k] = String(v).replace(/^\/files\/[^/]+\//, '../assets/studio/files/');
 })();
-const CAPTION_STYLE = MONTAGE.captions ? undefined : { off: true };
+const CAPTION_STYLE = MONTAGE.captions ? (MONTAGE.capStyle || undefined) : { off: true };   // стиль субтитров канала (S9)
 
 // слова голоса (абсолютные моменты) — для карты «маркер к слову»
 function montageWords() { const out = []; for (const s of VO.sections || []) for (const w of s.words || []) out.push(s.start + w.t); return out; }
@@ -385,6 +397,7 @@ function wrapLines(ctx, text, maxW) {
 // миры сцен: библиотека (lib: / el:), клипы, липсинк — до построения (main.js ждёт STUDIO_READY)
 const MONTAGE_WORLDS = {};
 window.STUDIO_READY = async () => {
+  for (const [fam, url] of MONTAGE.fonts || []) { try { const ff = new FontFace(fam, `url(${url})`); document.fonts.add(ff); await ff.load(); } catch (e) { console.warn('шрифт канала', fam, e); } }
   const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('не загрузилось: ' + src)); document.head.append(s); });
   for (const u of MONTAGE.units) {
     if (MONTAGE_WORLDS[u.el]) continue;

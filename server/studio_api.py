@@ -266,12 +266,17 @@ def publish_rigged(A, job, doc, vid, e, r, as_):
     src = P.resolve("render/" + r["dir"])
     rp = os.path.join(src, "rig.json")
     rig = json.load(open(rp, encoding="utf-8")) if os.path.isfile(rp) else {"type": "hog", "param": True}   # ёжик: риг по параметрам, скелет hog
+    if r.get("model3d"):                                       # S9: 3D-герой из Blender — тип скелета и кости из prefab.js (карта костей позы -> кости арматуры)
+        pf = open(os.path.join(src, "prefab.js"), encoding="utf-8").read()
+        m = re.search(r"skeleton:\s*'([a-z0-9-]+)'", pf)
+        rig = {"type": (m.group(1) if m else (r.get("fn") or "model")), "model": True,
+               "bones": [{"id": k, "bone": b_} for k, b_ in re.findall(r"(\w+):\s*\{\s*bone:\s*'([^']+)'", pf)]}
     sl = as_.split("/", 1)[1] if as_ and as_ != "new" else slug(e.get("name"))
     tmp = os.path.join(lib_dir(c), "characters", sl, "_new")
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp)
     for f in os.listdir(src):
-        if f.endswith(".js") or f == "rig.json":
+        if f.endswith(".js") or f in ("rig.json", "model.glb", "model.py"):
             shutil.copy2(os.path.join(src, f), os.path.join(tmp, f))
         elif f == "costumes":
             shutil.copytree(os.path.join(src, f), os.path.join(tmp, f))
@@ -279,10 +284,10 @@ def publish_rigged(A, job, doc, vid, e, r, as_):
     v = max([x["v"] for x in (card or {}).get("versions") or []] + [0]) + 1
     dst = os.path.join(lib_dir(c), "characters", sl, f"v{v}")
     shutil.move(tmp, dst)
-    res = C.add_version(A, sl, dst, {"rig": "param" if rig.get("param") else "parts", "skeleton": rig.get("type") or "?", "name": e.get("name"), "desc": e.get("desc", ""),
+    res = C.add_version(A, sl, dst, {"rig": "model" if rig.get("model") else "param" if rig.get("param") else "parts", "skeleton": rig.get("type") or "?", "name": e.get("name"), "desc": e.get("desc", ""),
                                      "note": r.get("summary", "")}, cid=c["id"], video={"video": vid, "videoName": doc.get("name"), "element": e["id"], "render": r.get("id")})
-    sk = {"schema": 1, "type": rig.get("type"), "name": rig.get("typeName") or rig.get("type"), "rig": "parts",
-          "bones": [{k: b[k] for k in ("id", "parent", "limits") if k in b} for b in rig.get("bones") or []],
+    sk = {"schema": 1, "type": rig.get("type"), "name": rig.get("typeName") or rig.get("type"), "rig": "model" if rig.get("model") else "parts",
+          "bones": [{k: b[k] for k in ("id", "parent", "limits", "bone") if k in b} for b in rig.get("bones") or []],
           "slots": rig.get("slots") or {}, "poses": rig.get("poses") or {}, "from": {"character": sl, "v": res["v"]}}
     if rig.get("param"):
         if not os.path.isfile(os.path.join(lib_dir(c), "skeletons", "hog.json")):

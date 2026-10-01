@@ -667,3 +667,6 @@ body.agent-open .stage-editor { right: 380px; }
 .capform { display: flex; flex-direction: column; gap: 8px; }
 .herorefs { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
 .herorefs img { height: 140px; border-radius: 8px; cursor: zoom-in; }
+.rules-list { display: flex; flex-direction: column; gap: 8px; }
+.rule { background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
+.capref { max-width: 270px; max-height: 480px; border-radius: 10px; object-fit: contain; background: #111; }

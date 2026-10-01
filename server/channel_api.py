@@ -20,8 +20,28 @@ def now_ms():
     return int(time.time() * 1000)
 
 
-def fonts():
-    return sorted(os.path.splitext(f)[0] for f in os.listdir(P.FONTS) if f.lower().endswith((".ttf", ".otf")))
+def fonts(cid=None):
+    out = [os.path.splitext(f)[0] for f in os.listdir(P.FONTS) if f.lower().endswith((".ttf", ".otf"))]
+    c = P.channel(cid) if cid else None
+    fd = os.path.join(c["dir"], "style", "fonts") if c else ""
+    if fd and os.path.isdir(fd):
+        out += [os.path.splitext(f)[0] for f in os.listdir(fd) if f.lower().endswith((".ttf", ".otf", ".woff2", ".woff"))]
+    return sorted(set(out))
+
+
+def channel_fonts(c):
+    """Свои шрифты канала: [(семейство, путь)] — style/fonts/*."""
+    fd = os.path.join(c["dir"], "style", "fonts")
+    return [(os.path.splitext(f)[0], os.path.join(fd, f)) for f in sorted(os.listdir(fd)) if f.lower().endswith((".ttf", ".otf", ".woff2", ".woff"))] if os.path.isdir(fd) else []
+
+
+# известные правила движка — подписи, если сборка стиля их не описала (старые каналы)
+RULE_DEFS = {
+    "paperFacing": {"label": "Paper Mario: персонажи-карточки поворачиваются к камере", "type": "bool"},
+    "facingMaxDeg": {"label": "Поворот карточек к камере — не больше, градусов", "type": "number"},
+    "style3d": {"label": "Стиль 3D-предметов", "type": "choice", "options": ["paper", "toy", "flat", "lowpoly", "game"]},
+    "toolkit": {"label": "Тулкит 2D-рисования", "type": "choice", "options": ["paper", "new", "none"]},
+}
 
 
 def _git(d, *a):
@@ -83,7 +103,11 @@ def style_files(cid):
         out[k] = json.loads(txt) if f.endswith(".json") and txt.strip() else ({} if f.endswith(".json") else txt)
     hist = sorted(glob.glob(os.path.join(c["dir"], "style", ".history", "*")), reverse=True)[:40]
     out["history"] = [os.path.basename(x) for x in hist]
-    out["fonts"], out["voices"] = fonts(), VOICES
+    out["fonts"], out["voices"] = fonts(c["id"]), VOICES
+    out["chanFonts"] = [n for n, _ in channel_fonts(c)]
+    out["chanFontFiles"] = [[n, "style/fonts/" + os.path.basename(fp)] for n, fp in channel_fonts(c)]
+    cr = os.path.join(c["dir"], "style", "captions-ref.png")
+    out["capRef"] = "style/captions-ref.png" if os.path.isfile(cr) else ""
     hd = os.path.join(c["dir"], "style", "hero")
     out["heroRefs"] = sorted("style/hero/" + f for f in os.listdir(hd) if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))) if os.path.isdir(hd) else []
     return out
@@ -185,10 +209,14 @@ def chanstyle_spec(A, doc):
 - palette — 6–10 цветов: name, hex, use (где: фон, герой, акцент, текст…).
 - fonts — title (заголовки и обложки), body (субтитры), hand (рукописный) — из доступных: {', '.join(fonts())}; если нужен другой шрифт — в note, автор добавит.
 - voice — голос диктора для edge-tts: voice из {', '.join(VOICES)}, rate (например +20%), pitch (например +0Hz), note (почему).
-- captions — субтитры: font, size (60–90), color, stroke, y (доля высоты кадра, 0.7–0.8), maxWords (1–4), upper (true/false).
-- rules — paperFacing (true — бумажные карточки-персонажи поворачиваются к камере, как в Paper Mario), facingMaxDeg (20–45).
-- style3d — стиль 3D-предметов: paper (бумажный макет) | toy (пластилин / игрушка) | flat (плоские цветные формы) | lowpoly.
-- toolkit — paper (бумажный тулкит канала «Доедать будешь»: рваные вырезки, рукописные плашки) или new (свой — если стиль совсем другой); toolkit_note — что в нём поменять.
+- captions — субтитры слово за словом (караоке: сказанное слово подсвечивается): font, weight (600–900), size (60–100), color (несказанные слова), highlight (сказанное слово),
+  stroke (цвет обводки), strokeWidth (0–20), shadow (true/false), box (подложка: "" — нет, или цвет #rrggbb), boxAlpha (0–1), y (доля высоты кадра, 0.7–0.8), maxWords (1–4), upper (true/false),
+  anim — появление слова: pop (подпрыгивает) | rise (всплывает) | none; note — почему так.
+- rules — ТОЛЬКО правила, которые реально нужны ЭТОМУ каналу (не переносить чужие по инерции). Каждое: key, label (человеческим языком), type (bool | number | text | choice), value (строкой), options (для choice), why.
+  Движок понимает: paperFacing / facingMaxDeg — только если герои — плоские бумажные карточки (как в Paper Mario); style3d — стиль 3D-предметов (paper | toy | flat | lowpoly | game);
+  toolkit — 2D-тулкит рисования (paper — бумажный, new — свой, none — 2D почти не нужен). Остальные правила — для Claude при сценариях и сборке (например «тролль говорит о себе в третьем лице»,
+  «реклама — только нативно»), key — латиницей. Обычно 4–8 правил.
+- toolkit_note — если 2D-тулкит нужен, что в нём должно быть (иначе пусто).
 - hero — главный герой: name, desc (внешность для художника, подробно: силуэт, цвета, детали), character (характер), skeleton (как устроено тело: двуногий, четвероногий, крылья, хвост…).
 
 Пример структуры стайл-гайда другого канала (не копируй стиль — только устройство документа):
@@ -202,14 +230,42 @@ def chanstyle_spec(A, doc):
                 "palette": ARR(S({"name": STR, "hex": STR, "use": STR}, ["name", "hex", "use"])),
                 "fonts": S({"title": STR, "body": STR, "hand": STR, "note": STR}, ["title", "body", "hand"]),
                 "voice": S({"voice": STR, "rate": STR, "pitch": STR, "note": STR}, ["voice", "rate"]),
-                "captions": S({"font": STR, "size": NUM, "color": STR, "stroke": STR, "y": NUM, "maxWords": NUM, "upper": BOOL}, ["font", "size", "color", "y", "maxWords"]),
-                "rules": S({"paperFacing": BOOL, "facingMaxDeg": NUM}, ["paperFacing"]),
-                "style3d": {"type": "string", "enum": ["paper", "toy", "flat", "lowpoly"]},
-                "toolkit": {"type": "string", "enum": ["paper", "new"]}, "toolkit_note": STR,
+                "captions": CAPS_SCHEMA(C),
+                "rules": ARR(S({"key": STR, "label": STR, "type": {"type": "string", "enum": ["bool", "number", "text", "choice"]}, "value": STR, "options": ARR(STR), "why": STR},
+                               ["key", "label", "type", "value"])),
+                "toolkit_note": STR,
                 "hero": S({"name": STR, "desc": STR, "character": STR, "skeleton": STR}, ["name", "desc"])},
-               ["style_guide", "about", "palette", "fonts", "voice", "captions", "rules", "style3d", "toolkit", "hero"])
+               ["style_guide", "about", "palette", "fonts", "voice", "captions", "rules", "hero"])
     return {"system": "Ты — арт-директор и продюсер YouTube-канала. По интервью автора собираешь стиль канала для Claude Studio. Пишешь по-русски, конкретно. Отвечай строго JSON по схеме.",
             "prompt": prompt, "schema": schema, "timeout": 900}
+
+
+def CAPS_SCHEMA(C):
+    NUM, BOOL, STR = {"type": "number"}, {"type": "boolean"}, C.STR
+    return C.S({"font": STR, "weight": NUM, "size": NUM, "color": STR, "highlight": STR, "stroke": STR, "strokeWidth": NUM, "shadow": BOOL, "box": STR, "boxAlpha": NUM,
+                "y": NUM, "maxWords": NUM, "upper": BOOL, "anim": {"type": "string", "enum": ["pop", "rise", "none"]}, "note": STR},
+               ["font", "size", "color", "highlight", "y", "maxWords"])
+
+
+def rule_value(r):
+    v, t = r.get("value"), r.get("type")
+    if t == "bool":
+        return str(v).strip().lower() in ("true", "1", "да", "yes")
+    if t == "number":
+        try:
+            return float(v) if "." in str(v) else int(v)
+        except (TypeError, ValueError):
+            return 0
+    return v
+
+
+def chancaps_spec(A, doc, img):
+    C = A.capi()
+    return {"system": "Ты — моушн-дизайнер. По картинке-примеру настраиваешь субтитры Claude Studio. Отвечай строго JSON по схеме.",
+            "prompt": f"""Автор канала «{doc.get('name')}» хочет субтитры как на картинке: {img.replace(chr(92), '/')} — посмотри её (Read).
+Повтори стиль как можно ближе: цвет несказанных слов и подсвеченного слова, обводка и её толщина, тень, подложка, жирность, регистр, сколько слов за раз, высота на кадре 9:16 (доля от верха).
+Шрифт — из доступных ({', '.join(fonts(doc['id']))}); если на картинке другой — возьми самый похожий и напиши в note, какой это шрифт, чтобы автор загрузил его (.ttf).""",
+            "schema": C.S({"captions": CAPS_SCHEMA(C)}), "read": [img], "tools": ["Read"], "allowed": ["Read"], "dirs": [os.path.dirname(img)]}
 
 
 def run_job(A, job):
@@ -236,17 +292,32 @@ def run_job(A, job):
         save_style_file(A, cid, "palette", {"colors": r.get("palette") or [], "fonts": r.get("fonts") or {}})
         save_style_file(A, cid, "voice", r.get("voice") or {})
         save_style_file(A, cid, "captions", r.get("captions") or {})
-        rules = dict(doc.get("rules") or {}, **{k: v for k, v in (r.get("rules") or {}).items() if v is not None})
+        defs = [d for d in r.get("rules") or [] if d.get("key")]
+        rules = {d["key"]: rule_value(d) for d in defs}           # только правила этого канала — чужие (Paper Mario у 3D-канала) не переносятся
         ops = [{"op": "set", "path": ["about"], "value": r.get("about") or doc.get("about", "")},
                {"op": "set", "path": ["rules"], "value": rules},
-               {"op": "set", "path": ["style3d"], "value": r.get("style3d") or "paper"},
-               {"op": "set", "path": ["toolkitChoice"], "value": {"kind": r.get("toolkit") or "paper", "note": r.get("toolkit_note") or ""}},
+               {"op": "set", "path": ["ruleDefs"], "value": defs},
+               {"op": "set", "path": ["style3d"], "value": rules.get("style3d") or doc.get("style3d") or "paper"},
+               {"op": "set", "path": ["toolkitChoice"], "value": {"kind": rules.get("toolkit") or "none", "note": r.get("toolkit_note") or ""}},
                {"op": "set", "path": ["hero"], "value": dict((doc.get("hero") or {}), **(r.get("hero") or {}))},
                {"op": "set", "path": ["interview", "done"], "value": True},
                {"op": "set", "path": ["interview", "styled"], "value": now_ms()}]
         A.apply_ops(job.key, ops)
-        job.result = {k: r.get(k) for k in ("about", "voice", "captions", "style3d", "toolkit", "hero")}
+        job.result = {k: r.get(k) for k in ("about", "voice", "captions", "rules", "hero")}
         job.summary = f"Стиль собран: стайл-гайд, {len(r.get('palette') or [])} цветов, голос {(r.get('voice') or {}).get('voice', '')}, герой «{(r.get('hero') or {}).get('name', '')}»"
+        return True
+    if job.kind == "chancaps":
+        img = os.path.join(chan(cid)["dir"], "style", "captions-ref.png")
+        if not os.path.isfile(img):
+            raise ValueError("сначала загрузи картинку с субтитрами")
+        spec = chancaps_spec(A, doc, img)
+        spec["model"] = A.TEXT_MODEL
+        job.summary = "Claude смотрит картинку…"
+        r = A.run_claude(job, spec)
+        cur = style_files(cid).get("captions") or {}
+        save_style_file(A, cid, "captions", dict(cur, **(r.get("captions") or {})))
+        job.result = r.get("captions")
+        job.summary = "Субтитры — как на картинке" + ((": " + r["captions"]["note"]) if (r.get("captions") or {}).get("note") else "")
         return True
     if job.kind == "chanhero":
         job.result = hero_setup(A, cid)
@@ -357,6 +428,23 @@ def handle_post(A, h, p, body):
     cid = body.get("channel") or None
     if p == "/api/channel/new":
         h._json(new_channel(A, body.get("name"), body.get("icon"), body.get("about") or "")); return True
+    if p == "/api/channel/upload":                            # свой шрифт (style/fonts) или пример субтитров (style/captions-ref.png), base64
+        import base64
+        c = chan(cid)
+        data = base64.b64decode((body.get("data") or "").split(",")[-1])
+        if body.get("kind") == "font":
+            name = os.path.basename(body.get("name") or "font.ttf")
+            if not name.lower().endswith((".ttf", ".otf", ".woff2", ".woff")):
+                raise ValueError("нужен файл шрифта .ttf / .otf / .woff2")
+            os.makedirs(os.path.join(c["dir"], "style", "fonts"), exist_ok=True)
+            open(os.path.join(c["dir"], "style", "fonts", name), "wb").write(data)
+            h._json({"font": os.path.splitext(name)[0]}); return True
+        if body.get("kind") == "capref":
+            from PIL import Image
+            import io
+            Image.open(io.BytesIO(data)).convert("RGB").save(os.path.join(c["dir"], "style", "captions-ref.png"))
+            h._json({"ok": True}); return True
+        raise ValueError("что загружаем?")
     if p == "/api/channel/stylefile":
         h._json({"path": save_style_file(A, cid, body.get("kind"), body.get("value"))}); return True
     if p == "/api/channel/restore":
@@ -364,8 +452,8 @@ def handle_post(A, h, p, body):
     if p == "/api/channel/voicetest":
         v = body.get("voice") or {}
         h._json({"f": voice_test(v.get("voice") or VOICES[0], v.get("rate") or "+20%", v.get("pitch") or "+0Hz", body.get("text") or "Привет! Так будет звучать голос канала.")}); return True
-    if p in ("/api/channel/questions", "/api/channel/style-build", "/api/channel/hero"):
-        kind = {"/api/channel/questions": "chanq", "/api/channel/style-build": "chanstyle", "/api/channel/hero": "chanhero"}[p]
+    if p in ("/api/channel/questions", "/api/channel/style-build", "/api/channel/hero", "/api/channel/captions-from-ref"):
+        kind = {"/api/channel/questions": "chanq", "/api/channel/style-build": "chanstyle", "/api/channel/hero": "chanhero", "/api/channel/captions-from-ref": "chancaps"}[p]
         c = chan(cid)
         j = A.start_job(kind, "channel:" + c["id"], kind, {k: body.get(k) for k in ("block", "n")})
         h._json({"job": j.info()}); return True

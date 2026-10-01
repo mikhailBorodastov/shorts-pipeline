@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 13
+API_VERSION = 14
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -835,7 +835,7 @@ def _run_job(job):
             stapi().run_job(sys.modules[__name__], job)
         elif job.kind.startswith("scene"):
             scapi().run_job(sys.modules[__name__], job)
-        elif job.kind in ("chanq", "chanstyle", "chanhero"):    # S9: интервью канала, сборка стиля, герой канала
+        elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps"):    # S9: интервью канала, сборка стиля, герой канала
             chnapi().run_job(sys.modules[__name__], job)
         elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
             mnapi().run_job(sys.modules[__name__], job)
