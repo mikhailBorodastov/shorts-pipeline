@@ -45,7 +45,7 @@ def now_ms():
 
 # ---------------------------------------------------------------- where
 def work_dir(A, pid, el):
-    if not re.fullmatch(r"[a-z0-9-]{3,40}", pid or "") or not re.fullmatch(r"e[0-9a-f]{4,12}", el or ""):
+    if not re.fullmatch(r"[a-z0-9-]{3,40}", pid or "") or not re.fullmatch(r"e[0-9a-z]{4,16}", el or ""):
         raise ValueError("плохой ключ сцены")
     return os.path.join(P.render(pid), el, "work")
 
