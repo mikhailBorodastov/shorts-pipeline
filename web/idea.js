@@ -117,6 +117,31 @@ function trellisDlg(key, e, cur, mode = 'draft') {
   draw();
   const close = UI.modal(mode === 'retex' ? `🎨 Перетекстурить «${e.name}» v${cur.v}` : `🖥 TRELLIS локально · ${prop ? '3D-пропс' : 'герой'} «${e.name}»`, body);
 }
+// 📚 из библиотеки в препродакшен (studio_api.import_to_video): выбрать предмет, версию и написать, что это в ролике и где — Claude это прочтёт
+async function libImport(d, key, K) {
+  const kind = K.key === 'char' ? 'characters' : 'props';
+  let items = [];
+  try { items = (await api('GET', '/api/lib?kind=' + kind)).items; } catch (e) { return UI.toast(e.message, 'err'); }
+  if (!items.length) return UI.toast(`В библиотеке канала пока нет: ${K.label.toLowerCase()}`, 'err');
+  const chan = (App.info.channel || {}).id, st = { id: '', why: '' };
+  const body = h('div.libimp');
+  const draw = () => {
+    const q = (st.q || '').toLowerCase();
+    body.replaceChildren(...[
+      h('input.box', { placeholder: '🔎 найти', value: st.q || '', key: 'limq', oninput: e => { st.q = e.target.value; draw(); } }),
+      h('div.libgrid.compact', items.filter(it => !q || (it.name + ' ' + (it.desc || '')).toLowerCase().includes(q)).map(it => h('div.libcard', { class: st.id === it.id ? 'sel' : '', onclick: () => { st.id = it.id; draw(); } },
+        it.preview ? h('img', { src: `/api/lib/file/${chan}/${it.preview}`, alt: '' }) : h('div.noimg', '📦'),
+        h('b', it.name, it.d3 ? ' 🧊' : ''), h('span.dim.small', `v${it.latest}`)))),
+      st.id && h('label', 'Что это в ролике и где использовать', h('textarea.box', { rows: 3, key: 'limwhy', placeholder: '«стоит на столе слева от монитора в сцене «Комната»; на него падает свет лампы»', oninput: e => { st.why = e.target.value; } })),
+      h('div.row', h('span.sp'), h('button.primary', { disabled: !st.id, onclick: async () => {
+        try { const r = await api('POST', '/api/lib/import', { key, id: st.id, why: st.why }); close(); await Store.load(key, true); App.render(); UI.toast(`📚 «${r.name}» в видео (${r.ref})`); }
+        catch (e) { UI.toast(e.message, 'err'); }
+      } }, '📚 Взять в видео'))].filter(Boolean));
+    const t = body.querySelector('textarea'); if (t) t.value = st.why;
+  };
+  draw();
+  const close = UI.modal(`📚 ${K.label} из библиотеки`, body, { wide: true });
+}
 const ASSET_KIND = { '3d': '3D', '2d': '2D', tex: 'текстура' };
 const ASSET_SRC = { polypizza: 'Poly Pizza', polyhaven: 'Poly Haven', sketchfab: 'Sketchfab', oga: 'OpenGameArt', openverse: 'Openverse', commons: 'Commons', ambientcg: 'ambientCG',
   quaternius: 'Quaternius', kenney: 'Kenney', smithsonian: 'Smithsonian', objaverse: 'Objaverse', upload: 'своя', meshy: 'Meshy', tripo: 'Tripo' };
@@ -298,6 +323,7 @@ Object.assign(Plan, {
     const castOk = cast.filter(e => e.status === 'ok').length;
     return h('section.card',
       h('div.card-head', h('h3', K.icon + ' ' + K.label), h('span.counter', { class: live && ok === live ? 'ok' : '' }, `${ok}/${live}`), h('span.dim', K.hint), h('span.sp'),
+        (K.key === 'char' || K.key === 'prop') && h('button.mini', { onclick: () => libImport(d, key, K), title: `Взять готов${K.key === 'char' ? 'ого персонажа' : 'ый пропс'} из библиотеки канала: копия версии станет утверждённым элементом этого видео` }, '📚 Из библиотеки'),
         Claude.btn({ label: 'Ещё', action: 'elements', key, scope: 'elements:' + K.key, params: () => ({ kind: K.key, focus: focus.value }), cls: 'mini',
           title: `Claude предложит ещё: ${K.label.toLowerCase()} (учтёт поле «чего не хватает?»)` })),
       K.key === 'scene' && cast.length > 0 && castOk < cast.length && h('p.warnline', `Персонажи и пропсы утверждены: ${castOk} из ${cast.length}. `,

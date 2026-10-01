@@ -379,6 +379,9 @@ name — коротко (2–5 слов); desc — как выглядит ил�
     elif action == "trellisfix":
         return trellisfix_spec(docs, params, sysp)
 
+    elif action == "libfix":
+        return libfix_spec(docs, params, sysp)
+
     elif action == "animteach":
         return animteach_spec(docs, params, sysp)
 
@@ -910,6 +913,67 @@ reply — 1–3 фразы автору по-русски, что и почем�
              "pad": {"type": "number"}, "bg": {"type": "boolean"}, "faces": {"type": "integer"}, "tex": {"type": "integer"}}, ["reply", "reseed"])
     dirs = [bd, wd] + sorted({os.path.dirname(P.resolve(r["img"])) for r in refs})
     return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 600, "tools": ["Read"], "allowed": ["Read"], "dirs": dirs, "schema": sch}
+
+
+def libfix_spec(docs, params, sysp):
+    """✏️ Правка предмета библиотеки (страница предмета): lib fork -> новая версия, Claude правит её файлы по пинам и заметкам, снимает превью.
+    Старые версии не меняются (их держат сцены видео), новая становится основной."""
+    import studio_api as SA
+    c = SA.channel_dir(params.get("channel"))
+    lid, v = params["id"], int(params.get("v") or 0)
+    cp, card = SA._card(c, lid)
+    v = v or card["latest"]
+    base = os.path.join(SA.lib_dir(c), *lid.split("/"), f"v{v}")
+    if not os.path.isfile(os.path.join(base, "prefab.js")):
+        raise ValueError("у этой версии нет prefab.js — 2D-предметы правятся в препродакшене видео (новой версией оттуда)")
+    notes = [n.strip() for n in params.get("notes") or [] if str(n).strip()]
+    pins3 = [p for p in params.get("pins3d") or [] if p.get("p")]
+    if not (notes or pins3):
+        raise ValueError("правок нет: поставь пины на модели или напиши, что поменять")
+    fb = "; ".join(notes + [f"📍{i} {p.get('text') or '(смотри место)'}" for i, p in enumerate(pins3, 1)])
+    r = SA.fork(docs_A(docs), c, f"{lid}@{v}", "", fb, by="claude")
+    wd = r["dir"]
+    params.update(_wd=wd, _ref=r["ref"], _fb=fb, _name=card.get("name"))
+    kind = lid.split("/")[0]
+    shots = []
+    if pins3:
+        pj = os.path.join(wd, "_fix", "pins.json")
+        os.makedirs(os.path.dirname(pj), exist_ok=True)
+        json.dump([{"n": i, "p": p["p"]} for i, p in enumerate(pins3, 1)], open(pj, "w", encoding="utf-8"))
+        subprocess.run(["node", os.path.join(P.STANDS, "render_prop.js"), f"/api/lib/file/{c['id']}/{lid}/v{v}/prefab.js", os.path.join(wd, "_fix"), "--port", str(docs["port"]), "--pins", pj],
+                       capture_output=True, timeout=300)
+        if os.path.isfile(os.path.join(wd, "_fix", "pins.png")):
+            shots.append(os.path.join(wd, "_fix", "pins.png"))
+    for f in ("preview.png", "_shots/element.png"):
+        if os.path.isfile(os.path.join(base, f)):
+            shots.append(os.path.join(base, f))
+    files = sorted(f for f in os.listdir(wd) if os.path.isfile(os.path.join(wd, f)))
+    sp = _fwd(os.path.join(P.SERVER, "studio.py"))
+    br = _fwd(os.path.join(P.STANDS, "blender_run.py"))
+    lines = [f"- «{t}»" for t in notes] + [f"- 📍 пин {i}: точка {p['p']} на модели: «{p.get('text') or 'автор отметил место без слов — посмотри'}»" for i, p in enumerate(pins3, 1)]
+    prompt = f"""Правка предмета библиотеки канала: «{card.get('name')}» ({lid}). Это НОВАЯ версия {r['ref']} — копия v{v}, папка {_fwd(wd)} (файлы: {', '.join(files)}).
+Правь только файлы в этой папке; старые версии и всё остальное не трогай.
+
+Что просит автор:
+{chr(10).join(lines)}
+
+Посмотри через Read прошлую версию: {', '.join(_fwd(x) for x in shots) or 'кадров нет'}{' (pins.png — номера пинов с четырёх сторон, полый кружок — пин с обратной стороны)' if pins3 else ''}.
+Как устроен предмет: prefab.js — {'персонаж: character({{…}}) (engine/rig.js), rig.json — суставы и позы' if kind == 'characters' else 'prop3d({{…}}) (engine/props3d.js: фигуры P3.box / cyl / lathe / extrude, наклейки P3.sticker; kind: model — model.glb + detail)'}.
+- Есть model.py — это Blender: правь его и пересобери модель: python {br} {_fwd(os.path.join(wd, 'model.py'))}
+- Только model.glb (модель из TRELLIS / Meshy / ассета) — форму меняй скриптом Blender: напиши {_fwd(os.path.join(wd, 'fix_model.py'))} (bpy: открыть model.glb, поменять, сохранить
+  model.glb рядом с export_yup=True) и запусти: python {br} {_fwd(os.path.join(wd, 'fix_model.py'))}; цвет / размер / мелкие детали проще — в prefab.js (h, detail, наклейки).
+  Узлы модели: python {sp} model info {_fwd(os.path.join(wd, 'model.glb'))}
+- После правки сними кадры: python {sp} lib preview {r['ref'][4:]} — и посмотри их через Read (папка _shots); поправь, если вышло не так. 2–3 прохода.
+Ответь JSON: summary — 1–2 фразы автору, что поменял; note — что проверить."""
+    sch = S({"summary": STR, "note": STR}, ["summary"])
+    allowed = ["Read", "Edit", "Write", "Grep", "Glob", f"Bash(python {sp}:*)", f"Bash(python {br}:*)"]
+    return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 2400, "tools": ["Read", "Edit", "Write", "Grep", "Glob", "Bash"], "allowed": allowed,
+            "dirs": [wd, base, P.ENGINE, P.STANDS], "schema": sch}
+
+
+def docs_A(docs):
+    import ideas_api
+    return ideas_api
 
 
 def charparts_spec(docs, params, sysp):
@@ -1629,6 +1693,24 @@ def apply(action, docs, params, res):
             shutil.copy2(os.path.join(wd, "strip.png"), os.path.join(dst_dir, slug + ".png"))
         res.update({"id": a["id"], "name": a["name"], "dur": a.get("dur"), "loop": a.get("loop", False)})
         return [], f"Claude выучил «{a['name']}» ({a['id']}, {a.get('dur')} с) — в библиотеке анимаций типа {typ}"
+
+    if action == "libfix":                                        # новая версия библиотеки: превью (если Claude не снял), заметка правки в карточке
+        import studio_api as SA
+        c = SA.channel_dir(params.get("channel"))
+        ref = params["_ref"][4:]
+        lid, nv = ref.split("@")[0], int(ref.split("@")[1])
+        try:
+            SA.preview(docs_A(docs), c, ref)
+        except Exception as e:
+            print("! libfix preview:", e)
+        cp, card = SA._card(c, lid)
+        for x in card["versions"]:
+            if x["v"] == nv:
+                x.update(feedback=params.get("_fb", ""), summary=res.get("summary", ""), note=res.get("note", ""), by="claude")
+        open(cp, "w", encoding="utf-8").write(json.dumps(card, ensure_ascii=False, indent=1))
+        SA.set_meta(docs_A(docs), c, lid, {})
+        res["ref"] = params["_ref"]
+        return [], f"«{params.get('_name')}» v{nv}: {res.get('summary', 'поправлено')}"
 
     if action == "trellisfix":                                    # правки сняты, параметры уходят в задачу charmodel (её запускает страница по onResult)
         eid = params["el"]

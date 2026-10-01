@@ -46,7 +46,7 @@ EFFORT = os.environ.get("IDEAS_EFFORT", "")
 # модели кнопок ✨: текст (вопросы, биты, названия, список элементов, подбор звука) — Sonnet, визуал (черновики элементов, обложка и первый кадр) — Opus
 TEXT_MODEL = os.environ.get("IDEAS_TEXT_MODEL", "sonnet")           # алиас: самый новый Sonnet, который знает установленный Claude Code
 VISUAL_MODEL = os.environ.get("IDEAS_VISUAL_MODEL", "claude-opus-5-5")
-VISUAL_ACTIONS = ("element", "render", "charparts", "animteach")
+VISUAL_ACTIONS = ("element", "render", "charparts", "animteach", "libfix")
 TEXT_EFFORT = {"elements": "medium", "sound": "medium", "assets": "medium"}              # усилие для текстовых кнопок препродакшена; остальные — по умолчанию Claude Code
 VISUAL_EFFORT = os.environ.get("IDEAS_VISUAL_EFFORT", "")           # пусто — по умолчанию Claude Code
 MAX_JOBS = 3

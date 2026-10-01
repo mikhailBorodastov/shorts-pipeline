@@ -688,3 +688,24 @@ body.agent-open .stage-editor { right: 380px; }
 .cropframe { position: relative; display: inline-block; max-width: 100%; cursor: crosshair; user-select: none; touch-action: none; }
 .cropframe img { display: block; max-width: 100%; max-height: 46vh; }
 .croprect { position: absolute; border: 2px solid var(--accent, #d97757); box-shadow: 0 0 0 9999px #0007; pointer-events: none; }
+
+/* 📚 предмет библиотеки (libitem.js) */
+.li-main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
+.li-view { position: sticky; top: 8px; }
+.li-frame { width: 100%; height: 66vh; border: 0; border-radius: 8px; background: #ece6da; }
+.li-img { max-width: 100%; max-height: 70vh; border-radius: 8px; }
+.li-side { display: flex; flex-direction: column; gap: 10px; }
+.li-side textarea, .li-side input.box { width: 100%; box-sizing: border-box; }
+.li-vers { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; }
+.li-ver { display: flex; gap: 8px; align-items: flex-start; padding: 4px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.li-ver img, .li-ver .noimg { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; flex: none; }
+.li-ver.sel { border-color: var(--accent, #d97757); }
+.li-ver.main b { color: var(--accent, #d97757); }
+.li-usage { margin: 0; padding-left: 18px; }
+.li-danger .row { gap: 8px; }
+@media (max-width: 1000px) { .li-main { grid-template-columns: 1fr; } .li-view { position: static; } }
+
+.libimp .libcard { cursor: pointer; border: 2px solid transparent; }
+.libimp .libcard.sel { border-color: var(--accent, #d97757); }
+.libimp label { display: block; margin-top: 8px; }
+.libimp textarea { width: 100%; box-sizing: border-box; }

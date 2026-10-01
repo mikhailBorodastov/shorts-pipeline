@@ -331,6 +331,9 @@ def handle_get(A, h, p, q):
             raise ValueError("плохой id")
         kind = lid.split("/")[0]
         h._json(json.load(open(os.path.join(lib_dir(c), *lid.split("/"), kind.rstrip("s") + ".json"), encoding="utf-8"))); return True
+    if p == "/api/lib/usage":
+        c = channel_dir(_q1(q, "channel") or None)
+        h._json({"items": usage(A, c, _q1(q, "id"))}); return True
     if p == "/api/lib/candidates":
         h._json({"items": candidates(A, _q1(q, "video") or None)}); return True
     if p.startswith("/api/lib/file/"):                       # /api/lib/file/<channel | video:<id>>/<kind>/<slug>/v<N>/<file>
@@ -366,6 +369,24 @@ def handle_post(A, h, p, body):
         page = body.get("page") if body.get("page") in ("script", "preview") else "review"
         url = f"http://localhost:{port}/src/index.html?preview" if page == "preview" else f"http://localhost:{port}/src/{page}.html"   # preview — плеер кадров для этапа «Монтаж» (S6)
         h._json({"port": port, "url": url, "dir": vdir}); return True
+    if p == "/api/lib/meta":
+        c = channel_dir(body.get("channel") or None)
+        h._json(set_meta(A, c, body.get("id", ""), body)); return True
+    if p == "/api/lib/fork":                                  # 🧬 дублировать: копия версии новым предметом (или новой версией того же) — потом править
+        c = channel_dir(body.get("channel") or None)
+        lid, v = body.get("id", ""), body.get("v")
+        r = fork(A, c, f"{lid}@{v}" if v else lid, (body.get("as") or "").strip(), body.get("note") or "", by="author")
+        h._json(r); return True
+    if p == "/api/lib/import":                                # 📚 из библиотеки в препродакшен видео
+        h._json(import_to_video(A, body.get("key", ""), body.get("id", ""), body.get("v"), body.get("why") or "", body.get("name") or "")); return True
+    if p == "/api/lib/archive":
+        c = channel_dir(body.get("channel") or None)
+        h._json(archive_item(A, c, body.get("id", ""), body.get("v"), bool(body.get("force")))); return True
+    if p == "/api/lib/fix":                                   # ✏️ правка предмета библиотеки: Claude делает новую версию (ideas_claude.libfix_spec)
+        c = channel_dir(body.get("channel") or None)
+        j = A.start_job("libfix", "channel:" + c["id"], "libfix:" + body.get("id", ""),
+                        {"id": body.get("id"), "v": body.get("v"), "channel": c["id"], "notes": body.get("notes") or [], "pins3d": body.get("pins3d") or [], "pins": body.get("pins") or []})
+        h._json({"job": j.info()}); return True
     if p == "/api/lib/publish":
         j = A.start_job("libpublish", body.get("key", ""), f"libpublish:{body.get('el', '')}", {"el": body.get("el"), "as": body.get("as") or "new"})
         h._json({"job": j.info()}); return True
@@ -453,6 +474,141 @@ def preview(A, c, ref):
     return {"preview": os.path.join(d, "preview.png").replace("\\", "/"), "shots": out.replace("\\", "/"), "log": (r.stdout or "").strip()[-300:]}
 
 
+# ---------------------------------------------------------------- страница предмета библиотеки: где используется, имя, основная версия, архив
+def _card(c, lid):
+    kind = lid.split("/")[0]
+    p = os.path.join(lib_dir(c), *lid.split("/"), kind.rstrip("s") + ".json")
+    return p, json.load(open(p, encoding="utf-8"))
+
+
+def usage(A, c, lid):
+    """Где предмет стоит: сцены редактора видео канала (objects[].src.prefab = lib:<id>@N, libs сцены). -> [{video, videoName, el, scene, v, objects}]"""
+    out = []
+    pat = re.compile(r"^lib:" + re.escape(lid) + r"@(\d+)$")
+    for vid, x in P.index()["videos"].items():
+        if x.get("channel") != c["id"]:
+            continue
+        vd = P.video(vid)
+        pre = os.path.join(vd or "", "preprod")
+        if not vd or not os.path.isdir(pre):
+            continue
+        for el in os.listdir(pre):
+            sp = os.path.join(pre, el, "work", "scene.json")
+            if not os.path.isfile(sp):
+                continue
+            try:
+                d = json.load(open(sp, encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            hits = {}
+            for o in d.get("objects") or []:
+                m = pat.match(((o.get("src") or {}).get("prefab")) or "")
+                if m:
+                    hits.setdefault(int(m.group(1)), []).append(o.get("name") or o.get("id"))
+            for ref in d.get("libs") or []:
+                m = pat.match(ref or "")
+                if m:
+                    hits.setdefault(int(m.group(1)), []).append("(код сцены)")
+            for v, objs in hits.items():
+                out.append({"video": vid, "videoName": x.get("name") or os.path.basename(vd), "el": el, "scene": d.get("name") or el, "v": v, "objects": objs})
+    return out
+
+
+def set_meta(A, c, lid, body):
+    """Имя, описание, теги, основная версия (latest — её берут новые сцены; старые держат свою @N)."""
+    cp, card = _card(c, lid)
+    for k in ("name", "desc"):
+        if isinstance(body.get(k), str) and body[k].strip():
+            card[k] = body[k].strip()
+    if isinstance(body.get("tags"), list):
+        card["tags"] = [str(t).strip() for t in body["tags"] if str(t).strip()][:20]
+    if body.get("latest") is not None:
+        v = int(body["latest"])
+        if not any(x["v"] == v for x in card["versions"]):
+            raise ValueError(f"нет версии v{v}")
+        card["latest"] = v
+    A.write_text(cp, json.dumps(card, ensure_ascii=False, indent=1))
+    items = lib_index(c)
+    row = next((i for i in items if i["id"] == lid), None)
+    if row:
+        ver = next((x for x in card["versions"] if x["v"] == card["latest"]), {})
+        row.update(name=card["name"], desc=card.get("desc", ""), tags=card.get("tags", []), latest=card["latest"],
+                   preview=f"{lid}/{ver['preview']}" if ver.get("preview") else row.get("preview", ""), updated=now_ms())
+        lib_save_index(A, c, sorted(items, key=lambda i: (i["kind"], i["name"].lower())))
+    return card
+
+
+def archive_item(A, c, lid, v=None, force=False):
+    """🗑 Ничего не удаляем: предмет (или одна версия) уезжает в _archive/library/<канал>/… и пропадает из библиотеки.
+    Если он стоит в сценах — без force отказ со списком (сцены остались бы без предмета)."""
+    used = [u for u in usage(A, c, lid) if v is None or u["v"] == v]
+    if used and not force:
+        return {"used": used}
+    cp, card = _card(c, lid)
+    stamp = time.strftime("%y%m%d-%H%M%S")
+    dst_root = os.path.join(P.ARCHIVE, "library", c["id"], *lid.split("/"))
+    os.makedirs(dst_root, exist_ok=True)
+    items = lib_index(c)
+    if v is None or len(card["versions"]) <= 1:
+        src = os.path.join(lib_dir(c), *lid.split("/"))
+        shutil.move(src, os.path.join(dst_root, "whole-" + stamp))
+        lib_save_index(A, c, [i for i in items if i["id"] != lid])
+        return {"archived": lid, "to": os.path.join(dst_root, "whole-" + stamp)}
+    v = int(v)
+    src = os.path.join(lib_dir(c), *lid.split("/"), f"v{v}")
+    if not os.path.isdir(src):
+        raise ValueError(f"нет версии v{v}")
+    shutil.move(src, os.path.join(dst_root, f"v{v}-{stamp}"))
+    card["versions"] = [x for x in card["versions"] if x["v"] != v]
+    card.setdefault("archived", []).append({"v": v, "ts": now_ms(), "to": f"_archive/library/{c['id']}/{lid}/v{v}-{stamp}"})
+    if card.get("latest") == v:
+        card["latest"] = max(x["v"] for x in card["versions"])
+    A.write_text(cp, json.dumps(card, ensure_ascii=False, indent=1))
+    set_meta(A, c, lid, {})
+    return {"archived": f"{lid}@{v}"}
+
+
+def import_to_video(A, key, lid, v=None, why="", name=""):
+    """📚 Из библиотеки в препродакшен видео: копия версии -> preprod/<el>/v1 (её файлы — готовый черновик элемента), элемент утверждён ✓,
+    why — что это в ролике и где использовать (Claude читает его при сценах). Сцены видео ставят его как el:<id>@v1, источник — в e.lib."""
+    pid = key[5:]
+    c = channel_dir(P.index()["videos"].get(pid, {}).get("channel"))
+    cp, card = _card(c, lid)
+    kind = lid.split("/")[0]
+    ek = {"characters": "char", "props": "prop"}.get(kind)
+    if not ek:
+        raise ValueError("импортировать можно персонажей и пропсы (звуки — через «🔎 Искать» у звука)")
+    v = int(v or card["latest"])
+    ver = next((x for x in card["versions"] if x["v"] == v), None)
+    if not ver:
+        raise ValueError(f"нет версии v{v}")
+    eid = A.new_id("e")
+    src = os.path.join(lib_dir(c), *lid.split("/"), f"v{v}")
+    wd = os.path.join(P.render(pid), eid, "v1")
+    shutil.copytree(src, wd)
+    has = lambda f: os.path.isfile(os.path.join(wd, f))
+    img = A.save_file(pid, open(os.path.join(wd, ver["preview"].split("/", 1)[1]), "rb").read()) if ver.get("preview") and has(ver["preview"].split("/", 1)[1]) else ""
+    extra = [A.save_file(pid, open(os.path.join(wd, "_shots", f), "rb").read()) for f in ("element_1.png", "element_3.png", "element_5.png", "element_7.png") if has(os.path.join("_shots", f))]
+    rid = A.new_id("r")
+    ref = f"lib:{lid}@{v}"
+    r = {"id": rid, "v": 1, "dir": f"{pid}/{eid}/v1", "img": img, "extra": extra, "fn": ver.get("fn", ""), "lib": ref, "feedback": "",
+         "summary": f"из библиотеки {ref}" + (f" — {ver.get('summary')}" if ver.get("summary") else ""), "ts": now_ms()}
+    e = {"id": eid, "kind": ek, "name": name or card["name"], "desc": card.get("desc", ""), "why": why, "status": "ok", "by": "lib", "lib": {"id": lid, "v": v},
+         "refs": [], "q": "", "renders": [r], "render": rid}
+    if has("prefab.js") and ek == "prop":
+        r.update(three3=True, how="lib")
+        e["dim"] = "3d"
+        if has("model.glb"):
+            r["model3d"] = True
+    if has("prefab.js") and ek == "char":
+        r.update(rigchar=True, fn=ver.get("skeleton") or card.get("skeleton") or ver.get("fn") or "")
+        e["form"] = "rig"
+        if ver.get("rig") == "model" or has("model.glb"):
+            r["model3d"] = True
+    A.apply_ops(key, [{"op": "add", "path": ["elements"], "item": e}])
+    return {"el": eid, "ref": ref, "name": e["name"]}
+
+
 # ---------------------------------------------------------------- CLI
 def cli(A, argv):
     """lib list [--kind props] [--channel ID] | lib show <kind/slug> | lib publish <video> <element> [--as new|<kind/slug>] | lib candidates [--video ID]
@@ -478,6 +634,9 @@ def cli(A, argv):
         import agent as AG
         r = fork(A, c, a[0], A._opt(a, "--as", ""), A._opt(a, "--note", ""), by="agent" if AG.current_run() else "author")
         print(json.dumps(r, ensure_ascii=False)); return True
+    if cmd == "import":                                       # lib import <video> <kind/slug>[@N] [--why "где и зачем"]
+        lid, _, vv = a[1].partition("@")
+        print(json.dumps(import_to_video(A, "plan:" + a[0], lid, vv or None, A._opt(a, "--why", ""), A._opt(a, "--name", "")), ensure_ascii=False)); return True
     if cmd == "preview":
         print(json.dumps(preview(A, c, a[0]), ensure_ascii=False)); return True
     if cmd == "publish":

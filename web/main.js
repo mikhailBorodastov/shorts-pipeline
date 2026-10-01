@@ -95,7 +95,7 @@ const App = {
       return d ? Plan.view(d, r.tab || defTab(d.flow), r.sub) : wait;
     }
     document.title = 'Claude Studio';
-    if (r.page === 'lib') return r.id === 'char' && r.tab ? CharSheet.view(r.tab) : Pages.lib();
+    if (r.page === 'lib') return r.id === 'char' && r.tab ? CharSheet.view(r.tab) : r.id === 'item' && r.tab && r.sub ? LibItem.view(r.tab, r.sub) : Pages.lib();
     if (r.page === 'style') return Pages.style();
     if (r.page === 'newchan') return Pages.newChannel();
     if (r.page === 'settings') return Pages.settings();

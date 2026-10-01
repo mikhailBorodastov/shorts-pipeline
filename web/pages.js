@@ -89,9 +89,9 @@ const Pages = {
   },
   libCard(it) {
     const src = it.preview ? `/api/lib/file/${LIB.channel}/${it.preview}` : '';
-    const ch = it.kind === 'characters' ? () => go('#/lib/char/' + it.id.split('/')[1]) : null;   // персонаж — лист со скелетом, костюмами, эмоциями (S4)
-    return h('div.libcard', { title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : '') + (ch ? '\nклик — лист персонажа' : '') },
-      src ? h('img', { src, alt: '', onclick: () => (ch ? ch() : UI.lightbox(src)) }) : h('div.noimg', { onclick: ch }, it.kind === 'sounds' ? '🔊' : '📦'),
+    const ch = () => go('#/lib/item/' + it.id);              // страница предмета: покрутить, версии, правки, где стоит, архив (libitem.js); у персонажа оттуда — лист со скелетом
+    return h('div.libcard', { title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : '') + '\nклик — открыть: покрутить, версии, правки, где стоит' },
+      src ? h('img', { src, alt: '', onclick: ch }) : h('div.noimg', { onclick: ch }, it.kind === 'sounds' ? '🔊' : '📦'),
       it.rig && h('span.small', { title: `скелет ${it.skeleton}` }, '🦴 ' + it.skeleton),
       h('b', it.name, it.d3 ? h('span.small', { title: `есть 3D-версия v${it.d3}` }, ' 🧊') : ''), h('span.dim.small', `lib:${it.id}@${it.latest}`));
   },

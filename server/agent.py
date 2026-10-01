@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 4                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 5                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -76,6 +76,8 @@ def system_prompt(A, vid, mode):
 - python {sp} lib list | lib show KIND/SLUG                — библиотека канала (KIND: props | characters | sounds)
 - python {sp} lib fork KIND/SLUG@N [--as "Новое имя"] --note "что меняю"  — НОВАЯ версия копией (с --as — новый предмет) → папка для правки
 - python {sp} lib preview KIND/SLUG@N                     — после правки: превью версии на стенде (кадры — через Read)
+- python {sp} lib import {vid} KIND/SLUG[@N] --why "что это и где в ролике"  — взять персонажа / пропс из библиотеки в препродакшен видео
+  («используй диван из библиотеки»: в сцену его ставь сразу ссылкой lib:KIND/SLUG@N — основная версия из lib list; import — если он нужен элементом видео)
 - python {sp} model info ФАЙЛ.glb                          — из каких узлов собрана модель (имена, габариты) — чтобы делить по частям
 - python {BLENDER_RUN} ПАПКА/model.py                     — пересобрать model.glb из model.py (Blender)
 - node {RENDER_PROP} URL-prefab.js ПАПКА | node {RENDER_CHAR} URL-prefab.js ПАПКА — кадры пропса / персонажа (lib preview делает это сам)
