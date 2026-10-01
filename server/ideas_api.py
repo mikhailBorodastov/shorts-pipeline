@@ -53,6 +53,7 @@ MAX_JOBS = 3
 MIME = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".pdf": "application/pdf", ".ttf": "font/ttf", ".png": "image/png", ".jpg": "image/jpeg",
         ".webp": "image/webp", ".gif": "image/gif", ".json": "application/json; charset=utf-8", ".html": "text/html; charset=utf-8",
         ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".txt": "text/plain; charset=utf-8", ".mp4": "video/mp4",
+        ".m4a": "audio/mp4", ".flac": "audio/flac", ".aac": "audio/aac", ".opus": "audio/ogg", ".webm": "audio/webm",
         ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".svg": "image/svg+xml"}
 STATUS = {"draft": "штурм", "prod": "в работе", "out": "вышло", "archived": "архив"}
 BAD_NAME = r'\/:*?"<>|'
@@ -74,6 +75,7 @@ import montage_api  # noqa: E402  монтаж (S6): video.json → montage → 
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 import ws_api  # noqa: E402  мастерская ассета (S10): служебная сцена, клип из ключей позы, в библиотеку
 import media_api  # noqa: E402  медиа библиотеки (S10.3): видео кадрами для живых экранов
+import voice_api  # noqa: E402  голос ролика (S11): запись диктора -> нарезка по сценам, черновой голос
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -92,7 +94,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -162,6 +164,10 @@ def wsapi():
 
 def mdapi():
     return _fresh(media_api, "media")
+
+
+def vcapi():
+    return _fresh(voice_api, "voice")
 
 
 def stapi():
@@ -893,6 +899,8 @@ def _run_job(job):
             m3d().run_job(sys.modules[__name__], job)
         elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps"):    # S9: интервью канала, сборка стиля, герой канала
             chnapi().run_job(sys.modules[__name__], job)
+        elif job.kind in ("voicesplit", "voicetts"):          # 🎙 голос ролика (S11): нарезка записи / черновой голос
+            vcapi().run_job(sys.modules[__name__], job)
         elif job.kind == "mediaadd":                           # 🎞 видео кадрами для экранов (S10.3)
             mdapi().run_job(sys.modules[__name__], job)
         elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
@@ -1289,6 +1297,13 @@ def handle_get(h):
     p, q = u.path, parse_qs(u.query)
     if p.startswith("/api/") and not trusted(h):
         h.send_error(403); return True
+    if p == "/api/voice/state":                        # 🎙 голос: сцены сценария, файлы, откуда голос, записи диктора
+        h._json(vcapi().state(sys.modules[__name__], q.get("video", [""])[0])); return True
+    if p == "/api/voice/audio":                        # 🎙 послушать: сцена (i) или исходная запись (rec)
+        f = vcapi().audio_path(sys.modules[__name__], q.get("video", [""])[0], q.get("i", [None])[0], q.get("rec", [None])[0])
+        if not f:
+            h.send_error(404); return True
+        _send_file(h, f); return True
     if p == "/api/script/state":                       # 📝 вкладка «Сценарий»: открытые правки раскадровки, заглушка ли script.md
         h._json(mnapi().script_state(q.get("video", [""])[0])); return True
     if p == "/api/imgsearch":                          # 🔎 поиск картинок для референсов: Яндекс (без ключа) | свободные (Openverse + Commons)
@@ -1395,6 +1410,11 @@ def handle_post(h):
     if not trusted(h, post=True):
         h.send_error(403); return True
     try:
+        if p == "/api/voice/upload":                   # 🎙 запись диктора целиком (сырые байты) -> refs/voice/
+            size = int(h.headers.get("Content-Length", 0))
+            if size > 600 * 2**20:
+                h._json({"error": "запись больше 600 МБ — сожми в mp3 / m4a"}, 413); return True
+            h._json({"file": vcapi().save_upload(sys.modules[__name__], q.get("video", [""])[0], q.get("name", ["voice.wav"])[0], h._body())}); return True
         if p == "/api/file":
             size = int(h.headers.get("Content-Length", 0))
             if size > FILE_MAX * 4 // 3 + 4096:
@@ -1428,6 +1448,10 @@ def handle_post(h):
             h._json({"job": j.info()}); return True
         if p == "/api/assets/upload":                   # ⬆ своя 3D-модель (base64)
             j = start_job("assetupload", body.get("key", ""), f"assetupload:{body.get('el', '')}", {k: body.get(k) for k in ("el", "name", "data", "license", "author", "page")})
+            h._json({"job": j.info()}); return True
+        if p in ("/api/voice/split", "/api/voice/tts"):  # 🎙 нарезать запись по сценам / черновой голос
+            kind = "voicesplit" if p.endswith("split") else "voicetts"
+            j = start_job(kind, "plan:" + body.get("video", ""), "voice", {"video": body.get("video", ""), "file": body.get("file", "")})
             h._json({"job": j.info()}); return True
         if p == "/api/media/add":                       # 🎞 видео (ссылка / файл, кусок с–по) -> кадры в библиотеку канала (S10.3)
             pr = {k: body.get(k) for k in ("src", "name", "from", "to", "fps", "h", "owner", "channel")}
@@ -1642,6 +1666,8 @@ def cli(argv):
         return mnapi().cli(sys.modules[__name__], a)
     if cmd == "script":
         return mnapi().script_cli(sys.modules[__name__], a)
+    if cmd == "voice":
+        return vcapi().cli(sys.modules[__name__], a)
     if cmd == "char":
         return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":

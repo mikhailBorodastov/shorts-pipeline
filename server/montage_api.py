@@ -568,6 +568,12 @@ def cli(A, argv):
             print(out.replace("\\", "/") if os.path.isfile(out) else "кадры не снялись", *err[:5], sep="\n")
             return True
         script = "tts.py" if cmd == "tts" else "check_script.py"
+        if cmd == "tts":                                     # S11: голос — запись диктора: нейросеть её не затирает (переозвучить — на этапе «Голос»)
+            try:
+                if json.load(open(os.path.join(pd, "build", "vo", "source.json"), encoding="utf-8")).get("kind") == "rec":
+                    print("голос — запись диктора: tts не запускаю (после правки VO — voice align " + vid + "; вернуть нейросеть — этап «Голос»)"); return True
+            except (OSError, ValueError):
+                pass
         r = subprocess.run([sys.executable, script], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600, creationflags=cf)
         print((r.stdout + r.stderr)[-4000:])
         return True

@@ -725,3 +725,12 @@ body.agent-open .stage-editor { right: 380px; }
 
 .finrow.done textarea { text-decoration: line-through; opacity: .6; }
 .finrow.done .fnum { background: #3fbf6a; color: #fff; }
+
+/* 🎙 голос (S11) */
+.vo-drop { border: 2px dashed var(--line, #444); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 4px; align-items: center; cursor: pointer; text-align: center; }
+.vo-drop.drop, .vo-drop:hover { border-color: #4d9cff; background: rgba(77,156,255,.06); }
+.vo-secs { display: flex; flex-direction: column; gap: 8px; }
+.vo-sec { border: 1px solid var(--line, #3a3a3e); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.vo-sec.silent { opacity: .7; }
+.vo-sec audio, .vo-recs audio { height: 32px; max-width: 360px; }
+.vo-difflist { display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow: auto; }

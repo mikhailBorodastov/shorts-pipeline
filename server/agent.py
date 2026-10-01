@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 10                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 11                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -75,6 +75,7 @@ def system_prompt(A, vid, mode):
 - python {sp} montage brief {vid}                          — монтаж: юниты, сцены (маркеры, склейки, длина), слова голоса с номерами, звуки, музыка
 - python {sp} montage gen {vid} | montage build {vid}      — файлы проекта из монтажа / собрать mp4 (долго, 1–3 мин)
 - python {sp} montage tts {vid} | montage check {vid} | montage snap {vid} 1.5,4,8   — голос по script.md / проверка сценария по гайду / кадры ролика (PNG → Read)
+- python {sp} voice show {vid} | voice align {vid}          — голос: откуда (запись диктора / нейросеть), сцены, расхождения записи со сценарием; align — тайминги заново после правки VO под запись (НЕ montage tts — он затрёт запись)
 - python {sp} script notes {vid}                           — правки автора к сценарию из раскадровки (фактчек, переписать, картинка, весь сценарий)
 - python {sp} script reply {vid} N "ответ (markdown)" [--done] [--field VO --from "точный старый кусок" --to "новый"]  — ответ на правку N
 - python {sp} char list | char show SLUG                   — персонажи библиотеки (скелет, костюмы, эмоции, клипы типа)
