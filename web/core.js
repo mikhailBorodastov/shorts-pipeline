@@ -349,22 +349,60 @@ document.addEventListener('paste', e => {
 // 🔎 поиск картинок не выходя из приложения: Google / Яндекс Картинки — окно «🔎 Картинки» (в окне-приложении; в браузере — всплывающее окно).
 // Найденное перетаскивают в слот или «Копировать картинку» → Ctrl+V над слотом.
 const ImgSearch = {
-  open(q = '') {
-    const inp = h('input.box', { value: q, placeholder: 'что ищем: «ЭЛТ монитор 2006», «бабушкин ковёр»…', style: { width: '100%' } });
-    const go_ = eng => {
-      const s = inp.value.trim(); if (!s) return inp.focus();
-      const url = eng === 'ya' ? 'https://yandex.ru/images/search?text=' + encodeURIComponent(s) : 'https://www.google.com/search?udm=2&hl=ru&q=' + encodeURIComponent(s);
-      window.open(url, 'imgsearch', `popup,width=760,height=900,left=${Math.max(0, screen.availWidth - 780)},top=40`);
-      Local.set('imgq', s); close();
-      UI.toast('🔎 Окно картинок открыто: перетащи картинку в слот (лучше — открыв её крупно) или «Копировать картинку» → Ctrl+V над слотом');
-    };
-    inp.onkeydown = e => { if (e.key === 'Enter') go_('g'); if (e.key === 'Escape') close(); };
-    const box = h('div.imgsearch', h('b', '🔎 Найти картинку'), inp,
-      h('div.row', h('button.primary', { onclick: () => go_('g') }, 'Google Картинки'), h('button', { onclick: () => go_('ya') }, 'Яндекс Картинки'), h('span.sp'), h('button', { onclick: () => close() }, 'Отмена')),
-      h('p.dim.small', 'Откроется окно поиска рядом. Картинку оттуда перетащи в слот референса — или правой кнопкой «Копировать картинку» и Ctrl+V над слотом. Права на чужие картинки — у их авторов: это референсы, не кадры ролика.'));
+  // панель поиска картинок прямо в приложении (server/imgsearch.py): Яндекс Картинки без ключа | свободные (Openverse + Commons).
+  // Клик по картинке — она скачивается в файлы видео и встаёт в слот (onPath); multi — слот «+ референс»: можно набрать несколько подряд.
+  // «↗ Google в окне» — запасной путь: окно «🔎 Картинки», оттуда перетаскивают в слот.
+  open(q = '', { planId, onPath, multi } = {}) {
+    const S = { q, src: Local.get('imgsrc') || 'ya', p: 0, items: [], busy: false, err: '', got: new Set() };
+    const inp = h('input.box', { value: q, placeholder: 'что ищем: «ЭЛТ монитор 2006», «бабушкин ковёр»…' });
+    const grid = h('div.is-grid'), more = h('button', { onclick: () => run(true) }, 'Ещё картинки'), status = h('span.dim.small');
+    const seg = h('div.seg', [['ya', 'Яндекс Картинки'], ['free', 'Свободные (CC)']].map(([k, l]) =>
+      h('button', { class: S.src === k ? 'sel' : '', 'data-k': k, onclick: () => { S.src = k; Local.set('imgsrc', k); seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.k === k)); run(); } }, l)));
+    const google = () => { const v = inp.value.trim(); window.open('https://www.google.com/search?udm=2&hl=ru&q=' + encodeURIComponent(v), 'imgsearch', `popup,width=760,height=900,left=${Math.max(0, screen.availWidth - 780)},top=40`); };
+    async function run(next) {
+      const v = inp.value.trim(); if (!v || S.busy) return;
+      if (!next) { S.p = 0; S.items = []; grid.innerHTML = ''; } else S.p++;
+      S.busy = true; status.textContent = 'ищу…'; more.hidden = true; Local.set('imgq', v);
+      try {
+        const r = await api('GET', `/api/imgsearch?q=${encodeURIComponent(v)}&src=${S.src}&p=${S.p}`);
+        const items = r.items || [];
+        for (const it of items) grid.append(card(it));
+        S.items.push(...items);
+        status.textContent = S.items.length ? `${S.items.length} картинок · клик — ${multi ? 'добавить (можно несколько)' : 'взять'}` : 'ничего не нашлось';
+        more.hidden = !items.length || S.src === 'free';
+      } catch (e) { status.textContent = '⚠ ' + e.message; }
+      S.busy = false;
+    }
+    function card(it) {
+      const c = h('button.is-item', { title: [it.title, it.domain, it.w && `${it.w}×${it.h}`, it.license].filter(Boolean).join(' · ') },
+        h('img', { src: it.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onerror: e => c.remove() }),
+        h('span.is-dom', it.license ? it.license : it.domain));
+      c.onclick = async () => {
+        if (c.classList.contains('busy') || c.classList.contains('done')) return;
+        c.classList.add('busy');
+        try {
+          const r = await api('POST', '/api/file/url', { plan: planId, url: it.full, fallback: it.thumb });
+          c.classList.remove('busy'); c.classList.add('done');
+          onPath && onPath(r.path);
+          UI.toast(r.thumb ? '✓ взял превью — сайт не отдал оригинал' : '✓ картинка в референсах');
+          if (!multi) close();
+        } catch (e) { c.classList.remove('busy'); UI.toast(e.message, 'err'); }
+      };
+      return c;
+    }
+    inp.onkeydown = e => { if (e.key === 'Enter') run(); };
+    const box = h('div.imgsearch',
+      h('div.row', h('b', '🔎 Картинки'), seg, h('span.sp'), h('button', { title: 'Google Картинки в отдельном окне — оттуда перетащи картинку в слот', onclick: google }, '↗ Google в окне'), h('button.icon', { title: 'Закрыть (Esc)', onclick: () => close() }, '×')),
+      h('div.row', inp, h('button.primary', { onclick: () => run() }, 'Найти')),
+      grid, h('div.row', status, h('span.sp'), more),
+      h('p.dim.small', 'Это референсы для Claude и для тебя, не кадры ролика: права на картинки — у их авторов.'));
     const ov = h('div.imgsearch-ov', { onclick: e => { if (e.target === ov) close(); } }, box);
-    const close = () => ov.remove();
+    const esc = e => { if (e.key === 'Escape') close(); };
+    const close = () => { ov.remove(); removeEventListener('keydown', esc, true); };
+    addEventListener('keydown', esc, true);
+    more.hidden = true;
     document.body.append(ov); setTimeout(() => { inp.focus(); inp.select(); }, 30);
+    if (q) run();
   },
 };
 document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
@@ -383,18 +421,18 @@ function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small,
     try { set(typeof f === 'string' && !f.startsWith('data:') ? (UI.toast('⬇ беру картинку…'), await uploadImageUrl(planId, f)) : await uploadImage(planId, f)); }
     catch (e) { UI.toast(e.message, 'err'); }
   };
-  const search = () => ImgSearch.open(q || Local.get('imgq') || '');
+  const search = () => ImgSearch.open(q || Local.get('imgq') || '', { planId, onPath: set, multi: !path });
   const box = h('div.slot', { class: (src ? '' : 'empty') + (small ? ' small' : '') + (compact && !src ? ' compact' : ''), tabindex: 0,
     style: { aspectRatio: compact && !src ? 'auto' : aspect }, title: 'Ctrl+V — вставить картинку сюда' });
   if (src) box.append(h('img', { src: '/' + src, alt: '', onclick: () => UI.lightbox('/' + src) }),
     h('div.slot-acts', h('button.icon', { title: 'Дорисовать', onclick: e => { e.stopPropagation(); Sketch.open({ aspect, bg: '/' + src, planId, onSave: set }); } }, '✏️'),
       h('button.icon', { title: 'Убрать картинку', onclick: e => { e.stopPropagation(); set(''); } }, '×')));
   else if (compact) box.append(h('div.slot-empty.row', h('button.icon', { title: 'Файл с диска', onclick: () => pickFile(upload) }, '📎'),
-    h('button.icon', { title: 'Найти в Google / Яндекс Картинках — окно рядом, картинку оттуда перетащи сюда', onclick: search }, '🔎'),
+    h('button.icon', { title: 'Найти картинку (Яндекс Картинки прямо здесь, Google — в окне)', onclick: search }, '🔎'),
     h('button.icon', { title: 'Нарисовать эскиз', onclick: () => Sketch.open({ aspect, planId, onSave: set }) }, '✏️'), h('span', 'картинка: Ctrl+V')));
   else box.append(h('div.slot-empty', label && h('b', label), h('span', 'Ctrl+V · перетащи'),
     h('div.row', h('button.icon', { title: 'Файл с диска', onclick: () => pickFile(upload) }, '📎'),
-      h('button.icon', { title: 'Найти в Google / Яндекс Картинках — окно рядом, картинку оттуда перетащи сюда', onclick: search }, '🔎'),
+      h('button.icon', { title: 'Найти картинку (Яндекс Картинки прямо здесь, Google — в окне)', onclick: search }, '🔎'),
       h('button.icon', { title: 'Нарисовать эскиз', onclick: () => Sketch.open({ aspect, planId, onSave: set }) }, '✏️'))));
   box.addEventListener('mouseenter', () => (Paste.target = upload));
   box.addEventListener('mouseleave', () => { if (Paste.target === upload) Paste.target = null; });

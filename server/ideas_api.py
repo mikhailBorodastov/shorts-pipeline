@@ -1264,6 +1264,12 @@ def handle_get(h):
     p, q = u.path, parse_qs(u.query)
     if p.startswith("/api/") and not trusted(h):
         h.send_error(403); return True
+    if p == "/api/imgsearch":                          # 🔎 поиск картинок для референсов: Яндекс (без ключа) | свободные (Openverse + Commons)
+        try:
+            h._json({"items": _fresh(__import__("imgsearch"), "imgsearch").search(q.get("q", [""])[0], q.get("src", ["ya"])[0], int(q.get("p", ["0"])[0] or 0))})
+        except Exception as e:
+            h._json({"error": str(e) if isinstance(e, ValueError) else f"поиск не ответил: {e}"}, 502)
+        return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
@@ -1368,8 +1374,14 @@ def handle_post(h):
                 h._json({"error": "картинка больше 12 МБ"}, 413); return True
             h._json({"path": save_file(q.get("plan", [""])[0], h._body())}); return True
         body = json.loads(h._body() or b"{}")
-        if p == "/api/file/url":                       # 🔎 перетащили картинку из окна поиска / сайта
-            h._json({"path": file_from_url(body.get("plan", ""), body.get("url", ""))}); return True
+        if p == "/api/file/url":                       # 🔎 картинка по адресу (панель поиска, окно поиска, сайт); fallback — превью, если оригинал не отдают
+            try:
+                h._json({"path": file_from_url(body.get("plan", ""), body.get("url", ""))})
+            except ValueError:
+                if not body.get("fallback"):
+                    raise
+                h._json({"path": file_from_url(body.get("plan", ""), body["fallback"]), "thumb": True})
+            return True
         if p == "/api/op":
             ops = body.get("ops")
             if not isinstance(ops, list):
