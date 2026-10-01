@@ -133,3 +133,9 @@ input[type=number] { width: 64px; }
 /* S8: ✋ правка в кадре из ревью */
 #fixbar { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 70; display: flex; gap: 8px; align-items: center; background: #3a2d10; border: 1px solid #ffcc33; border-radius: 10px; padding: 6px 10px; box-shadow: 0 6px 20px #000a; max-width: 96vw; }
 #fixbar .why { width: 320px; }
+
+/* ＋ добавить (Shift+A) */
+.addlist { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow: auto; }
+.addsec { margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
+#popup .addi { display: flex; align-items: center; gap: 10px; }
+.addi img, .addi .addic { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; flex: none; display: grid; place-items: center; background: #2c2c30; font-size: 18px; }

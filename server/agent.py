@@ -14,7 +14,11 @@ import paths as P  # noqa: E402
 
 SESS = globals().get("SESS") or {}                    # id видео -> Session (переживает перезагрузку модуля)
 STUDIO_PY = os.path.join(P.STUDIO, "server", "studio.py").replace("\\", "/")
+BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")         # model.py пропса -> model.glb (Blender)
+RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
+RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
+RULES_REV = 2                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -69,15 +73,27 @@ def system_prompt(A, vid, mode):
 - python {sp} montage gen {vid} | montage build {vid}      — файлы проекта из монтажа / собрать mp4 (долго, 1–3 мин)
 - python {sp} montage tts {vid} | montage check {vid} | montage snap {vid} 1.5,4,8   — голос по script.md / проверка сценария по гайду / кадры ролика (PNG → Read)
 - python {sp} char list | char show SLUG                   — персонажи библиотеки (скелет, костюмы, эмоции, клипы типа)
-- python {sp} lib list                                     — библиотека канала
-Составные команды через && не пиши — по одной команде за вызов."""
+- python {sp} lib list | lib show KIND/SLUG                — библиотека канала (KIND: props | characters | sounds)
+- python {sp} lib fork KIND/SLUG@N [--as "Новое имя"] --note "что меняю"  — НОВАЯ версия копией (с --as — новый предмет) → папка для правки
+- python {sp} lib preview KIND/SLUG@N                     — после правки: превью версии на стенде (кадры — через Read)
+- python {sp} model info ФАЙЛ.glb                          — из каких узлов собрана модель (имена, габариты) — чтобы делить по частям
+- python {BLENDER_RUN} ПАПКА/model.py                     — пересобрать model.glb из model.py (Blender)
+- node {RENDER_PROP} URL-prefab.js ПАПКА | node {RENDER_CHAR} URL-prefab.js ПАПКА — кадры пропса / персонажа (lib preview делает это сам)
+Файлы смотри Read / Glob / Grep, не ls и не cd. Составные команды (&&, ;, |, cd …) не пиши — по одной команде за вызов, иначе её заблокирует."""
     rules = f"""Как работать:
 - Ты — агент внутри Claude Studio, автор видит каждый твой шаг в панели и может дописать тебе посреди работы или остановить. Пиши по-русски, коротко.
-- Меняешь только через команды студии — так всё попадает в историю и отменяется. Файлы сцены и видео руками не правь.
+- Сцену и видео меняешь только командами студии — так всё попадает в историю и отменяется. scene.json и video.json руками не правь.
+- Файлы (Write / Edit) правишь только: в папке версии, которую сам создал lib fork в этом разговоре; в prefabs.js открытой сцены (её «как выглядят предметы»
+  — путь в scene brief), если автор просит поменять сам предмет; в проекте ролика при «✨ Собрать». Код Studio (_studio/…), старые версии библиотеки,
+  чужие видео и каналы не трогай — если без этого никак, скажи автору, что и где поменять.
 - Одна просьба — одна пачка операций сцены (если просьба большая — 2–3 пачки по смыслу), у каждой понятный --desc.
 - Ручные правки автора (authored в scene brief) не трогай без прямой просьбы; если просьба прямо про них — добавь --allow <id>.<путь>.
 - После правки сцены посмотри кадр (scene frame → Read) и поправь, если вышло не так. Координаты считай по pos других предметов, не на глаз.
-- Библиотеку канала (персонажи, пропсы, клипы) меняешь только после «да» автора. Новые предметы — только из префабов сцены.
+- Библиотеку канала (персонажи, пропсы, клипы) меняешь только после «да» автора (или если он сам прямо просит изменить / разделить предмет) — и только
+  НОВОЙ версией: lib fork → правишь файлы в выданной папке (prefab.js, model.py → blender_run, rig.json) → lib preview → смотришь кадры → в сцене
+  scene ops: src.prefab объекта = новая ссылка lib:KIND/SLUG@N. Старые версии остаются — их держат другие видео; отмена — scene undo.
+  Разделить предмет на части — lib fork --as для каждой части (или параметр part в prefab.js, если части в одной модели — смотри model info) и отдельные объекты в сцене на тех же местах.
+- Новые предметы — из префабов сцены (scene brief → prefabs), 3D-пропсов и персонажей видео / библиотеки; нового по описанию не выдумывай — предложи сделать его в препродакшене.
 - Если просьба непонятна — спроси одной фразой и жди ответа. В конце — 1–2 фразы, что сделано.
 - Автор присылает контекст в начале сообщения: этап, открытая сцена (EL), момент курсора, выбранные объекты. «Здесь», «этот» — это оно.
 
@@ -106,11 +122,10 @@ def spawn(A, vid, model, mode):
     os.makedirs(AGENT_DIR, exist_ok=True)
     sysf = os.path.join(AGENT_DIR, f"{vid}.{mode}.system.txt")
     A.write_text(sysf, system_prompt(A, vid, mode))
-    allowed = [f"Bash(python {STUDIO_PY}:*)", "Read", "Grep", "Glob"]
-    tools = ["Bash", "Read", "Grep", "Glob"]
-    if mode == "build":
-        tools += ["Write", "Edit"]
-        allowed += ["Write", "Edit"]
+    # Bash — только команды студии и стенды; файлы — Read/Glob/Grep, правка — Write/Edit (где можно — в правилах промпта: версии lib fork, prefabs.js сцены, проект ролика)
+    allowed = [f"Bash(python {STUDIO_PY}:*)", f"Bash(python {BLENDER_RUN}:*)", f"Bash(node {RENDER_PROP}:*)", f"Bash(node {RENDER_CHAR}:*)",
+               "Read", "Grep", "Glob", "Write", "Edit"]
+    tools = ["Bash", "Read", "Grep", "Glob", "Write", "Edit"]
     vdir = P.video(vid) or P.ROOT
     cmd = [exe, "-p", "--safe-mode", "--no-session-persistence", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--tools", ",".join(tools), "--allowedTools", *allowed, "--permission-prompts", "none", "--system-prompt-file", sysf,
@@ -125,6 +140,7 @@ class Session:
     def __init__(self, A, vid, model, mode):
         self.A, self.vid, self.model, self.mode = A, vid, model, mode
         self.proc = spawn(A, vid, model, mode)
+        self.rules = RULES_REV
         self.lock = threading.Lock()
         self.busy, self.run, self.last, self.ctx_scene, self.ending, self.acc = False, None, time.time(), None, None, None
         self.entries = self._load()
@@ -383,7 +399,7 @@ def undo_run(A, vid, run):
 # ---------------------------------------------------------------- HTTP
 def get_session(A, vid, model, mode):
     s = SESS.get(vid)
-    if s and s.alive() and s.model == model and s.mode == mode:
+    if s and s.alive() and s.model == model and s.mode == mode and getattr(s, "rules", 0) == RULES_REV:
         return s
     if s:
         if s.busy:

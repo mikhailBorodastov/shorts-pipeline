@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }   /* иначе display: flex у панелей перебивает hidden (пустая панель агента поверх редактора) */
 @font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf"); font-weight: 300 900; }
 @font-face { font-family: "Nunito"; src: url("/fonts/Nunito.ttf"); font-weight: 200 1000; }
 @font-face { font-family: "Caveat"; src: url("/fonts/Caveat.ttf"); font-weight: 400 700; }

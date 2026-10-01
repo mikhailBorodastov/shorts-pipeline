@@ -1553,6 +1553,8 @@ def cli(argv):
         return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":
         return stapi().cli(sys.modules[__name__], a)
+    if cmd == "model":
+        return m3d().cli(sys.modules[__name__], a)
     if cmd == "produce":
         job = Job("produce", _plan_key(a[0]), "produce", {"name": a[1] if len(a) > 1 else "", "attach": "--attach" in a})
         produce(job)

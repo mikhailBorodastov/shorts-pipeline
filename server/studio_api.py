@@ -18,7 +18,7 @@ HTTP (ideas_api передаёт сюда /api/studio/… и /api/lib…):
     POST /api/lib/publish     {key, el, as: 'new'|<lib id>}  -> {job}  (элемент видео -> библиотека, новой версией)
 CLI: python studio.py lib list [--kind …] | show <id> | publish <video> <element> [--as new|<id>] | candidates [--video ID]
 """
-import json, os, re, shutil, time
+import json, os, re, shutil, subprocess, time
 
 import paths as P
 
@@ -372,16 +372,100 @@ def handle_post(A, h, p, body):
     return False
 
 
+# ---------------------------------------------------------------- правка библиотеки: новая версия копией (старые версии не меняются — их держат другие видео)
+def _ref(ref):
+    m = re.match(r"^(?:lib:)?((props|characters|sounds|skeletons|anims)/[a-z0-9-]+)@?(\d+)?$", (ref or "").strip())
+    if not m:
+        raise ValueError("ссылка вида props/<slug>@N или characters/<slug>@N")
+    return m.group(1), m.group(2), int(m.group(3)) if m.group(3) else None
+
+
+def fork(A, c, ref, as_name="", note="", by="agent"):
+    """lib fork: копия версии vN -> новая версия того же предмета (vM) или новый предмет (as_name). Возвращает {ref, dir}.
+    Файлы новой версии можно править (prefab.js, model.py -> blender_run, model.glb, rig.json); превью — lib preview."""
+    lid, kind, v = _ref(ref)
+    ld = lib_dir(c)
+    card_p = os.path.join(ld, *lid.split("/"), kind.rstrip("s") + ".json")
+    card = json.load(open(card_p, encoding="utf-8"))
+    v = v or card.get("latest")
+    src_ver = next((x for x in card["versions"] if x["v"] == v), None)
+    if not src_ver:
+        raise ValueError(f"у {lid} нет v{v}")
+    src = os.path.join(ld, *lid.split("/"), f"v{v}")
+    items = lib_index(c)
+    if as_name:
+        base = slug(as_name)
+        sl, k = base, 2
+        while any(i["id"] == f"{kind}/{sl}" for i in items) or os.path.exists(os.path.join(ld, kind, sl)):
+            sl, k = f"{base}-{k}", k + 1
+        nid = f"{kind}/{sl}"
+        ncard_p = os.path.join(ld, kind, sl, kind.rstrip("s") + ".json")
+        ncard = {"schema": 1, "id": nid, "kind": kind, "name": as_name, "desc": note or card.get("desc", ""), "tags": list(card.get("tags") or []), "versions": [], "latest": 0}
+    else:
+        nid, ncard_p, ncard = lid, card_p, card
+    nv = max([x["v"] for x in ncard["versions"]] + [0]) + 1
+    dst = os.path.join(ld, *nid.split("/"), f"v{nv}")
+    shutil.copytree(src, dst)
+    pf = os.path.join(dst, "prefab.js")
+    if as_name and kind == "characters" and os.path.isfile(pf):     # свой id у копии — иначе два персонажа в одной сцене делят реестр RIG.chars
+        t = open(pf, encoding="utf-8").read()
+        t = re.sub(r"(character\(\{\s*id:\s*)(['\"])[^'\"]*\2", lambda m: m.group(1) + m.group(2) + nid.split("/")[1] + m.group(2), t, count=1)
+        t = re.sub(r"(character\(\{[^}]*?name:\s*)(['\"])[^'\"]*\2", lambda m: m.group(1) + m.group(2) + as_name.replace("'", "") + m.group(2), t, count=1)
+        A.write_text(pf, t)
+    ver = dict(src_ver, v=nv, ts=now_ms(), forkOf=f"{lid}@{v}", by=by, note=note or f"копия {lid}@{v}")
+    ver.pop("from", None)
+    ver["preview"] = f"v{nv}/" + os.path.basename(src_ver["preview"]) if src_ver.get("preview") else ""
+    ncard["versions"].append(ver)
+    ncard["latest"] = nv
+    A.write_text(ncard_p, json.dumps(ncard, ensure_ascii=False, indent=1))
+    row = next((i for i in items if i["id"] == nid), None)
+    if row is None:
+        row = {"id": nid, "kind": kind, "name": ncard["name"], "desc": ncard.get("desc", ""), "tags": ncard.get("tags", []), "from": {"fork": f"{lid}@{v}"}}
+        items.append(row)
+    row.update(latest=nv, preview=f"{nid}/{ver['preview']}" if ver["preview"] else "", updated=now_ms())
+    if ver.get("dim") == "3d":
+        row["dim"], row["d3"] = "3d", nv
+    lib_save_index(A, c, sorted(items, key=lambda i: (i["kind"], i["name"].lower())))
+    return {"ref": f"lib:{nid}@{nv}", "dir": dst.replace("\\", "/"), "from": f"{lid}@{v}"}
+
+
+def preview(A, c, ref):
+    """lib preview: кадры версии на стенде (пропс — 4 ракурса render_prop.js, персонаж — render_char.js / render_prop.js для 3D) -> preview.png версии."""
+    lid, kind, v = _ref(ref)
+    ld = lib_dir(c)
+    d = os.path.join(ld, *lid.split("/"), f"v{v}")
+    if not os.path.isfile(os.path.join(d, "prefab.js")):
+        raise ValueError(f"у {lid}@{v} нет prefab.js")
+    try:
+        port = open(os.path.join(P.STATE, ".port"), encoding="utf-8").read().strip()
+    except OSError:
+        raise RuntimeError("Studio не запущена — превью снимает её стенд")
+    url = f"/api/lib/file/{c['id']}/{lid}/v{v}/prefab.js"
+    out = os.path.join(d, "_shots")
+    rig2d = kind == "characters" and os.path.isfile(os.path.join(d, "rig.json"))
+    script = "render_char.js" if rig2d else "render_prop.js"
+    r = subprocess.run(["node", os.path.join(P.STANDS, script), url, out, "--port", port], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    shot = os.path.join(out, "clean.png" if rig2d else "element.png")
+    if not os.path.isfile(shot):
+        raise RuntimeError("кадры не снялись: " + ((r.stdout or "") + (r.stderr or ""))[-600:])
+    shutil.copy2(shot, os.path.join(d, "preview.png"))
+    return {"preview": os.path.join(d, "preview.png").replace("\\", "/"), "shots": out.replace("\\", "/"), "log": (r.stdout or "").strip()[-300:]}
+
+
 # ---------------------------------------------------------------- CLI
 def cli(A, argv):
-    """lib list [--kind props] [--channel ID] | lib show <kind/slug> | lib publish <video> <element> [--as new|<kind/slug>] | lib candidates [--video ID]"""
+    """lib list [--kind props] [--channel ID] | lib show <kind/slug> | lib publish <video> <element> [--as new|<kind/slug>] | lib candidates [--video ID]
+    | lib fork <kind/slug>[@N] [--as "Новое имя"] [--note "что меняю"] — новая версия копией (или новый предмет), путь для правки
+    | lib preview <kind/slug>@N — снять превью версии на стенде (после правки файлов)"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
     c = channel_dir(A._opt(a, "--channel"))
     if cmd == "list":
         for it in lib_search(c, "", A._opt(a, "--kind", "")):
-            print(f"{it['id']:<34} v{it['latest']}  {it['name']}" + (f"  ← {it['from'].get('videoName')}" if it.get("from") else ""))
+            fr = it.get("from") or {}
+            print(f"{it['id']:<34} v{it['latest']}  {it['name']}" + (f"  ← {fr.get('videoName')}" if fr.get("videoName") else f"  ← копия {fr['fork']}" if fr.get("fork") else ""))
         return True
     if cmd == "show":
         print(json.dumps(json.load(open(os.path.join(lib_dir(c), *a[0].split("/"), a[0].split("/")[0].rstrip("s") + ".json"), encoding="utf-8")), ensure_ascii=False, indent=1))
@@ -390,6 +474,12 @@ def cli(A, argv):
         for x in candidates(A, A._opt(a, "--video")):
             print(f"{x['video']} {x['el']}  {x['kind']:<5} {'✓' if x['ready'] else '·'} {x['name']}" + (f"  [уже: lib:{x['lib']['id']}@{x['lib']['v']}]" if x.get("lib") else ""))
         return True
+    if cmd == "fork":
+        import agent as AG
+        r = fork(A, c, a[0], A._opt(a, "--as", ""), A._opt(a, "--note", ""), by="agent" if AG.current_run() else "author")
+        print(json.dumps(r, ensure_ascii=False)); return True
+    if cmd == "preview":
+        print(json.dumps(preview(A, c, a[0]), ensure_ascii=False)); return True
     if cmd == "publish":
         job = A.Job("libpublish", "plan:" + a[0], "libpublish", {"el": a[1], "as": A._opt(a, "--as", "new")})
         publish(A, job)

@@ -434,6 +434,38 @@ def props3d_choices(A, key, plan):
     return out
 
 
+def chars3d_choices(A, key, plan):
+    """Кого можно поставить в сцену (＋ Добавить): персонажи этого видео со скелетом (el:<id>@v<N>, выбранная версия) и персонажи библиотеки канала (lib:characters/<slug>@<N>)."""
+    pid = _pid(key)
+    out = []
+    for x in plan.get("elements") or []:
+        rs = [r for r in x.get("renders") or [] if r.get("rigchar")]
+        if x.get("kind") != "char" or not rs or x.get("status") == "drop":
+            continue
+        r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1])
+        out.append({"ref": f"el:{x['id']}@v{r['v']}", "el": x["id"], "name": x.get("name", ""), "img": "/" + r["img"] if r.get("img") else "",
+                    "from": "видео" + (" ✓" if x.get("status") == "ok" else "") + (" · 3D" if r.get("model3d") else "")})
+    ch = P.index()["videos"].get(pid, {}).get("channel")
+    try:
+        c = A.stapi().channel_dir(ch)
+        ld = A.stapi().lib_dir(c)
+        for it in A.stapi().lib_index(c):
+            if it.get("kind") != "characters":
+                continue
+            try:
+                card = json.load(open(os.path.join(ld, *it["id"].split("/"), "character.json"), encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            vs = [v for v in card.get("versions") or [] if v.get("rig") or "prefab.js" in (v.get("files") or [])]
+            if vs:
+                v = vs[-1]
+                out.append({"ref": f"lib:{it['id']}@{v['v']}", "name": it.get("name", ""), "from": "библиотека",
+                            "img": f"/api/lib/file/{c['id']}/{it['id']}/{v['preview']}" if v.get("preview") else ""})
+    except Exception as e:
+        print("! chars3d_choices:", e)
+    return out
+
+
 def prefab_info(path):
     """{key: {kind, note, params: {name: default}}} from prefabs.js: entries «  key: { kind: '…'» of PREFABS, the comment lines above
     an entry are its note, P_(o, 'name', default) / o.params.name inside it are its parameters."""
@@ -791,6 +823,7 @@ def handle_get(A, h, p, q):
                  "elNames": {x["id"]: x.get("name", "") for x in plan.get("elements") or []},
                  "prefabInfo": prefab_info(os.path.join(P.resolve("render/" + rel), "prefabs.js")),
                  "props3d": props3d_choices(A, key, plan),
+                 "chars3d": chars3d_choices(A, key, plan),
                  "style3d": ((P.channel(P.index()["videos"].get(_pid(key), {}).get("channel")) or {}).get("style3d")) or "paper",
                  "clip": f"/rscene/{rel}/clip.mp4" if os.path.isfile(os.path.join(work_dir(A, _pid(key), el), "clip.mp4")) else ""})
         return True
@@ -928,7 +961,7 @@ def cli(A, argv):
     if cmd == "brief":                         # S7: всё о сцене для агента — объекты, свет, камера, префабы, authored, комментарии
         d = load_scene(A, key, el)
         info = prefab_info(os.path.join(work_dir(A, key[5:], el), "prefabs.js"))
-        print(f"EL={el} · файл {os.path.join(work_dir(A, key[5:], el), 'scene.json')}")
+        print(f"EL={el} · файл {os.path.join(work_dir(A, key[5:], el), 'scene.json')} · как выглядят предметы — {os.path.join(work_dir(A, key[5:], el), 'prefabs.js')}".replace("\\", "/"))
         print(A.capi()._scene_summary(d, info))
         au = d.get("authored") or {}
         names = {o["id"]: o.get("name") for o in (d.get("objects") or []) + (d.get("lights") or [])}
@@ -941,7 +974,7 @@ def cli(A, argv):
         wd = os.path.join(work_dir(A, key[5:], el), "_agent")
         os.makedirs(wd, exist_ok=True)
         ts = a[2] if len(a) > 2 else "0"
-        tl = [str(round(float(x), 2)) for x in ts.split(",") if x.strip()]
+        tl = ["%g" % round(float(x), 2) for x in ts.split(",") if x.strip()]     # как имена файлов стенда: 1 -> element_1.png, 2.5 -> element_2.5.png
         for f in os.listdir(wd):
             if f.startswith("element_") and f.endswith(".png"):
                 os.remove(os.path.join(wd, f))

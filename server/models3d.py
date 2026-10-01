@@ -168,6 +168,40 @@ print("MERGE_OK " + json.dumps(done))
 '''
 
 
+NODES = r'''
+import bpy, sys, json, mathutils
+src = sys.argv[sys.argv.index("--") + 1]
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+out = []
+for o in bpy.data.objects:
+    d = {"name": o.name, "type": o.type, "parent": o.parent.name if o.parent else None}
+    if o.type == "MESH":
+        bb = [o.matrix_world @ mathutils.Vector(c) for c in o.bound_box]
+        d.update(verts=len(o.data.vertices), faces=len(o.data.polygons), materials=[m.name for m in o.data.materials if m],
+                 min=[round(min(v[i] for v in bb), 3) for i in range(3)], max=[round(max(v[i] for v in bb), 3) for i in range(3)])
+    out.append(d)
+print("NODES_JSON" + json.dumps(out, ensure_ascii=False))
+'''
+
+
+def nodes(glb):
+    """Из чего собрана модель: объекты (имя, тип, родитель), у сеток — вершины, грани, материалы, габариты (Blender, z — вверх)."""
+    log = _blender(NODES, glb, timeout=300)
+    line = next((l for l in log.splitlines() if l.startswith("NODES_JSON")), None)
+    if not line:
+        raise RuntimeError("Blender не открыл модель: " + log.strip()[-400:])
+    return json.loads(line[len("NODES_JSON"):])
+
+
+def cli(A, argv):
+    """model info <файл .glb/.gltf> — узлы модели (чтобы понять, можно ли её разделить по частям)"""
+    if not argv or argv[0] != "info" or len(argv) < 2:
+        print(cli.__doc__); return True
+    print(json.dumps(nodes(argv[1]), ensure_ascii=False, indent=1))
+    return True
+
+
 def merge_anims(glb, anims, out_dir):
     """Анимации из отдельных glb (тот же скелет) -> клипы основной модели (gltf:<имя>). -> список имён."""
     if not anims:

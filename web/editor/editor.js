@@ -221,7 +221,7 @@ const ACT = {
   grab: () => ED.vp.startModal('translate'), rotate: () => ED.vp.startModal('rotate'), scale: () => ED.vp.startModal('scale'),
   reset_pos: () => ED.vp.reset('translate'), reset_rot: () => ED.vp.reset('rotate'), reset_scale: () => ED.vp.reset('scale'),
   gizmo_move: () => ED.vp.setMode('translate'), gizmo_rotate: () => ED.vp.setMode('rotate'), gizmo_scale: () => ED.vp.setMode('scale'),
-  duplicate: () => duplicate(), delete: () => del(), hide: () => hide(), unhide_all: () => unhideAll(),
+  duplicate: () => duplicate(), delete: () => del(), hide: () => hide(), unhide_all: () => unhideAll(), add: () => addMenu(),
   group: () => group(), ungroup: () => ungroup(),
   key: () => { const ops = [...ED.sel].flatMap(id => id === 'camera' ? camKeyNow() : keyAllOps(ED.doc, id, ED.t)); if (ops.length) ED.commit(ops, `ключ на ${ED.t.toFixed(2)} с: ${names([...ED.sel])}`); else ED.msg('Выбери объект, камеру или свет'); },
   unkey: () => { const ops = [...ED.sel].flatMap(id => id === 'camera' ? (ED.doc.camera.keys || []).filter(k => Math.abs(k.t - ED.t) < EPS).map(k => ({ op: 'del', path: ['camera', 'keys'], id: k.id })) : delKeysAtOps(ED.doc, id, ED.t)); if (ops.length) ED.commit(ops, `ключи на ${ED.t.toFixed(2)} с удалены: ${names([...ED.sel])}`); else ED.msg('На этом времени ключей нет'); },
@@ -258,6 +258,61 @@ ED.setView = v => {
   if (v === 'free' && prev === 'camera') ED.vp.fromScene();      // Blender: navigating out of the camera view starts from where the camera is
   ED.dirty = ED.uiDirty = true;
 };
+
+// ---- ＋ добавить (Shift+A): предмет из префабов этой сцены, 3D-пропс или персонаж (видео / библиотека канала), пустая группа
+function addMenu() {
+  if (ED.readonly) return ED.msg('Это сохранённая версия — только просмотр', 'err');
+  const I = ED.info || {}, pf = I.prefabInfo || {}, used = {};
+  for (const o of ED.doc.objects || []) { const k = (o.src || {}).prefab; if (k) used[k] = (used[k] || 0) + 1; }
+  const items = [];
+  for (const [k, x] of Object.entries(pf)) {
+    if (x.kind === 'env') continue;                                   // стены комнаты — одна на сцену
+    items.push({ sec: 'Предметы этой сцены', ref: k, name: x.note ? x.note.split(/[.;(]/)[0].slice(0, 60) : k, sub: k + (used[k] ? ` · в сцене ×${used[k]}` : ''), kind: x.kind });
+  }
+  for (const x of I.props3d || []) items.push({ sec: '3D-пропсы', ref: x.ref, name: x.name, sub: x.from + (used[x.ref] ? ` · в сцене ×${used[x.ref]}` : ''), img: x.img });
+  for (const x of I.chars3d || []) items.push({ sec: 'Персонажи', ref: x.ref, el: x.el, name: x.name, sub: x.from + (used[x.ref] ? ` · в сцене ×${used[x.ref]}` : ''), img: x.img, char: true });
+  items.push({ sec: 'Пустое', group: true, name: 'Пустая группа', sub: 'чтобы собрать предметы и двигать вместе' });
+  const e = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const p = popup(`<h4>＋ Добавить в сцену</h4><input id="addFind" type="search" placeholder="🔎 найти" style="width:100%;margin-bottom:6px"><div id="addList" class="addlist"></div>
+    <p class="dim small">Предмет встанет в центр вида, на пол, и сразу поедет за мышью (как G): клик — поставить, Esc — оставить в центре. Новых предметов по описанию тут нет — их делают в препродакшене (пропс / персонаж) или просят 💬 агента.</p>`);
+  const list = p.querySelector('#addList'), find = p.querySelector('#addFind');
+  const draw = () => {
+    const q = find.value.trim().toLowerCase();
+    let html = '', sec = '';
+    items.forEach((it, i) => {
+      if (q && !(it.name + ' ' + it.sub + ' ' + (it.ref || '')).toLowerCase().includes(q)) return;
+      if (it.sec !== sec) { sec = it.sec; html += `<div class="addsec">${e(sec)}</div>`; }
+      html += `<button class="mi addi" data-i="${i}">${it.img ? `<img src="${e(it.img)}" alt="">` : `<span class="addic">${it.group ? '▢' : it.char ? '🦔' : it.kind === 'overlay' ? '🅣' : '📦'}</span>`}<span><b>${e(it.name)}</b><br><span class="dim small">${e(it.sub)}</span></span></button>`;
+    });
+    list.innerHTML = html || '<p class="dim">ничего не нашлось</p>';
+    for (const b of list.querySelectorAll('.addi')) b.onclick = () => { p.hidden = true; p.innerHTML = ''; addObject(items[+b.dataset.i]); };
+  };
+  find.oninput = draw; draw(); setTimeout(() => find.focus(), 0);
+  find.onkeydown = ev => { if (ev.key === 'Enter') { const b = list.querySelector('.addi'); if (b) b.click(); } };
+}
+async function addObject(it) {
+  const at = (ED.view === 'camera' || !ED.vp.orbit) ? ED.w.target : ED.vp.orbit.tgt;
+  const pos = [+(at.x || 0).toFixed(3), 0, +(at.z || 0).toFixed(3)];
+  const par = ED.entered && find(ED.doc, ED.entered) ? ED.entered : null;
+  const id = newId(it.group ? 'g' : 'o');
+  let item;
+  if (it.group) item = { id, name: uniq('Группа'), type: 'group', pos, rot: [0, 0, 0], scale: 1, parent: par };
+  else {
+    if (/^(lib|el):/.test(it.ref)) {
+      ED.msg(`гружу «${it.name}»…`);
+      if (!(await ED.loadProp(it.ref))) return ED.msg(`«${it.name}» не загрузился — открой его в карточке и проверь, что он рисуется`, 'err');
+    }
+    const home = (typeof PREFABS !== 'undefined' && PREFABS[it.ref] && PREFABS[it.ref].home) || null;   // префаб строится «на своём месте»: pos = home (как у перенесённых сцен)
+    const nm = it.name.replace(/\s+\d+$/, '');
+    item = { id, name: (ED.doc.objects || []).some(o => o.name === nm) ? uniq(nm) : nm, src: Object.assign({ prefab: it.ref }, it.el ? { el: it.el } : {}),
+      pos: home ? (home.pos || [0, 0, 0]).slice() : pos, rot: [0, home ? home.rotY || 0 : 0, 0], scale: 1, ...(par ? { parent: par } : {}) };
+  }
+  ED.commit([{ op: 'add', path: ['objects'], item }], `＋ ${item.name}`);
+  ED.select([id]);
+  const homed = typeof PREFABS !== 'undefined' && item.src && PREFABS[item.src.prefab] && PREFABS[item.src.prefab].home;
+  if (!it.group && !homed) requestAnimationFrame(() => ED.vp.startModal('translate'));
+  else ED.msg(`＋ «${item.name}» — на месте из кода префаба; G — сдвинуть`);
+}
 
 // ---- duplicate / delete / hide / group
 function subtree(id) { const out = [id]; for (const o of ED.doc.objects || []) if (o.parent === id) out.push(...subtree(o.id)); return out; }
@@ -431,7 +486,7 @@ async function history() {
 }
 function keysHelp() {
   const L = { select_all: 'выбрать всё', deselect_all: 'снять выбор', grab: 'двигать', rotate: 'вращать', scale: 'масштаб', reset_pos: 'сбросить позицию', reset_rot: 'сбросить поворот', reset_scale: 'сбросить масштаб',
-    gizmo_move: 'гизмо: сдвиг', gizmo_rotate: 'гизмо: поворот', gizmo_scale: 'гизмо: масштаб', duplicate: 'дублировать', delete: 'удалить', hide: 'скрыть', unhide_all: 'показать всё', group: 'сгруппировать', ungroup: 'разгруппировать',
+    gizmo_move: 'гизмо: сдвиг', gizmo_rotate: 'гизмо: поворот', gizmo_scale: 'гизмо: масштаб', duplicate: 'дублировать', add: 'добавить предмет', delete: 'удалить', hide: 'скрыть', unhide_all: 'показать всё', group: 'сгруппировать', ungroup: 'разгруппировать',
     key: 'ключ на текущем времени', unkey: 'удалить ключи на времени', frame_sel: 'показать выбранное', frame_all: 'показать всё', cam_view: 'вид камеры', cam_key: 'камера на этот вид (ключ)',
     props: 'панель свойств', tree: 'дерево', agent: 'агент', play: 'воспроизведение', shuttle_back: 'назад (J)', stop: 'стоп (K)', shuttle_fwd: 'вперёд (L)', frame_prev: 'кадр назад', frame_next: 'кадр вперёд',
     frame_prev5: '5 кадров назад', frame_next5: '5 кадров вперёд', key_prev: 'к прошлому ключу', key_next: 'к следующему ключу', start: 'в начало', end: 'в конец', work_in: 'начало рабочей области', work_out: 'конец рабочей области',
@@ -633,11 +688,12 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     $('clip').onclick = makeClip;
     $('version').onclick = saveVersion;
     $('agentBtn').onclick = () => ED.agent.toggle();
+    $('addBtn').onclick = addMenu;
     $('menuBtn').onclick = menu;
     $('play').onclick = () => ED.play(1);
     const tl = $('tlen'); tl.value = ED.doc.len;
     tl.onchange = () => { const v = Math.max(0.5, Math.min(600, +tl.value || ED.doc.len)); if (v !== ED.doc.len) ED.commit([{ op: 'set', path: ['len'], value: v }], `длина сцены ${v} с`); };
-    if (ED.readonly) for (const b of ['autokey', 'camkey', 'clip', 'version', 'agentBtn']) $(b).disabled = true;
+    if (ED.readonly) for (const b of ['autokey', 'camkey', 'clip', 'version', 'agentBtn', 'addBtn']) $(b).disabled = true;
     // the agent or the CLI changed the scene: the page follows (every 1.5 s)
     setInterval(async () => {
       if (ED.pending || document.hidden || ED.fix) return;

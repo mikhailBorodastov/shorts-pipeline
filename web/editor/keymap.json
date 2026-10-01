@@ -36,6 +36,9 @@
  "duplicate": [
   "shift+d"
  ],
+ "add": [
+  "shift+a"
+ ],
  "delete": [
   "x",
   "delete"
