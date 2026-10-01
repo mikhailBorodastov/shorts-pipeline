@@ -118,10 +118,24 @@ const StageEditor = {
     requestAnimationFrame(() => { const f = this.frame && this.frame.querySelector('iframe'); if (f) f.focus(); });
   },
   close() { if (this.frame) this.frame.remove(); this.frame = null; this.el = null; },
+  // ✋ правка в кадре из ревью (S8): сцена в моменте кадра; правки уходят пометкой (fixes[] видео), страница остаётся на «Ревью»
+  openFix(vid, el, ts, vt) {
+    this.close();
+    this.el = `fix:${vid}/${el}`;
+    const src = `/tpl/editor.html?key=${encodeURIComponent('plan:' + vid)}&el=${encodeURIComponent(el)}&fix=1&t=${ts}&vt=${vt}`;
+    this.frame = h('div.stage-editor', h('iframe', { src, title: 'Правка в кадре', allow: 'fullscreen' }));
+    document.body.append(this.frame);
+  },
 };
 addEventListener('message', ev => {
   if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'editor-close') return;
   const r = App.route;
+  if (ev.data.back === 'review') {                    // из «✋ правки в кадре»: назад в ревью, пометка — в списке над ним
+    StageEditor.close();
+    if (ev.data.fix) UI.toast('✋ Пометка сохранена — «🔨 Пересобрать с правками», когда соберёшь все');
+    Store.load('plan:' + r.id, true).then(() => App.render()).catch(() => {});
+    return;
+  }
   go(`#/p/${r.id}/pre/${r.sub}`);
   Store.load('plan:' + r.id).then(() => App.render()).catch(() => {});
 });

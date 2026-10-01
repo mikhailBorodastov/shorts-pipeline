@@ -476,6 +476,39 @@ type — тип по карте превью, лучше из «золотого
         schema = S({"thumbs": ARR(S({"desc": STR, "type": {"type": "string", "enum": list(REF["thumbTypes"])}, "n": {"type": "integer"},
                                      "text": STR, "hook": STR, "frame": STR}, ["desc", "type", "n", "text"]))})
 
+    elif action == "packtext":                                # S8: тексты упаковки по шагу E (_studio/CLAUDE.md)
+        import pack_api
+        vdir = P.video(plan["id"]) or ""
+        try:
+            script = open(os.path.join(vdir, "script.md"), encoding="utf-8").read()[:6000]
+        except OSError:
+            script = "(сценария нет — ролик без голоса; опирайся на идею, контекст и ответы автора)"
+        rs = pack_api.rights(plan)
+        fin = [t["text"] for t in plan.get("titles") or [] if t.get("star")]
+        prompt = f"""Шаг «Упаковка» (E): тексты для публикации ролика «{plan.get('name')}».
+
+{ctx(plan, 'idea', 'topic', 'qa')}
+
+Финалисты названия (автор отметил ★): {'; '.join(fin) or '—'}
+
+Сценарий ролика:
+{script}
+
+Что вошло в ролик и чьё оно (собрано из лицензий):
+{pack_api.rights_md(rs)}
+
+Сделай:
+- titles — 5 названий до ~50 знаков, без спойлера главного поворота. Придумай по 2–3 на каждый угол атаки (число или сумма; сильный образ или эмоция; время или срочность; отрицание или противоречие) и возьми 5 самых сильных и разных; лучшее — best: true (одно). Финалисты автора — основа, можно их улучшить. angle — угол.
+- short — короткое описание для Shorts / Reels (1–2 фразы, живо, в подаче канала).
+- sources — описание с источниками (если ролик на фактах — ссылки и что откуда; если зарисовка — откуда вайб и отсылки).
+- provoke — описание-провокация для комментариев (вопрос зрителю, который хочется обсудить).
+- pin — закреп в комментариях от автора.
+- tags — 6–10 хэштегов с #.
+- rights — раздел «Права» человеческим языком по списку выше: чьи кадры, музыка, звуки, логотипы и пародии вошли в ролик; узнаваемые бренды и игры назови (права у владельцев).
+Факты — только из видео и сценария. Без CTA «подпишись» и без морали."""
+        schema = S({"titles": ARR(S({"text": STR, "angle": STR, "best": {"type": "boolean"}}, ["text", "angle"])), "short": STR, "sources": STR, "provoke": STR,
+                    "pin": STR, "tags": ARR(STR), "rights": STR}, ["titles", "short", "sources", "provoke", "pin", "tags", "rights"])
+
     elif action == "critique":
         c = next((x for x in plan.get("thumbs", []) if x["id"] == params.get("thumb")), None) or {}
         t = next((x for x in plan.get("titles", []) if x["id"] == c.get("title")), None) or {}
@@ -1328,6 +1361,13 @@ def apply(action, docs, params, res):
             "img": "", "by": "claude"}} for c in res.get("thumbs", []) if c.get("desc")]
         return [(key, ops)], f"Claude: +{len(ops)} концептов"
 
+    if action == "packtext":
+        import pack_api
+        rs = pack_api.rights(plan)
+        old = plan.get("pack") or {}
+        pack = {**old, **{k: res.get(k) for k in ("titles", "short", "sources", "provoke", "pin", "tags")},
+                "rights_md": (res.get("rights") or "").strip() + "\n\n" + pack_api.rights_md(rs), "rights": rs, "at": t}
+        return [(key, [{"op": "set", "path": ["pack"], "value": pack}])], f"Упаковка: {len(res.get('titles') or [])} названий, описания, хэштеги, права"
     if action == "critique":
         cid = params.get("thumb")
         c = next((x for x in plan.get("thumbs", []) if x["id"] == cid), None)

@@ -41,7 +41,7 @@ const saved = s => { const e = $('saved'); e.textContent = s; e.classList.toggle
 let chain = Promise.resolve();
 ED.commit = (ops, desc, o = {}) => {
   if (ED.readonly) { ED.msg('Это старая версия — только просмотр. «Сделать рабочей копией» в меню ☰', 'warn'); return null; }
-  if (ED.locked && !o.force) { ED.msg('Claude работает над сценой — подожди или отмени задачу', 'warn'); return null; }
+  if (ED.locked && !o.force && !ED.fix) { ED.msg('Claude работает над сценой — подожди или отмени задачу', 'warn'); return null; }
   const { done, undo } = applyBatch(ED.doc, clone(ops));
   if (!done.length) return null;
   const st = structural(done);
@@ -53,6 +53,11 @@ ED.commit = (ops, desc, o = {}) => {
     else ED.undo.push({ batch, desc, ops: done, undo, merge: o.merge, at: Date.now() });
     if (ED.undo.length > 300) ED.undo.shift();
     ED.redo = [];
+  }
+  if (ED.fix) {                                               // ✋ правка из ревью (S8): правки только на странице — уйдут пометкой с «почему»
+    ED.fix.ops.push(...clone(done)); fixBar();
+    ED.dirty = ED.uiDirty = ED.tlDirty = true;
+    return { batch, done, undo };
   }
   ED.pending++; saved('сохраняю…');
   const exp = ED.rev;
@@ -496,7 +501,7 @@ addEventListener('keydown', e => {
 
 function back() {
   if (ED.pending) { ED.msg('Ещё сохраняю — секунду'); return; }
-  if (window.parent !== window) parent.postMessage({ type: 'editor-close', el: ED.el }, location.origin);
+  if (window.parent !== window) parent.postMessage({ type: 'editor-close', el: ED.el, ...(ED.fix ? { back: 'review' } : {}) }, location.origin);
   else history.length > 1 ? history.back() : (location.href = '/');
 }
 
@@ -552,6 +557,35 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
+// ---------------------------------------------------------------- ✋ правка из ревью (S8): сцена в моменте кадра, правки -> пометка для пересборки
+function fixBar() {
+  const b = document.getElementById('fixbar'); if (!b) return;
+  const n = ED.fix.ops.length;
+  b.querySelector('.n').textContent = n ? `изменений: ${n}` : 'подвинь, поверни, поменяй позу — правки уйдут пометкой';
+  b.querySelector('.save').disabled = !n;
+}
+function startFix() {
+  ED.t = Math.max(0, +q.get('t') || 0);
+  try { ED.setView('camera'); } catch {}
+  for (const id of ['version', 'clip', 'agentBtn']) { const e = document.getElementById(id); if (e) e.disabled = true; }
+  const bar = document.createElement('div'); bar.id = 'fixbar';
+  bar.innerHTML = `<b>✋ Правка в кадре</b><span class="dim">${ED.fix.vt.toFixed(2)} с ролика → ${ED.t.toFixed(2)} с сцены</span><span class="n dim"></span>
+    <input class="why" placeholder="Что не так и почему (например: ёжик застрял в стене)"><button class="save primary">💾 Сохранить пометку</button><button class="cancel">Отмена</button>`;
+  document.body.append(bar);
+  const close = saved => window.parent.postMessage({ type: 'editor-close', back: 'review', fix: !!saved }, location.origin);
+  bar.querySelector('.why').addEventListener('keydown', e => e.stopPropagation());
+  bar.querySelector('.cancel').onclick = () => close(false);
+  bar.querySelector('.save').onclick = async () => {
+    const why = bar.querySelector('.why').value.trim();
+    if (!why) { ED.msg('Напиши, что не так, — агенту нужно «почему»', 'warn'); bar.querySelector('.why').focus(); return; }
+    try {
+      await api('/api/montage/fix', { video: ED.key.slice(5), el: ED.el, vt: ED.fix.vt, ts: ED.t, ops: ED.fix.ops, why, desc: ED.undo.map(u => u.desc).filter(Boolean).join('; ') });
+      close(true);
+    } catch (e) { ED.msg('Не сохранилось: ' + e.message, 'err'); }
+  };
+  fixBar();
+  ED.msg('✋ Правки здесь не меняют сцену сразу: сохрани их пометкой, агент внесёт при пересборке');
+}
 // ---------------------------------------------------------------- boot
 const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src + (src.includes('?') ? '&' : '?') + 'v=' + Date.now(); s.onload = ok; s.onerror = () => bad(new Error('не загрузилось: ' + src)); document.head.append(s); });
 const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = () => { IMG[k] = im; ok(); }; im.onerror = () => ok(); im.src = src; });
@@ -569,6 +603,8 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     }
     ED.doc = j.scene; ED.rev = j.rev; ED.hist = j.history; ED.cues = j.cues; ED.info = j; ED.readonly = !!ED.ver;
     ED.locked = j.locked || null;
+    ED.fix = q.get('fix') ? { vt: +q.get('vt') || 0, ops: [] } : null;     // ✋ правка из ревью (S8)
+    if (ED.fix) ED.locked = null;
     document.title = `${ED.doc.name} — оформление сцены`;
     $('sname').textContent = ED.doc.name;
     $('sver').textContent = ED.readonly ? `· v${ED.ver} — только просмотр` : `· рабочая копия${j.element && j.element.v ? ` (последняя версия v${j.element.v})` : ''}`;
@@ -604,7 +640,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     if (ED.readonly) for (const b of ['autokey', 'camkey', 'clip', 'version', 'agentBtn']) $(b).disabled = true;
     // the agent or the CLI changed the scene: the page follows (every 1.5 s)
     setInterval(async () => {
-      if (ED.pending || document.hidden) return;
+      if (ED.pending || document.hidden || ED.fix) return;
       try {
         const r = await api(`/api/scene/rev?key=${encodeURIComponent(ED.key)}&el=${ED.el}`);
         ED.agent.setLock(r.locked);
@@ -616,6 +652,7 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
       sessionStorage.removeItem('editor.keep');
       if (k && k.el === ED.el) { ED.t = k.t || 0; ED.select((k.sel || []).filter(id => id === 'camera' || find(ED.doc, id))); ED.undo = k.undo || []; ED.redo = k.redo || []; if (k.why) setTimeout(() => ED.msg('🎨 ' + k.why)); }
     } catch {}
+    if (ED.fix) startFix();
     step(ED.t); ED.vp.fromScene();                               // the free camera starts where the scene camera is at t
     document.getElementById('app').classList.remove('loading');
     requestAnimationFrame(loop);

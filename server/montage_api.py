@@ -105,7 +105,7 @@ def get(A, vid):
     doc = A.load("plan:" + vid)
     m = doc.get("montage") or default(A, vid, doc)
     return {"montage": m, "saved": bool(doc.get("montage")), "scenes": scenes(A, vid, doc), "voice": voice(vid), "project": has_project(vid),
-            "sources": sources(doc), "lib": lib_sounds(), "generated": bool(vdir(vid)) and os.path.isfile(os.path.join(vdir(vid), "src", "montage.js")),
+            "sources": sources(doc), "lib": lib_sounds(), "fixes": doc.get("fixes") or [], "generated": bool(vdir(vid)) and os.path.isfile(os.path.join(vdir(vid), "src", "montage.js")),
             "folder": vdir(vid), "out": [os.path.basename(x) for x in sorted(glob.glob(os.path.join(vdir(vid) or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")][-1:] if vdir(vid) else []}
 
 
@@ -178,6 +178,34 @@ def _scene_to_video(pairs, ts):
     return pairs[-1][1] + (ts - pairs[-1][0])
 
 
+def _video_to_scene(pairs, tv):
+    """Обратная карта: время ролика -> время сцены (кусочно-линейно, за краями — с шагом 1)."""
+    if not pairs:
+        return tv
+    P_ = sorted(pairs, key=lambda p: p[1])
+    if tv <= P_[0][1]:
+        return P_[0][0] + (tv - P_[0][1])
+    for (a0, b0), (a1, b1) in zip(P_, P_[1:]):
+        if tv <= b1:
+            return a0 + (a1 - a0) * (tv - b0) / ((b1 - b0) or 1)
+    return P_[-1][0] + (tv - P_[-1][1])
+
+
+def at(A, vid, tv):
+    """S8: момент ролика -> {el, ts, unit, name}: какая сцена редактора в кадре и её время (для «✋ поправить кадр» в ревью)."""
+    plan = A.load("plan:" + vid)
+    M = plan.get("montage") or default(A, vid, plan)
+    vo = voice(vid)
+    words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []
+    units = sorted(M.get("units") or [], key=lambda u: float(u.get("at") or 0))
+    if not units:
+        raise ValueError("в монтаже нет сцен")
+    u = next((x for x in reversed(units) if float(x.get("at") or 0) <= tv + 1e-6), units[0])
+    ts = max(0.0, _video_to_scene(_fwd_map(u, words), tv))
+    sc = _scene_doc(A, vid, u["scene"]) or {}
+    return {"el": u["scene"], "ts": round(ts, 3), "unit": u["id"], "name": sc.get("name") or u["scene"], "vt": round(tv, 3)}
+
+
 def generate(A, vid, montage=None):
     """montage -> файлы проекта. Возвращает сводку: что скопировано, длина, сцены."""
     pd = vdir(vid)
@@ -192,6 +220,8 @@ def generate(A, vid, montage=None):
         src = os.path.join(P.STANDS if f == "paper.js" else P.ENGINE, f)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(pd, "src", f))
+    for f in ("review.js",):                                  # ревью проекта отвечает окну приложения (S8: момент паузы для «✋ поправить кадр»)
+        shutil.copy2(os.path.join(P.TPL_SRC, f), os.path.join(pd, "src", f))
     vo = voice(vid)
     words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []
     report = {"copied": [], "units": [], "warn": []}
@@ -246,8 +276,10 @@ def generate(A, vid, montage=None):
         unit_js.append({"id": u["id"], "el": el, "name": sc.get("name") or el, "at": float(u.get("at", 0)), "len": float(u.get("len", sc.get("len") or 6)),
                         "map": u.get("map") or [[0, 0], [u.get("len", 6), u.get("len", 6)]], "trans": u.get("trans") or {"type": "cut", "dur": 0}})
         report["units"].append(u["id"])
-    if len({x["el"] for x in unit_js}) > 1:
-        report["warn"].append("несколько разных сцен: prefabs.js у них общие имена — пока собирается только первая (ТЗ §2)")
+    pf_text = {open(os.path.join(S, "scenes", e, "prefabs.js"), encoding="utf-8").read() for e in {x["el"] for x in unit_js}
+               if os.path.isfile(os.path.join(S, "scenes", e, "prefabs.js"))}
+    if len(pf_text) > 1:                                      # копии одной локации (одинаковые prefabs.js) собираются вместе; разные — пока нет
+        report["warn"].append("у сцен разные prefabs.js — в ролике пока работает prefabs.js первой сцены (ТЗ S6 §2)")
     for x in M.get("sfx") or []:
         for f, dt, g in _sound_files(A, vid, x.get("src") or "", pd, "m_" + x["id"]):
             sfx_cues.append({"t": round(float(x.get("at") or 0) + dt, 3), "src": f, "gain": round(float(x.get("gain") if x.get("gain") is not None else 1) * g, 3), "align": x.get("align") or ""})
@@ -427,12 +459,22 @@ def run_job(A, job):
 def handle_get(A, h, p, q):
     if p == "/api/montage":
         h._json(get(A, (q.get("video") or [""])[0])); return True
+    if p == "/api/montage/at":
+        h._json(at(A, (q.get("video") or [""])[0], float((q.get("t") or ["0"])[0] or 0))); return True
     return False
 
 
 def handle_post(A, h, p, body):
     if p == "/api/montage/gen":                              # предпросмотр: монтаж -> файлы проекта (без рендера)
         h._json({"ok": True, "report": generate(A, body["video"])}); return True
+    if p == "/api/montage/fix":                              # S8: ✋ правка в кадре ревью -> пометка с точными операциями сцены и «почему»
+        ops = body.get("ops") or []
+        if not ops:
+            raise ValueError("в кадре ничего не поменяно")
+        item = {"id": A.new_id("f"), "el": body["el"], "vt": float(body.get("vt") or 0), "ts": float(body.get("ts") or 0), "ops": ops,
+                "why": (body.get("why") or "").strip(), "status": "open", "created": now_ms(), "desc": (body.get("desc") or "")[:300]}
+        A.apply_ops("plan:" + body["video"], [{"op": "add", "path": ["fixes"], "item": item}])
+        h._json({"ok": True, "fix": item}); return True
     if p == "/api/montage/build":
         j = A.start_job("montagebuild", "plan:" + body["video"], "montage", {})
         h._json({"job": j.info()}); return True

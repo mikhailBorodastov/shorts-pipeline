@@ -638,3 +638,15 @@ body.agent-open .stage-editor { right: 380px; }
 .ag-form { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .ag-form textarea { width: 100%; resize: vertical; min-height: 54px; }
 .ag-ctxline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+/* 👀 ревью: ✋ правки в кадре (S8) */
+.rf { padding: 8px 12px; }
+.rf-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.rf-item { display: flex; gap: 6px; align-items: center; font-size: 12.5px; }
+.rf-item.done { opacity: .6; }
+.rf-item .link { background: none; border: 0; color: var(--acc); padding: 0 4px; cursor: pointer; }
+/* 📦 упаковка (S8, pack.js) */
+.pk { display: flex; flex-direction: column; gap: 8px; }
+.pk-field { display: flex; flex-direction: column; gap: 3px; }
+.pk-field textarea, .pk-field input { width: 100%; }
+.pk-titles { display: flex; flex-direction: column; gap: 4px; }
+.pk-t .sel { color: var(--key); }

@@ -359,3 +359,51 @@ setInterval(() => {                                      // прогресс «�
 }, 1000);
 
 Object.assign(Plan, { montage(d, key) { return Montage.view(d, key); } });
+
+// ---------------- 👀 Ревью (S8): «✋ поправить кадр» — сцена в моменте паузы, правки -> пометка (fixes[]), «🔨 Пересобрать с правками» — агент
+const ReviewFix = {
+  async grab(d) {
+    const f = document.querySelector('iframe.projframe');
+    if (!f) return UI.toast('Ревью ещё не открылось', 'err');
+    const id = uid('q');
+    const t = await new Promise(ok => {
+      const on = ev => { if (ev.data && ev.data.id === id && typeof ev.data.reviewT === 'number') { removeEventListener('message', on); ok(ev.data.reviewT); } };
+      addEventListener('message', on);
+      f.contentWindow.postMessage({ getT: id }, '*');
+      setTimeout(() => { removeEventListener('message', on); ok(null); }, 1500);
+    });
+    if (t == null) return UI.toast('Ревью не ответило — нажми ↻ над ним (страница ревью старой версии: пересобери монтаж)', 'err');
+    try {
+      const a = await api('GET', `/api/montage/at?video=${encodeURIComponent(d.id)}&t=${t}`);
+      StageEditor.openFix(d.id, a.el, a.ts, a.vt);
+    } catch (e) { UI.toast(e.message, 'err'); }
+  },
+  rebuild(d) {
+    const open = (d.fixes || []).filter(x => x.status === 'open');
+    if (!open.length) return;
+    const list = open.map(x => ({ id: x.id, el: x.el, ts: x.ts, vt: x.vt, why: x.why, ops: x.ops, desc: x.desc }));
+    AgentPanel.toggle(true);
+    AgentPanel.say(`✋ Внеси правки автора из ревью и пересобери ролик. Открытые пометки (video.json → fixes): ${JSON.stringify(list)}
+Для каждой:
+1) примени её ops как правку автора: scene ops ${d.id} EL '<ops>' --by author --desc "✋ ревью: <почему>" (это его решение — оно станет authored);
+2) если правка должна держаться и рядом по времени (ёжик застрял в стене — он не должен проходить сквозь неё ни до, ни после), поправь соседние ключи своей пачкой; ручные правки автора не трогай;
+3) посмотри кадры сцены в ts и рядом (scene frame) — «почему» решено?
+4) закрой пометку: set plan:${d.id} fixes.<id>.status '"done"' (и fixes.<id>.reply '"что сделал"').
+Потом montage gen → montage snap на моментах vt → montage build. В конце — коротко по каждой пометке.`, { model: 'opus' });
+  },
+  bar(d, key) {
+    const fx = (d.fixes || []).filter(x => x.status !== 'drop'), open = fx.filter(x => x.status === 'open');
+    const can = !!d.montage;
+    return h('section.card.rf', h('div.row',
+      h('button.primary', { disabled: !can, title: can ? 'Поставь ревью на паузу в нужном кадре — откроется сцена в этом моменте, правки уйдут пометкой' : 'Только для роликов, собранных монтажом Studio', onclick: () => this.grab(d) }, '✋ поправить кадр'),
+      h('span.dim.small', open.length ? `открытых правок: ${open.length}` : 'пауза в кадре → ✋ → подвинь, поверни, поменяй позу, напиши почему'),
+      h('span.sp'),
+      open.length > 0 && h('button.claude', { onclick: () => this.rebuild(d), title: 'Агент (Opus) внесёт правки в сцены как твои, проверит кадры и пересоберёт ролик' }, `🔨 Пересобрать с правками (${open.length})`)),
+      fx.length > 0 && h('div.rf-list', fx.slice(-8).reverse().map(x => h('div.rf-item', { class: x.status },
+        h('button.link', { title: 'Перемотать ревью сюда', onclick: () => { const f = document.querySelector('iframe.projframe'); if (f) f.contentWindow.postMessage({ seek: x.vt }, '*'); } }, `${x.vt.toFixed(1)} с`),
+        h('span', x.status === 'done' ? '✓ ' : '✋ ', x.why || x.desc || 'правка'), h('span.dim.small', ` · ${x.ops.length} изм.`),
+        x.reply && h('span.dim.small', ' → ' + x.reply),
+        x.status === 'open' && h('button.x', { title: 'Убрать пометку', onclick: () => Store.set(key, ['fixes', x.id, 'status'], 'drop', true) }, '×')))));
+  },
+};
+Object.assign(Plan, { review(d, key) { return [d.project && ReviewFix.bar(d, key), Plan.projectPage(d, key, 'review')]; } });

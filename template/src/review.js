@@ -779,4 +779,10 @@
     loop(); poll();
   });
   window.addEventListener('resize', drawPins);
+  // Claude Studio (S8): окно приложения спрашивает момент паузы («✋ поправить кадр» откроет сцену в этом моменте) и перематывает ревью
+  window.addEventListener('message', ev => {
+    const m = ev.data || {};
+    if (m.getT) { try { ev.source.postMessage({ reviewT: T, playing, id: m.getT }, '*'); } catch (e) {} }
+    if (typeof m.seek === 'number') { setPlay(false); seek(m.seek, false); }
+  });
 })();

@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 11
+API_VERSION = 12
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -66,6 +66,7 @@ import assets  # noqa: E402  поиск и скачивание бесплатн
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
 import char_api  # noqa: E402  персонажи со скелетом (S4): библиотека, позы, версии
 import agent  # noqa: E402  агент S7: живая сессия Claude, лог, отмена запуска
+import pack_api  # noqa: E402  упаковка S8: права, packaging.md, обложки в проект
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
 KINDS = preprod.KINDS
@@ -120,6 +121,10 @@ def chapi():
 
 def agapi():
     return _fresh(agent, "agt")
+
+
+def pkapi():
+    return _fresh(pack_api, "pak")
 
 
 def mnapi():
@@ -1222,7 +1227,7 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
-    if p == "/api/montage":
+    if p == "/api/montage" or p.startswith("/api/montage/"):
         try:
             if mnapi().handle_get(sys.modules[__name__], h, p, q):
                 return True
@@ -1341,6 +1346,8 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
+        if p.startswith("/api/pack/") and pkapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/agent/") and agapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/montage/") and mnapi().handle_post(sys.modules[__name__], h, p, body):
