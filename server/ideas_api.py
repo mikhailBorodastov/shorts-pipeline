@@ -1339,7 +1339,7 @@ def handle_post(h):
         if p == "/api/new":
             d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))
             h._json({"id": d["id"], "flow": "idea"}); return True
-        if (p.startswith("/api/studio/") or p.startswith("/api/lib")) and stapi().handle_post(sys.modules[__name__], h, p, body):
+        if (p.startswith("/api/studio/") or p.startswith("/api/lib") or p.startswith("/api/el/")) and stapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p == "/api/refparse":
             j = start_job("refparse", body.get("key", ""), "refparse:" + body.get("ref", ""), {"ref": body.get("ref", "")})

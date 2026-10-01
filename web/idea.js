@@ -117,6 +117,18 @@ function trellisDlg(key, e, cur, mode = 'draft') {
   draw();
   const close = UI.modal(mode === 'retex' ? `🎨 Перетекстурить «${e.name}» v${cur.v}` : `🖥 TRELLIS локально · ${prop ? '3D-пропс' : 'герой'} «${e.name}»`, body);
 }
+// 🗑 версия черновика -> _archive (studio_api.el_render_archive); стоит в сценах — сначала список
+async function renderArchive(key, e, r, force) {
+  if (!force && !confirm(`Убрать «${e.name}» v${r.v} в архив? Если это была единственная версия — элемент станет пустым, и его можно сделать заново.`)) return;
+  try {
+    const x = await api('POST', '/api/el/render/archive', { key, el: e.id, rid: r.id, force: !!force });
+    if (x.used) {
+      if (confirm(`v${r.v} стоит в сценах:\n${x.used.map(u => `${u.scene}: ${u.objects.join(', ')}`).join('\n')}\n\nТам предмет пропадёт (поставишь новую версию заменой). Всё равно убрать?`)) return renderArchive(key, e, r, true);
+      return;
+    }
+    await Store.load(key, true); App.render(); UI.toast(`🗄 v${r.v} в архиве` + (x.left ? '' : ' — элемент пуст, можно делать заново'));
+  } catch (err) { UI.toast(err.message, 'err'); }
+}
 // 🛠 мастерская ассета (S10, server/ws_api.py): служебная сцена редактора с одним персонажем / пропсом
 async function wsOpen(body) {
   try { UI.toast('Открываю мастерскую…'); const r = await api('POST', '/api/ws/open', body); go(`#/p/${r.video}/pre/${r.el}/stage`); }
@@ -512,6 +524,7 @@ Object.assign(Plan, {
             .map(([v, l]) => h('option', { value: v, selected: (e.how || 'auto') === v }, l))),
         rs.length > 1 && h('span.row', rs.map(r => h('button.small', { class: r === cur ? 'sel' : '', title: r.feedback ? 'правка: ' + r.feedback : 'первая версия',
           onclick: () => Store.set(key, ['elements', e.id, 'render'], r.id, true) }, 'v' + r.v))),
+        cur && h('button.small', { title: `Убрать v${cur.v} в архив (не понравилось — сделать заново). Файлы уезжают в _archive, текущей станет прошлая версия`, onclick: () => renderArchive(key, e, cur) }, `🗑 v${cur.v}`),
         h('span.sp'),
         e.kind === 'scene' && e.stage && e.stage.work && h('button.primary', { onclick: () => go(`#/p/${d.id}/pre/${e.id}/stage`), title: 'Редактор сцены: расстановка, камера и планы, ключи движения, звуки, маркеры, отмена, версии, клип, просьбы Claude' }, '🎬 Оформить сцену'),
         e.kind === 'scene' && !(e.stage && e.stage.work) && cur && cur.three && !cur.stage && Claude.btn({ label: 'Перевести в редактор', icon: '🎬', action: 'sceneconvert', key, scope: 'sceneconvert:' + e.id,

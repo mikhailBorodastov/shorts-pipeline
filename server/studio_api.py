@@ -377,6 +377,8 @@ def handle_post(A, h, p, body):
         lid, v = body.get("id", ""), body.get("v")
         r = fork(A, c, f"{lid}@{v}" if v else lid, (body.get("as") or "").strip(), body.get("note") or "", by="author")
         h._json(r); return True
+    if p == "/api/el/render/archive":                         # 🗑 версия черновика элемента — в архив (не понравилась лепка, сделать заново)
+        h._json(el_render_archive(A, body.get("key", ""), body.get("el", ""), body.get("rid", ""), bool(body.get("force")))); return True
     if p == "/api/lib/import":                                # 📚 из библиотеки в препродакшен видео
         h._json(import_to_video(A, body.get("key", ""), body.get("id", ""), body.get("v"), body.get("why") or "", body.get("name") or "")); return True
     if p == "/api/lib/archive":
@@ -566,6 +568,49 @@ def archive_item(A, c, lid, v=None, force=False):
     A.write_text(cp, json.dumps(card, ensure_ascii=False, indent=1))
     set_meta(A, c, lid, {})
     return {"archived": f"{lid}@{v}"}
+
+
+def el_render_archive(A, key, eid, rid, force=False):
+    """🗑 Версия черновика элемента (неудачная лепка TRELLIS, рисунок, модель) -> _archive/videos/<канал>/<видео>/preprod/<el>/vN-…; из renders[] уходит,
+    текущей становится последняя оставшаяся. Если стоит в сценах этого видео (el:<id>@vN) — без force отказ со списком."""
+    pid = key[5:]
+    e = A._by_id(A.load(key).get("elements"), eid)
+    if not e:
+        raise ValueError("элемент не найден")
+    r = A._by_id(e.get("renders"), rid)
+    if not r:
+        raise ValueError("версия не найдена")
+    pat = re.compile(r"^el:" + re.escape(eid) + r"@v?" + str(r.get("v")) + r"$")
+    used = []
+    pre = os.path.join(P.video(pid) or "", "preprod")
+    for el in os.listdir(pre) if os.path.isdir(pre) else []:
+        sp = os.path.join(pre, el, "work", "scene.json")
+        if os.path.isfile(sp):
+            try:
+                d = json.load(open(sp, encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            x = A._by_id((A.load(key) or {}).get("elements"), el) or {}
+            if x.get("ws"):
+                continue                                         # служебная сцена мастерской переключится на другую версию сама
+            objs = [o.get("name") or o["id"] for o in d.get("objects") or [] if pat.match(((o.get("src") or {}).get("prefab")) or "")]
+            if objs:
+                used.append({"scene": d.get("name") or el, "el": el, "objects": objs})
+    if used and not force:
+        return {"used": used}
+    src = P.resolve("render/" + r["dir"]) if r.get("dir") else None
+    if src and os.path.isdir(src):
+        vd = P.video(pid)
+        dst = os.path.join(P.ARCHIVE, "videos", P.index()["videos"].get(pid, {}).get("channel") or "_", os.path.basename(vd or pid), "preprod", eid,
+                           f"v{r.get('v')}-" + time.strftime("%y%m%d-%H%M%S"))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
+    rest = [x for x in e.get("renders") or [] if x.get("id") != rid]
+    ops = [{"op": "del", "path": ["elements", eid, "renders"], "id": rid}]
+    if e.get("render") == rid or not rest:
+        ops.append({"op": "set", "path": ["elements", eid, "render"], "value": rest[-1]["id"] if rest else None})
+    A.apply_ops(key, ops)
+    return {"archived": f"v{r.get('v')}", "left": len(rest)}
 
 
 def import_to_video(A, key, lid, v=None, why="", name=""):
