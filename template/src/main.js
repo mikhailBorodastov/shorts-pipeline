@@ -281,6 +281,11 @@ window.getSFX = buildSFX;
 // ---------- simple preview (index.html?preview) ----------
 if (location.search.includes('preview')) {
   document.body.classList.add('preview');
+  if (location.search.includes('clean')) {             // S12: окно видео Studio — только кадр во весь iframe, управление — у Studio ({seek}, {play})
+    const st = document.createElement('style');
+    st.textContent = 'html,body{background:#000;overflow:hidden;height:100%}body.preview canvas{width:100vw;height:100vh;object-fit:contain;margin:0}body.preview #ui{display:none!important}';
+    document.head.append(st);
+  }
   const scrub = document.getElementById('scrub'), tl = document.getElementById('tl'), btn = document.getElementById('play');
   scrub.max = TOTAL;
   let playing = false, t0 = 0, tStart = 0;

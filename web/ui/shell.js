@@ -24,7 +24,7 @@ const Shell = {
       h('nav.side-nav',
         item('#/lib', 'library', 'Библиотека', r.page === 'lib'),
         item('#/videos', 'grid', 'Видео', r.page === 'home' || r.page === 'videos', h('span.cnt.lbl', String(App.plans.filter(p => p.status !== 'archived').length || ''))),
-        last ? item(`#/p/${last.id}/${last.stage || 'idea'}`, 'clapper', 'Редактор', r.page === 'p', agentBusy ? h('span.live', { title: 'Claude работает' }) : null)
+        last ? item(`#/v/${last.id}`, 'clapper', 'Редактор', r.page === 'p' || r.page === 'v', agentBusy ? h('span.live', { title: 'Claude работает' }) : null)
           : h('span.nav.off', { title: 'Откройте видео — здесь будет последнее открытое' }, Icon('clapper', 17), h('span.lbl', 'Редактор'))),
       h('div.side-sec.lbl', 'Студия'),
       h('nav.side-nav',
@@ -45,7 +45,7 @@ const Shell = {
   fold() { this.mini = !this.mini; Local.set('side-mini', this.mini ? '1' : '0'); App.render(); },
 
   // «Редактор» — последнее открытое видео (если его не удалили)
-  remember(r) { if (r.page === 'p' && r.id) Local.set('last-video', r.id); },
+  remember(r) { if ((r.page === 'p' || r.page === 'v') && r.id) Local.set('last-video', r.id); },
   lastVideo() {
     const id = Local.get('last-video');
     return id && App.plans.find(p => p.id === id && p.status !== 'archived') || null;
@@ -76,7 +76,7 @@ const Palette = {
     nav('Видео', '#/videos', 'grid', 'проекты ролики главная');
     nav('Библиотека', '#/lib', 'library', 'ассеты персонажи пропсы звуки');
     const last = Shell.lastVideo();
-    if (last) nav('Редактор — ' + last.name, `#/p/${last.id}/${last.stage || 'idea'}`, 'clapper', 'активное видео');
+    if (last) nav('Редактор — ' + last.name, `#/v/${last.id}`, 'clapper', 'активное видео');
     nav('Стиль канала', '#/style', 'sliders', 'гайд палитра голос субтитры герой');
     nav('Память', '#/memory', 'bulb', 'правила');
     nav('Обложки', '#/thumbs', 'image', 'тамбнейл thumbnail');
@@ -88,7 +88,7 @@ const Palette = {
     for (const c of App.info.channels || []) if (c.id !== C.id) cmd('Канал: ' + c.name, 'tv', () => Pages.useChannel(c.id), 'переключить сменить');
     cmd('Новый канал…', 'tv', () => go('#/newchan'));
     for (const p of App.plans.filter(p => p.status !== 'archived'))
-      r.push({ group: 'Видео', label: p.name, icon: p.mode === 'long' ? 'wide' : 'tall', kw: (STAGE_OF[p.stage] || {}).label || '', hint: (STATUS_L[p.status] || '').replace(/^\S+\s/, ''), run: () => go(`#/p/${p.id}/${p.stage || 'idea'}`) });
+      r.push({ group: 'Видео', label: p.name, icon: p.mode === 'long' ? 'wide' : 'tall', kw: (STAGE_OF[p.stage] || {}).label || '', hint: (STATUS_L[p.status] || '').replace(/^\S+\s/, ''), run: () => go(`#/v/${p.id}`) });
     for (const it of (window.LIB && LIB.items) || [])
       r.push({ group: 'Библиотека', label: it.name, icon: 'library', kw: (it.desc || '') + ' ' + (it.tags || []).join(' '), hint: it.kind, run: () => go('#/lib/item/' + it.id) });
     return r;

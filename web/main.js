@@ -43,10 +43,13 @@ const App = {
     this.route = route();
     const r = this.route;
     Shell.remember(r);                                 // «Редактор» в боковой панели — последнее открытое видео
-    const need = { p: ['plan:' + r.id] }[r.page] || [];
+    if (r.page === 'p' && r.tab === 'montage') { go('#/v/' + r.id); return; }   // S12.3: монтаж — это окно видео
+    if (r.page !== 'v') Workspace.leave();
+    document.body.classList.toggle('ws-mode', r.page === 'v');
+    const need = { p: ['plan:' + r.id], v: ['plan:' + r.id] }[r.page] || [];
     try { await Promise.all(need.map(k => Store.load(k))); }
     catch (e) {
-      if (r.page === 'p' && !Store.get('plan:' + r.id)) { UI.toast('Такого штурма нет — возможно, его удалили', 'err'); go('#/'); return; }
+      if ((r.page === 'p' || r.page === 'v') && !Store.get('plan:' + r.id)) { UI.toast('Такого штурма нет — возможно, его удалили', 'err'); go('#/'); return; }
       UI.toast(e.message, 'err');
     }
     this.render({ top: true });
@@ -86,11 +89,17 @@ const App = {
     requestAnimationFrame(() => $$('textarea.auto').forEach(autosize));
     MontagePreview.follow(this.route);
     AgentPanel.follow(this.route);
+    if (this.route.page === 'v') requestAnimationFrame(() => Workspace.fit());
     Sync.dirty();
   },
 
   page() {
     const r = this.route, wait = h('div.empty', 'Загружаю…');
+    if (r.page === 'v') {                              // S12.3: рабочее окно видео (ui/workspace.js)
+      const d = Store.get('plan:' + r.id);
+      document.title = d ? `${d.name} — Claude Studio` : 'Claude Studio';
+      return d ? Workspace.page(d) : wait;
+    }
     if (r.page === 'p') {
       const d = Store.get('plan:' + r.id);
       document.title = d ? `${d.name} — Claude Studio` : 'Claude Studio';

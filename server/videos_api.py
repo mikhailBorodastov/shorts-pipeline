@@ -6,6 +6,7 @@ POST /api/videos/open             <- {id, sub?}       открыть папку 
 POST /api/videos/create           <- {name, mode, delivery, look, len, topic, script, direction, refs[]}  -> {id}
 POST /api/videos/voice?id=&name=  <- сырые байты     озвучка из поп-апа -> <видео>/refs/voice/ (нарезка — на шаге «Озвучка»)
 POST /api/videos/brief            <- {id, …brief}    поправить бриф (поля поп-апа) — контекст для Claude пересобирается
+POST /api/videos/snap             <- {id, t}         📷 кадр ролика -> out/shots/shot-<t>.png
 """
 import glob
 import os
@@ -207,6 +208,24 @@ def save_voice(A, vid, name, data):
     return {"file": fn}
 
 
+# ---------------------------------------------------------------- 📷 кадр ролика (S12.3)
+def snap(A, vid, t):
+    """Кадр ролика в момент t -> <видео>/out/shots/<имя>-<t>.png (render.js snap через локальный скрипт ревью проекта)."""
+    vdir = P.video(vid)
+    if not vdir or not os.path.isfile(os.path.join(vdir, "render.js")):
+        raise ValueError("у видео ещё нет проекта ролика")
+    t = max(0.0, float(t or 0))
+    rel = f"out/shots/shot-{t:07.2f}.png".replace(":", "-")
+    os.makedirs(os.path.join(vdir, "out", "shots"), exist_ok=True)
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", REVIEW_PORT=str(A.stapi().project_port(vdir)))
+    r = subprocess.run(["node", "render.js", "snap", f"{t:.2f}", rel], cwd=vdir, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=180, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    f = os.path.join(vdir, *rel.split("/"))
+    if not os.path.isfile(f):
+        raise RuntimeError("кадр не снялся: " + (r.stdout + r.stderr).strip()[-300:])
+    return {"file": rel, "path": f}
+
+
 # ---------------------------------------------------------------- HTTP
 def handle_get(A, h, p, q):
     if p == "/api/videos/extra":
@@ -232,6 +251,8 @@ def handle_post(A, h, p, q, body):
         h._json(open_folder(body.get("id", ""), body.get("sub", ""))); return True
     if p == "/api/videos/create":
         h._json(create(A, body)); return True
+    if p == "/api/videos/snap":
+        h._json(snap(A, body.get("id", ""), body.get("t", 0))); return True
     if p == "/api/videos/brief":
         h._json(set_brief(A, body.get("id", ""), body)); return True
     return False

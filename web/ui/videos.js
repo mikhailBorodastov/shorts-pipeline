@@ -61,7 +61,7 @@ const Videos = {
   },
 
   card(p, x) {
-    const st = this.stage(p, x), href = `#/p/${p.id}/${p.stage || 'idea'}`;
+    const st = this.stage(p, x), href = `#/v/${p.id}`;
     const src = x && x.cover ? `/api/videos/cover?id=${p.id}&v=${p.updated}` : '';
     const stop = fn => e => { e.preventDefault(); e.stopPropagation(); fn(); };
     const noimg = () => h('div.vc-noimg', Icon(p.mode === 'long' ? 'wide' : 'tall', 26));
@@ -216,7 +216,7 @@ const NewVideo = {
     await Store.flushAll();
     const name = (Store.get(key) || {}).name;
     const write = () => {
-      go(`#/p/${id}/script`);
+      go(`#/v/${id}`);
       setTimeout(() => {
         if (!window.AgentPanel) return;
         AgentPanel.toggle(true);
@@ -228,6 +228,6 @@ const NewVideo = {
     UI.toast('Кладу проект ролика в папку видео — потом Claude начнёт сценарий');
     this.el.remove(); this.el = null; document.removeEventListener('keydown', this.esc);
     await App.refreshState();
-    go(`#/p/${id}/script`);
+    go(`#/v/${id}`);
   },
 };

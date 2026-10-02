@@ -176,6 +176,7 @@ const Montage = {
     if (tl) tl.replaceChildren(this.timeline(d, M));
     if (pr) pr.replaceChildren(this.props(d, M));
     if (tb) tb.replaceWith(this.toolbar(d, MT.key, M));
+    if (typeof Workspace !== 'undefined' && App.route.page === 'v') Workspace.onRedraw();   // S12: окно видео — список сцен, свойства
   },
 
   toolbar(d, key, M) {
@@ -208,18 +209,19 @@ const Montage = {
     const X = t => MT_LABEL + t * Z;
     const rows = [], words = this.words(d), I = MT.info[d.id];
     const bar = (list, it, t0, dur, label, cls, opts = {}) => h('div.mt-bar', {
-      class: cls + (MT.sel && MT.sel.list === list && MT.sel.id === it.id ? ' sel' : ''),
+      class: cls + ((MT.sel && MT.sel.list === list && MT.sel.id === it.id) || (list === 'units' && (MT.multi || []).includes(it.id)) ? ' sel' : ''),
       style: { left: X(t0) + 'px', width: Math.max(6, dur * Z) + 'px', top: (opts.lane || 0) * 22 + 3 + 'px' },
       title: label, onmousedown: ev => this.startDrag(ev, list, it, opts.edge !== false),
-      onclick: ev => { ev.stopPropagation(); MT.sel = { list, id: it.id }; this.redraw(); } }, h('span', label));
+      onclick: ev => ev.stopPropagation() }, h('span', label));
     // линейка
     const ruler = h('div.mt-ruler', { style: { width: width + 'px' }, onmousedown: ev => this.scrub(ev) });
     for (let s = 0; s <= len; s += Z < 30 ? 5 : 1) ruler.append(h('div.mt-tick', { style: { left: X(s) + 'px' } }, s % 5 === 0 || Z >= 50 ? String(s) : ''));
     // сцены: полосы юнитов, склейки камеры и маркеры по карте времени
     const sceneRow = h('div.mt-lane');
+    const byAt = [...(M.units || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
     for (const u of M.units || []) {
       const sc = (I.scenes || []).find(s => s.el === u.scene) || {}, P = this.pairs(d, u);
-      const b = bar('units', u, u.at || 0, u.len || 0, sc.name || u.scene, 'unit');
+      const b = bar('units', u, u.at || 0, u.len || 0, (byAt.indexOf(u) + 1) + '  ' + (sc.name || u.scene), 'unit');
       b.title = (sc.name || u.scene) + ' — двойной клик: открыть сцену в этом моменте (после правки ролик пересоберётся сам)';
       b.ondblclick = ev => { ev.stopPropagation(); Montage.openAt(d, +this.xToT(ev).toFixed(2)); };
       sceneRow.append(b);
@@ -232,12 +234,16 @@ const Montage = {
           onmousedown: ev => this.dragMarker(ev, u, m) }, h('span', '⚑ ' + (m.name || ''))));
       }
     }
-    rows.push(['🎬 Сцены', sceneRow, 1]);
-    // голос: слова
+    rows.push(['Сцены', sceneRow, 1]);
+    // текст и голос (S12): сверху слова — что звучит (из них субтитры и привязка сцен), под ними волна голоса
     if (words.length) {
       const vr = h('div.mt-lane.voice', { class: this.voiceOn(d) ? '' : 'off' });
-      for (const w of words) vr.append(h('div.mt-word', { style: { left: X(w.t) + 'px', width: Math.max(4, (w.e - w.t) * Z - 1) + 'px' }, title: `${w.w} · ${w.t.toFixed(2)} с`, 'data-i': w.i }, Z >= 40 ? w.w : ''));
-      rows.push(['🎙 Голос', vr, 1]);
+      for (const w of words) vr.append(h('div.mt-word', { style: { left: X(w.t) + 'px', width: Math.max(4, (w.e - w.t) * Z - 1) + 'px' }, title: `${w.w} · ${w.t.toFixed(2)} с — клик: перейти`, 'data-i': w.i,
+        onmousedown: ev => { ev.stopPropagation(); MT.t = +w.t.toFixed(2); MontagePreview.seek(MT.t); this.playhead(); } }, Z >= 40 ? w.w : ''));
+      const wave = h('div.mt-wave');
+      vr.append(wave);
+      this.waves(d, wave, X);
+      rows.push(['Текст и голос', vr, 2]);
     }
     // музыка, звуки, надписи — дорожками без наложений
     const laneOf = (items, t0, t1) => { const ends = []; return items.map(it => { const a = t0(it); let k = ends.findIndex(e => e <= a + 1e-3); if (k < 0) { k = ends.length; ends.push(0); } ends[k] = t1(it); return k; }); };
@@ -247,14 +253,36 @@ const Montage = {
       items.forEach((it, i) => lane.append(bar(list, it, it.at || 0, dur(it), label(it), cls, { lane: lanes[i], edge: list !== 'sfx' })));
       rows.push([title, lane, Math.max(1, ...lanes.map(k => k + 1))]);
     };
-    group('music', '🎵 Музыка', 'music', it => it.dur || Math.max(0.5, this.srcDur(d, it.src) - (it.from || 0)), it => it.note || this.srcName(d, it.src));
-    group('sfx', '🔊 Звуки', 'sfx', it => Math.min(this.srcDur(d, it.src), 12), it => it.note || this.srcName(d, it.src));
-    group('overlays', '🔤 Надписи', 'ov', it => it.dur || 2, it => it.text || it.kind);
+    group('music', 'Музыка', 'music', it => it.dur || Math.max(0.5, this.srcDur(d, it.src) - (it.from || 0)), it => it.note || this.srcName(d, it.src));
+    group('sfx', 'Звуки', 'sfx', it => Math.min(this.srcDur(d, it.src), 12), it => it.note || this.srcName(d, it.src));
+    if ((M.overlays || []).length) group('overlays', 'Надписи', 'ov', it => it.dur || 2, it => it.text || it.kind);
     const body = h('div.mt-rows', { style: { width: width + 'px' } },
       rows.map(([t, lane, n]) => h('div.mt-row', { style: { height: n * 22 + 6 + 'px' } }, h('div.mt-rowlabel', t), lane)),
       h('div.mt-playhead', { style: { left: X(MT.t) + 'px' } }),
       h('div.mt-end', { style: { left: X(M.len || 0) + 'px' }, title: `конец ролика — ${(M.len || 0).toFixed(2)} с` }));
     return h('div.mt-scroll', ruler, body);
+  },
+  // волна голоса под словами: секции голоса (audiomap) -> canvas на каждую, минимум / максимум на пиксель
+  waves(d, host, X) {
+    const Z = MT.zoom;
+    MTA.load(d).then(map => {
+      for (const v of (map && map.voice) || []) MTA.buf(v.url).then(b => {
+        if (!b || !host.isConnected) return;
+        const w = Math.max(1, Math.min(16000, Math.round(b.duration * Z))), H = 22;
+        const key = v.url + '|' + w;
+        const cv = h('canvas', { width: w, height: H, style: { left: X(v.at) - MT_LABEL + 'px', width: w + 'px' } });
+        const c = cv.getContext('2d'), data = b.getChannelData(0), step = data.length / w;
+        const P = (MTA.peaks = MTA.peaks || {});
+        const peaks = P[key] || (P[key] = Array.from({ length: w }, (_, x) => {
+          let mn = 1, mx = -1; const a = Math.floor(x * step), e = Math.min(data.length, Math.floor((x + 1) * step));
+          for (let i = a; i < e; i += 8) { const q = data[i]; if (q < mn) mn = q; if (q > mx) mx = q; }
+          return [mn, mx];
+        }));
+        c.fillStyle = '#7d8a9e';
+        peaks.forEach(([mn, mx], x) => { const y0 = (1 - Math.min(1, mx * 1.6)) * H / 2, y1 = (1 - Math.max(-1, mn * 1.6)) * H / 2; c.fillRect(x, y0, 1, Math.max(1, y1 - y0)); });
+        host.append(cv);
+      });
+    });
   },
   xToT(ev) {
     const r = $('.mt-rows').getBoundingClientRect();
@@ -268,7 +296,8 @@ const Montage = {
   },
   playhead() {
     const p = $('.mt-playhead'); if (p) p.style.left = MT_LABEL + MT.t * MT.zoom + 'px';
-    const e = $('.mt-time'); if (e) e.textContent = MT.t.toFixed(2) + ' с';
+    const e = $('.mt-time'); if (e) e.textContent = typeof Workspace !== 'undefined' && App.route.page === 'v' ? Workspace.fmt(MT.t) : MT.t.toFixed(2) + ' с';
+    if (typeof Workspace !== 'undefined' && App.route.page === 'v') Workspace.onTime();
   },
   // сдвиг полосы (at) или край (длина): юнит — len и хвост карты, музыка — dur, надпись — dur
   startDrag(ev, list, it, edgeOk) {
@@ -291,10 +320,24 @@ const Montage = {
     };
     const up = () => {
       removeEventListener('mousemove', move); removeEventListener('mouseup', up);
-      MT.sel = { list, id: it.id };
-      if (moved) this.save(M); else this.redraw();
+      if (moved) { MT.sel = { list, id: it.id }; MT.multi = list === 'units' ? [it.id] : []; this.save(M); }
+      else this.pick(list, it.id, ev);
     };
     addEventListener('mousemove', move); addEventListener('mouseup', up);
+  },
+  // клик по полосе: выбрать; у сцен Ctrl — добавить / убрать, Shift — диапазон (как в Premiere). MT.multi — выбранные сцены (для чата: S12.4)
+  pick(list, id, ev = {}) {
+    if (list !== 'units') { MT.sel = { list, id }; MT.multi = []; return this.redraw(); }
+    const order = [...(this.M(MT.d).units || [])].sort((a, b) => (a.at || 0) - (b.at || 0)).map(u => u.id);
+    let cur = (MT.multi || []).filter(x => order.includes(x));
+    if (ev.ctrlKey || ev.metaKey) cur = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id];
+    else if (ev.shiftKey && MT.sel && MT.sel.list === 'units' && order.includes(MT.sel.id)) {
+      const a = order.indexOf(MT.sel.id), b = order.indexOf(id);
+      cur = order.slice(Math.min(a, b), Math.max(a, b) + 1);
+    } else cur = [id];
+    MT.multi = cur;
+    MT.sel = cur.length ? { list, id: cur.includes(id) ? id : cur[cur.length - 1] } : null;
+    this.redraw();
   },
   // маркер сцены тянется по ролику; отпустил у слова — пара карты [t маркера, "w:i"], иначе [t маркера, время]
   dragMarker(ev, u, m) {
@@ -379,6 +422,12 @@ const MTA = {
     return this.map;
   },
   ac() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); return this.ctx; },
+  out() {                                                // общий выход: выключить звук (S12) — громкость 0, сведение не перестраивается
+    if (!this.master) { this.master = this.ac().createGain(); this.master.connect(this.ctx.destination); }
+    this.master.gain.value = this.muted ? 0 : 1;
+    return this.master;
+  },
+  mute(on) { this.muted = on; if (this.master) this.master.gain.value = on ? 0 : 1; },
   buf(url) {
     if (!this.bufs[url]) this.bufs[url] = fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(a => this.ac().decodeAudioData(a)).then(b => {
       let mx = 0, at = 0;
@@ -431,7 +480,7 @@ const MTA = {
       if (c.fadeIn && skip < c.fadeIn) { g.gain.setValueAtTime(base * (skip / c.fadeIn), when); g.gain.linearRampToValueAtTime(base, at(start + c.fadeIn)); }
       const fo = c.music ? c.fadeOut : c.sfx ? Math.min(1.2, Math.max(0.12, (end - Math.max(start, start + (inf.peak || 0) - c.off)) * 0.5)) : 0;
       if (fo > 0 && end - fo > t) { g.gain.setValueAtTime(base, at(end - fo)); g.gain.linearRampToValueAtTime(0.0001, at(end)); }
-      src.connect(g).connect(ctx.destination);
+      src.connect(g).connect(this.out());
       src.start(when, c.off + skip, Math.max(0.01, len - skip));
       this.nodes.push(src);
     }
@@ -441,17 +490,18 @@ const MTA = {
 const MontagePreview = {
   host: null, frame: null, id: null, url: null,
   follow(r) {
-    const d = r.page === 'p' && r.tab === 'montage' ? Store.get('plan:' + r.id) : null;
-    const want = d && d.project ? d.id : null;
+    const d = (r.page === 'p' && r.tab === 'montage') || r.page === 'v' ? Store.get('plan:' + r.id) : null;   // S12: и окно видео
+    const want = d && d.project ? d.id + (r.page === 'v' ? '|v' : '') : null;
     if (want === this.id) return this.place();
     this.close();
     if (!want) return;
     this.id = want;
-    this.host = h('div.mt-preview', h('p.dim.small', h('span.spin'), ' запускаю предпросмотр…'));
+    const vid = want.split('|')[0], clean = want.endsWith('|v');
+    this.host = h('div.mt-preview', { class: clean ? 'clean' : '' }, h('p.dim.small', h('span.spin'), ' запускаю предпросмотр…'));
     document.body.append(this.host);
-    api('POST', '/api/studio/project', { id: want, page: 'preview' }).then(r => {
+    api('POST', '/api/studio/project', { id: vid, page: 'preview' }).then(r => {
       if (this.id !== want) return;
-      this.url = r.url;
+      this.url = r.url + (clean ? '&clean' : '');
       this.frame = h('iframe', { src: r.url + '#t=' + MT.t, title: 'Предпросмотр монтажа' });
       this.host.replaceChildren(this.frame);
     }).catch(e => { if (this.host) this.host.replaceChildren(h('div.badline', '⚠ ' + e.message)); });
@@ -466,8 +516,9 @@ const MontagePreview = {
   },
   close() { if (this.host) this.host.remove(); this.host = this.frame = this.id = this.url = null; },
   post(m) { try { this.frame && this.frame.contentWindow.postMessage(m, '*'); } catch (e) {} },
-  seek(t) { this.post({ seek: t }); if (MT.playing && MT.d) MTA.play(MT.d, t); },
+  seek(t) { if (MT.driven) return Workspace.seek(t); this.post({ seek: t }); if (MT.playing && MT.d) MTA.play(MT.d, t); },
   play(on) {
+    if (MT.driven) return on ? Workspace.play() : Workspace.pause();
     this.post({ play: on }); MT.playing = on;
     if (on && MT.d) MTA.play(MT.d, MT.t); else MTA.stop();
     const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d)));
@@ -477,6 +528,7 @@ const MontagePreview = {
 addEventListener('message', ev => {
   const m = ev.data || {};
   if (!MontagePreview.frame || ev.source !== MontagePreview.frame.contentWindow || typeof m.studioT !== 'number') return;
+  if (MT.driven) return;                                // S12: в окне видео часы ведёт Studio (скорость, loop, покадрово) — эхо кадров не нужно
   MT.t = +m.studioT.toFixed(2);
   if (MT.playing !== !!m.playing) {                    // ▶ / ❚❚ нажали в самом предпросмотре
     MT.playing = !!m.playing;

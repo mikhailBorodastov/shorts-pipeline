@@ -18,7 +18,7 @@ const AgentPanel = {
   },
   // видео, на котором сейчас автор (панель только на страницах видео)
   follow(r) {
-    const vid = r.page === 'p' ? r.id : null;
+    const vid = r.page === 'p' || r.page === 'v' ? r.id : null;   // S12: и окно видео #/v/<id>
     if (vid !== this.vid) { this.vid = vid; this.since = 0; this.entries = []; this.busy = false; this.expanded.clear(); if (vid) this.poll(true); }
     document.body.classList.toggle('agent-open', !!(this.open && this.vid));
     this.el.hidden = !(this.open && this.vid);

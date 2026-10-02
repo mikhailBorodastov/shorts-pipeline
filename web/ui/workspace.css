@@ -1,0 +1,96 @@
+/* Claude Studio — S12.3: рабочее окно видео (#/v/<id>) */
+
+body.ws-mode #main { overflow: hidden; }
+body.ws-mode #view { max-width: none; padding: 0; height: 100%; }
+.ws { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100vh; }
+
+/* шапка */
+.ws-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); min-width: 0; }
+.ws-head input.ws-name { font: 650 19px/1.2 var(--font); letter-spacing: -.01em; min-width: 120px; max-width: 46%; flex: 0 1 auto; padding: 4px 6px; field-sizing: content; }
+.ws-saved { display: inline-flex; align-items: center; gap: 5px; color: var(--text-mute); font-size: 12px; white-space: nowrap; }
+.ws-model { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0 4px 0 10px; color: var(--agent); }
+.ws-model select { border: 0; background: transparent; color: var(--text); padding: 5px 4px; }
+.ws-head .icon { color: var(--dim); padding: 6px; }
+.ws-head .icon:hover { color: var(--text); }
+.ws-head .ws-export, .ws-head button.primary { margin-left: 4px; }
+
+/* колонки */
+.ws-main { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 0; }
+.ws-left { border-right: 1px solid var(--line); overflow: auto; padding: 12px 10px 20px; background: var(--bg-raise); display: flex; flex-direction: column; gap: 6px; }
+.ws-sec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-mute); font-weight: 600; margin: 8px 6px 2px; display: flex; gap: 8px; }
+.ws-sec .cnt { color: var(--text-mute); font-weight: 500; }
+.ws-hint { color: var(--text-mute); font-size: 12px; margin: 2px 6px; }
+.ws-scenes { display: flex; flex-direction: column; gap: 2px; }
+.ws-scene { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: var(--r-sm); padding: 6px 8px; white-space: normal; }
+.ws-scene:hover { background: var(--panel); border-color: transparent; }
+.ws-scene .n { flex: none; width: 20px; height: 20px; border-radius: 6px; background: var(--panel2); color: var(--dim); display: grid; place-items: center; font: 600 11px/1 var(--mono); }
+.ws-scene .t { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.ws-scene .t b { font-weight: 500; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ws-scene .t small { color: var(--text-mute); font: 11px var(--mono); }
+.ws-scene.on { background: var(--panel2); }
+.ws-scene.on .n { background: var(--primary-bg); color: var(--primary-fg); }
+.ws-scene.sel { border-color: rgba(255, 204, 51, .45); }
+.ws-pipe { display: flex; flex-direction: column; gap: 2px; }
+.ws-step { display: flex; align-items: center; gap: 10px; padding: 6px 6px; border-radius: var(--r-sm); }
+.ws-step:hover { background: var(--panel); }
+.ws-step .lbl { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; color: var(--dim); }
+.ws-step .lbl small { font-size: 11px; color: var(--text-mute); }
+.ws-step.done .lbl, .ws-step.part .lbl { color: var(--text); }
+.ws-dot { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line-strong); display: grid; place-items: center; color: var(--bg); }
+.ws-step.done .ws-dot { background: var(--ok); border-color: var(--ok); }
+.ws-step.part .ws-dot { border-color: var(--acc); }
+.ws-step.part .ws-dot i { width: 8px; height: 8px; border-radius: 50%; background: var(--acc); }
+.ws-step button.small { padding: 2px 10px; font-size: 11.5px; }
+
+/* центр */
+.ws-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.ws-stage { flex: 1; min-height: 160px; position: relative; display: grid; place-items: center; background: radial-gradient(ellipse at center, #141418 0%, var(--bg) 70%); }
+.ws-slot.mt-prevslot { width: 200px; height: 356px; border: 1px solid var(--line); border-radius: 12px; background: #000; display: block; }
+.mt-preview.clean { border-radius: 12px; background: #000; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.ws-over { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--dim); z-index: 60; background: rgba(14, 14, 16, .86); text-align: center; }
+.ws-over.soft { background: transparent; pointer-events: none; z-index: 60; }
+.ws-over.soft b { background: rgba(0, 0, 0, .6); padding: 6px 12px; border-radius: var(--r-pill); color: var(--text); }
+.ws-over.soft p { background: rgba(0, 0, 0, .6); padding: 4px 10px; border-radius: var(--r-pill); }
+.ws-over .es-ico { width: 48px; height: 48px; border-radius: 50%; background: var(--panel2); display: grid; place-items: center; color: var(--text); }
+.ws-badge { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 60; background: rgba(0, 0, 0, .7); border: 1px solid var(--line); color: var(--dim); font-size: 12px; padding: 4px 12px; border-radius: var(--r-pill); }
+
+.ws-transport { display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--bg-raise); min-width: 0; }
+.ws-transport .icon { font-size: 14px; color: var(--dim); padding: 4px 8px; }
+.ws-transport .icon:hover, .ws-transport .icon.on { color: var(--text); background: var(--panel2); }
+.ws-transport .ws-play { color: var(--text); font-size: 15px; }
+.ws-time { font: 13px var(--mono); margin: 0 10px 0 6px; white-space: nowrap; }
+.ws-time b { font-weight: 600; }
+.ws-scname { color: var(--dim); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ws-rate { margin-left: 6px; }
+.ws-rate button { padding: 2px 8px; font-size: 11.5px; }
+
+/* таймлайн */
+.ws-tl { height: 34vh; min-height: 150px; display: flex; flex-direction: column; border-top: 1px solid var(--line); background: var(--bg); }
+body.ws-tl-big .ws-tl { height: 54vh; }
+.ws-tlhead { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--line); min-width: 0; }
+.ws-tlhead > b { font-size: 12.5px; font-weight: 600; }
+.ws-tlhead .ws-hint { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ws-tlhead button.small { padding: 2px 9px; font-size: 11.5px; }
+.ws-tlhead .icon { color: var(--dim); padding: 3px 7px; }
+.ws-chk { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--dim); }
+.ws-tl .mt-tl { flex: 1; min-height: 0; overflow: auto; border: 0; border-radius: 0; background: var(--bg); }
+.ws-tl .mt-scroll { overflow: visible; }
+.ws-tl-empty { flex: 1; display: grid; place-items: center; color: var(--text-mute); }
+.ws-tl .mt-props { border: 0; border-top: 1px solid var(--line); border-radius: 0; max-height: 128px; overflow: auto; background: var(--bg-raise); }
+.ws-tl .mt-props:empty { display: none; }
+.ws-multi { font-size: 12.5px; }
+
+/* таймлайн — общий вид (и окно видео, и старая вкладка) */
+.mt-ruler { background: var(--bg-raise); border-color: var(--line); }
+.mt-tick { border-color: var(--line); color: var(--text-mute); font-family: var(--mono); }
+.mt-row { border-color: var(--line); }
+.mt-rowlabel { background: var(--bg-raise); border-color: var(--line); color: var(--dim); font-size: 11.5px; font-weight: 500; }
+.mt-bar { border-radius: 6px; border: 1px solid rgba(255, 255, 255, .06); color: #eef; }
+.mt-bar.unit { background: #2b4366; } .mt-bar.music { background: #503a6e; } .mt-bar.sfx { background: #23584e; } .mt-bar.ov { background: #6b5124; }
+.mt-bar.sel { outline: 2px solid var(--key); outline-offset: -1px; }
+.mt-playhead { border-left-color: #fff; }
+.mt-playhead::before { content: ''; position: absolute; top: 0; left: -6px; border: 5px solid transparent; border-top: 7px solid #fff; }
+.mt-word { background: rgba(255, 255, 255, .07); color: var(--dim); cursor: pointer; height: 17px; line-height: 17px; top: 3px; }
+.mt-word:hover { background: rgba(255, 255, 255, .16); color: var(--text); }
+.mt-wave { position: absolute; left: 0; right: 0; top: 24px; height: 22px; pointer-events: none; }
+.mt-wave canvas { position: absolute; top: 0; height: 22px; }
