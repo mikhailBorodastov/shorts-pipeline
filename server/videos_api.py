@@ -226,6 +226,99 @@ def snap(A, vid, t):
     return {"file": rel, "path": f}
 
 
+# ---------------------------------------------------------------- 📝 окно «Сценарий» (S12.5)
+TEXTS = ("research.md", "script.md")
+
+
+def text(vid, name):
+    """research.md / script.md папки видео (вкладка «Ресерч и источники», «Скопировать для TTS»)."""
+    vdir = P.video(vid)
+    if not vdir or name not in TEXTS:
+        raise ValueError("нет такого файла")
+    f = os.path.join(vdir, name)
+    if not os.path.isfile(f):
+        return {"name": name, "text": "", "exists": False}
+    with open(f, encoding="utf-8", errors="replace") as fh:
+        return {"name": name, "text": fh.read(), "exists": True, "mtime": os.path.getmtime(f)}
+
+
+def _vers_dir(vdir):
+    return os.path.join(vdir, "build", "script_versions")
+
+
+def script_versions(vid):
+    vdir = P.video(vid)
+    d = _vers_dir(vdir) if vdir else ""
+    try:
+        import json as _j
+        idx = _j.load(open(os.path.join(d, "index.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        idx = []
+    return list(reversed(idx))
+
+
+def script_snapshot(vid, why=""):
+    """Версия script.md: копия в build/script_versions/<время>.md, если текст изменился с прошлой версии."""
+    import json as _j
+    vdir = P.video(vid)
+    f = vdir and os.path.join(vdir, "script.md")
+    if not f or not os.path.isfile(f):
+        return None
+    cur = open(f, encoding="utf-8", errors="replace").read()
+    if "Зачем ежу иголки" in cur[:400]:                 # заглушка шаблона — не версия
+        return None
+    d = _vers_dir(vdir)
+    os.makedirs(d, exist_ok=True)
+    ip = os.path.join(d, "index.json")
+    try:
+        idx = _j.load(open(ip, encoding="utf-8"))
+    except (OSError, ValueError):
+        idx = []
+    if idx:
+        try:
+            if open(os.path.join(d, idx[-1]["file"]), encoding="utf-8", errors="replace").read() == cur:
+                return None
+        except OSError:
+            pass
+    name = time.strftime("%y%m%d-%H%M%S") + ".md"
+    with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+        fh.write(cur)
+    idx.append({"file": name, "ts": int(time.time() * 1000), "why": why, "words": len(re.findall(r"\w+", " ".join(l[1:] for l in cur.splitlines() if l.startswith(">"))))})
+    with open(ip, "w", encoding="utf-8") as fh:
+        _j.dump(idx[-200:], fh, ensure_ascii=False, indent=1)
+    return name
+
+
+def script_version(vid, name):
+    vdir = P.video(vid)
+    if not vdir or not re.fullmatch(r"[\d-]+\.md", name or ""):
+        raise ValueError("нет такой версии")
+    f = os.path.join(_vers_dir(vdir), name)
+    return {"name": name, "text": open(f, encoding="utf-8", errors="replace").read()}
+
+
+def script_restore(vid, name):
+    v = script_version(vid, name)
+    script_snapshot(vid, "перед возвратом версии")
+    with open(os.path.join(P.video(vid), "script.md"), "w", encoding="utf-8") as fh:
+        fh.write(v["text"])
+    script_snapshot(vid, "возвращена версия " + name[:-3])
+    return {"ok": True}
+
+
+def open_file(vid, rel):
+    """Проводник с выделенным файлом видео (script.md, research.md …)."""
+    vdir = P.video(vid)
+    f = vdir and os.path.abspath(os.path.join(vdir, rel))
+    if not f or not f.startswith(os.path.abspath(vdir)) or not os.path.exists(f):
+        return open_folder(vid)
+    if os.name == "nt":
+        subprocess.Popen(["explorer", "/select,", f], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(f)])
+    return {"ok": True, "path": f}
+
+
 # ---------------------------------------------------------------- HTTP
 def handle_get(A, h, p, q):
     if p == "/api/videos/extra":
@@ -238,6 +331,11 @@ def handle_get(A, h, p, q):
                 except Exception as e:                 # одна битая папка не ломает страницу
                     out[d["id"]] = {"err": str(e)}
         h._json(out); return True
+    if p == "/api/videos/text":
+        h._json(text(q.get("id", [""])[0], q.get("f", [""])[0])); return True
+    if p == "/api/videos/scriptver":
+        vid, name = q.get("id", [""])[0], q.get("v", [""])[0]
+        h._json(script_version(vid, name) if name else {"versions": script_versions(vid)}); return True
     if p == "/api/videos/cover":
         f = cover_path(A, q.get("id", [""])[0])
         if not f:
@@ -248,7 +346,11 @@ def handle_get(A, h, p, q):
 
 def handle_post(A, h, p, q, body):
     if p == "/api/videos/open":
-        h._json(open_folder(body.get("id", ""), body.get("sub", ""))); return True
+        h._json(open_file(body.get("id", ""), body["file"]) if body.get("file") else open_folder(body.get("id", ""), body.get("sub", ""))); return True
+    if p == "/api/videos/scriptsnap":
+        h._json({"name": script_snapshot(body.get("id", ""), body.get("why", ""))}); return True
+    if p == "/api/videos/scriptrestore":
+        h._json(script_restore(body.get("id", ""), body.get("v", ""))); return True
     if p == "/api/videos/create":
         h._json(create(A, body)); return True
     if p == "/api/videos/snap":

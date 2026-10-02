@@ -67,6 +67,10 @@ def archive_video(A, vid):
     v = P.index(True)["videos"].get(vid)
     if not v:
         raise ValueError("нет такого видео")
+    stop_project_server(v["dir"])                      # S12.5: работающий скрипт ролика держит папку — Windows её не удалит
+    s = A.agapi().SESS.pop(vid, None)                  # и сессия Claude этого видео (её рабочая папка — папка видео)
+    if s:
+        s.close()
     dst = os.path.join(P.ARCHIVE, "videos", v["channel"] or "_", f"{v['folder']}-{time.strftime('%y%m%d-%H%M%S')}")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     with A._lock, A.FileLock():
@@ -77,6 +81,25 @@ def archive_video(A, vid):
 
 
 # ---------------------------------------------------------------- the video project's own pages (script.html, review.html)
+def stop_project_server(vdir):
+    """Остановить локальный скрипт ролика (review_server.py) этой папки: процесс, слушающий его порт (Windows: netstat + taskkill)."""
+    import subprocess
+    p = project_port(vdir, start=False)
+    if not p or os.name != "nt":
+        return False
+    cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10, creationflags=cf).stdout
+    except Exception:
+        return False
+    pids = {ln.split()[-1] for ln in out.splitlines() if "LISTENING" in ln and ln.split()[1].endswith(f":{p}")}
+    for pid in pids:
+        if pid.isdigit() and int(pid) != os.getpid():
+            subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], capture_output=True, timeout=10, creationflags=cf)
+    time.sleep(0.4)
+    return bool(pids)
+
+
 def project_port(vdir, start=True, wait=12):
     """Port of the video project's review server (review_server.py): the running one, or start it (hidden) and wait for build/.review_port."""
     import subprocess, sys, urllib.request

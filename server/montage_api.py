@@ -246,7 +246,7 @@ def generate(A, vid, montage=None):
         src = os.path.join(P.STANDS if f == "paper.js" else P.ENGINE, f)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(pd, "src", f))
-    for f in ("review.js", "main.js"):                        # ревью отвечает окну приложения (S8); main.js — субтитры по стилю канала (S9)
+    for f in ("review.js", "main.js", "script.html", "script.js", "refs.js"):   # ревью отвечает окну приложения (S8); main.js — субтитры (S9); раскадровка — окно «Сценарий» (S12.5)
         shutil.copy2(os.path.join(P.TPL_SRC, f), os.path.join(pd, "src", f))
     vo = voice(vid)
     words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []

@@ -18,7 +18,7 @@ const Workspace = {
     if (d.project) { Montage.load(d); MTA.mute(WS.muted); MTA.warm(d); }
     const I = MT.info[d.id] || {}, M = Montage.M(d);
     // ролик Studio: при первом открытии окна — пересобрать файлы проекта (свежий движок и превью без своей полосы управления — &clean)
-    if (d.project && I.owned && !(MT.autogen || (MT.autogen = {}))[d.id]) { MT.autogen[d.id] = true; I.generated = true; setTimeout(() => Montage.regen(), 0); }
+    if (d.project && I.owned && (M.units || []).length && !(MT.autogen || (MT.autogen = {}))[d.id]) {   // пустой монтаж не собираем — превью без сцен падает MT.autogen[d.id] = true; I.generated = true; setTimeout(() => Montage.regen(), 0); }
     requestAnimationFrame(() => { this.fit(); this.pins(); });
     return h('div.ws', { class: d.mode === 'long' ? 'long' : 'short' },
       this.head(d, key),
@@ -79,7 +79,7 @@ const Workspace = {
     const scriptDone = has && scr.template === false;
     const steps = [
       { label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : has ? 'Написать' : 'Начать', primary: !scriptDone,
-        btn: scriptDone ? nav('script') : has ? () => agent('📝 Напиши сценарий по этому видео (бриф, ответы на вопросы, препродакшен). Потом montage check и montage tts.', 'script')
+        btn: scriptDone ? () => ScriptWin.open(d) : has ? () => agent('📝 Напиши сценарий по этому видео: сначала ресерч темы (источники → research.md), потом сценарий по брифу, ответам на вопросы и препродакшену. Потом montage check и montage tts.', 'script')
           : () => Claude.run({ action: 'produce', key: 'plan:' + id, params: { id, name: d.name } }),
         title: has ? 'Раскадровка: текст сцен, правки, фактчек' : 'Положить проект ролика в папку видео' },
       { label: 'Озвучка', sub: words.length ? '' : 'черновой голос или своя запись', st: words.length ? 'done' : '', act: words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone },

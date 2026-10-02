@@ -105,7 +105,7 @@
       else if (!b.hr) other.appendChild(otherBlock(b, i));
     });
     if (!sceneIdx().length) box.innerHTML = '<div class="empty">В script.md пока нет сцен. Сцена — это заголовок «### …» или «## …» с полем VO / Голос.</div>';
-    renderPreamble(); renderStats(); renderNotes();
+    renderPreamble(); renderStats(); renderNotes(); tell();
     requestAnimationFrame(() => { document.querySelectorAll('#main textarea').forEach(autosize); $('main').scrollTop = scroll; });
   }
 
@@ -309,7 +309,7 @@
   function markDirty(i) {
     const c = cur(i); if (!c) return;
     c.dirty = true; c.el.classList.add('dirty');
-    $('saved').textContent = 'есть несохранённое…';
+    $('saved').textContent = 'есть несохранённое…'; tell();
     clearTimeout(c.timer); c.timer = setTimeout(() => flush(i), 1200);
   }
 
@@ -359,7 +359,33 @@
     saved();
   }
 
-  function saved() { $('saved').textContent = 'сохранено ' + new Date().toLocaleTimeString().slice(0, 5); }
+  function saved() { $('saved').textContent = 'сохранено ' + new Date().toLocaleTimeString().slice(0, 5); tell(); }
+
+  // ---------- S12.5: встроено в окно «Сценарий» Claude Studio (?embed): состояние — наверх, команды — вниз ----------
+  const EMBED = /[?&]embed/.test(location.search) && parent !== window;
+  if (EMBED) document.body.classList.add('embed');
+  function tell() {
+    if (!EMBED || !data) return;
+    const idx = sceneIdx();
+    let w = 0, real = 0;
+    idx.forEach(i => { w += words(voiceText(data.blocks[i])); const tm = data.timing[i]; if (tm) real = Math.max(real, tm.start + tm.dur); });
+    try {
+      parent.postMessage({ scriptState: { scenes: idx.length, words: w, est: w / WPS, real, open: live().filter(n => n.status !== 'done').length,
+        dirty: [...cards.values()].some(c => c.dirty), tts: $('ttsstat').textContent } }, '*');
+    } catch (e) {}
+  }
+  addEventListener('message', async ev => {
+    const m = ev.data || {};
+    if (!EMBED || ev.source !== parent || !m.scriptCmd) return;
+    if (m.scriptCmd === 'flush') { for (const [k, c] of cards) if (c.dirty && !c.conflict) await flush(k); tell(); }
+    if (m.scriptCmd === 'tts') $('tts').click();
+    if (m.scriptCmd === 'ttsText') {
+      for (const [k, c] of cards) if (c.dirty && !c.conflict) await flush(k);
+      const txt = sceneIdx().map(i => voiceText(data.blocks[i])).filter(Boolean).join('\n\n');
+      parent.postMessage({ scriptTtsText: txt, id: m.id }, '*');
+    }
+    if (m.scriptCmd === 'reload') reloadScript();
+  });
 
   // ---------- voice ----------
   function play(i, chain = false) {
@@ -485,6 +511,7 @@
     if (!list.length && !draft) box.innerHTML = `<div class="empty">${filter === 'done' ? 'Сделанных пока нет.' : 'Открытых правок нет.<br>Выдели текст в сцене и нажми 🔎 / ✍️ / 🎨 / 💬.'}</div>`;
     for (const n of list) box.appendChild(noteCard(n));
     $('copy').disabled = !live().some(n => n.status !== 'done');
+    tell();
   }
 
   function noteCard(n) {

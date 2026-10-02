@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 14                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 15                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -153,7 +153,13 @@ def system_prompt(A, vid, mode):
     if mode == "script":
         build = f"""
 
-Режим «📝 Сценарий» — сценарий проекта {vdir.replace(chr(92), '/')}/script.md, как Claude Code по _studio/CLAUDE.md (шаг 0 и раздел D), но без викторины:
+Режим «📝 Сценарий» — сценарий проекта {vdir.replace(chr(92), '/')}/script.md, как Claude Code по _studio/CLAUDE.md (шаг 0 и раздел D), но без викторины
+(вопросы автору уже заданы — его ответы в show, это его решения):
+- РЕСЕРЧ (S12.5), если пишешь заново и в видео есть тема, а не готовый текст автора: поищи источники (WebSearch, WebFetch — 3–8 надёжных: первоисточники, интервью,
+  разборы, архивы), проверь цифры и даты. Запиши {vdir.replace(chr(92), '/')}/research.md (Write): «# Ресерч», коротко — главный угол и что нашёл, затем
+  «## Источники» — пронумерованный список «[n] Название — ссылка — что взяли», затем «## Факты» — «утверждение — [n]». Факт без источника — «проверить».
+  В сценарии к сцене с фактами добавь поле «**Источники:** [1], [3]» (номера из research.md). Свой текст автора (бриф: «Свой сценарий автора») не переписывай —
+  разложи по сценам и проверь факты, источники — так же.
 - ПЕРЕД правкой всегда перечитай script.md (автор правит его в раскадровке — его правки не затирай, кроме случая «напиши заново»).
 - Пишешь заново: прочитай видео (show — идея, ответы автора, название, финалисты, препродакшен) и сцены редактора (scene brief), _studio/prompts/scriptwriter.md
   и стайл-гайды (_studio/prompts/style-guide.md, style/style-guide.md канала). Формат сценариста: ### 0:00–0:04 — НАЗВАНИЕ, **Картинка:** (сценами редактора и элементами
@@ -189,6 +195,9 @@ def spawn(A, vid, model, mode):
     allowed = [f"Bash(python {STUDIO_PY}:*)", f"Bash(python {BLENDER_RUN}:*)", f"Bash(node {RENDER_PROP}:*)", f"Bash(node {RENDER_CHAR}:*)",
                "Read", "Grep", "Glob", "Write", "Edit"]
     tools = ["Bash", "Read", "Grep", "Glob", "Write", "Edit"]
+    if mode in ("script", "build"):                      # S12.5: ресерч темы — поиск и чтение страниц
+        tools += ["WebSearch", "WebFetch"]
+        allowed += ["WebSearch", "WebFetch"]
     vdir = P.video(vid) or P.ROOT
     cmd = [exe, "-p", "--safe-mode", "--no-session-persistence", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--tools", ",".join(tools), "--allowedTools", *allowed, "--permission-prompts", "none", "--system-prompt-file", sysf,
@@ -253,6 +262,11 @@ class Session:
         head = ctx_text(self.A, self.vid, ctx)
         if not self.busy:
             self.run = "r" + uuid.uuid4().hex[:8]
+            if self.mode in ("script", "build"):            # S12.5: версия сценария до запуска Claude
+                try:
+                    self.A.vdapi().script_snapshot(self.vid, "до запуска Claude")
+                except Exception:
+                    pass
             A = self.A
             os.makedirs(AGENT_DIR, exist_ok=True)
             A.write_text(run_file(self.vid), self.run)
@@ -306,6 +320,11 @@ class Session:
         except OSError:
             pass
         ch = run_changes(self.A, self.vid, run) if run else {}
+        if self.mode in ("script", "build"):                 # S12.5: версия сценария после запуска (если поменялся)
+            try:
+                self.A.vdapi().script_snapshot(self.vid, "Claude: " + ("сценарий" if self.mode == "script" else "сборка"))
+            except Exception:
+                pass
         self.add("done", text, ok=ok, undo=ch, **(meta or {}))
         ab = getattr(self, "ab", None)
         if ab and ab.get("run") == run and (sum((ch.get("scenes") or {}).values()) or ch.get("plan")):

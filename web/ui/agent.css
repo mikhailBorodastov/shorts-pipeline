@@ -82,3 +82,4 @@ body.agent-open .stage-editor { right: 400px; }
 .pv-dot.new { position: static; margin: 0; flex: none; }
 .pv-pop { position: absolute; display: flex; gap: 6px; align-items: center; transform: translate(-11px, -11px); width: 44%; min-width: 220px; z-index: 3; }
 .pv-pop input { flex: 1; font-size: 12.5px; padding: 7px 10px; background: rgba(18, 18, 20, .95); border-color: var(--line-strong); }
+body.ws-mode #agentfab { bottom: 72px; }   /* не на кнопках подвала окна «Сценарий» и таймлайна */

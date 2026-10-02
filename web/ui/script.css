@@ -1,0 +1,29 @@
+/* Claude Studio — S12.5: окно «Сценарий» поверх окна видео (боковая панель и Claude остаются) */
+.sw { position: fixed; top: 0; bottom: 0; left: 232px; right: 0; z-index: 940; background: var(--bg); display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+body.side-mini .sw { left: 60px; }
+body.agent-open .sw { right: 400px; }
+.sw-head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); min-width: 0; }
+.sw-title { font-size: 17px; font-weight: 650; }
+.sw-head .seg { flex: none; }
+.sw-name { font-size: 12.5px; max-width: 220px; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sw-stats { color: var(--text-mute); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sw-body { flex: 1; min-height: 0; position: relative; }
+.sw-board, .sw-side { position: absolute; inset: 0; }
+.sw-frame { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
+.sw-wait { padding: 30px; text-align: center; }
+.sw-pane { height: 100%; overflow: auto; padding: 22px 28px 40px; max-width: 980px; }
+.sw-md { line-height: 1.6; color: var(--text); }
+.sw-md h2, .sw-md h3, .sw-md h4 { margin: 18px 0 8px; } .sw-md h2 { font-size: 20px; } .sw-md h3 { font-size: 16px; } .sw-md h4 { font-size: 14px; }
+.sw-md a { color: var(--acc); word-break: break-word; }
+.sw-md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.sw-md th, .sw-md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.sw-md blockquote { border-left: 3px solid var(--line-strong); margin: 6px 0; padding-left: 10px; color: var(--dim); }
+.sw-md code { background: var(--panel2); padding: 0 4px; border-radius: 4px; }
+.sw-vers { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100%; }
+.sw-vlist { border-right: 1px solid var(--line); overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 4px; background: var(--bg-raise); }
+.sw-v { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: var(--r-sm); padding: 7px 10px; white-space: normal; }
+.sw-v b { font-weight: 550; font-size: 12.5px; } .sw-v small { color: var(--text-mute); font-size: 11.5px; }
+.sw-v.on { background: var(--panel2); border-color: var(--line); }
+.sw-vview { overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+.sw-pre { white-space: pre-wrap; font: 12.5px/1.55 var(--mono); color: var(--dim); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; margin: 0; }
+.sw-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--bg-raise); }

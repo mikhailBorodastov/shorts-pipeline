@@ -220,7 +220,7 @@ const NewVideo = {
       setTimeout(() => {
         if (!window.AgentPanel) return;
         AgentPanel.toggle(true);
-        AgentPanel.say('📝 Новое видео из поп-апа: прочитай бриф (тема, подача, визуал, длина, указания, свой сценарий — если есть) и мои ответы на вопросы, напиши сценарий. Потом montage check и montage tts.',
+        AgentPanel.say('📝 Новое видео из поп-апа: прочитай бриф (тема, подача, визуал, длина, указания, свой сценарий — если есть) и мои ответы на вопросы. Сначала ресерч темы (WebSearch → research.md с источниками), потом сценарий. Потом montage check и montage tts.',
           { mode: 'script', model: 'opus' });
       }, 900);
     };
