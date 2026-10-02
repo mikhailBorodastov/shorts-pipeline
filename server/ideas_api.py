@@ -76,6 +76,7 @@ import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio)
 import ws_api  # noqa: E402  мастерская ассета (S10): служебная сцена, клип из ключей позы, в библиотеку
 import media_api  # noqa: E402  медиа библиотеки (S10.3): видео кадрами для живых экранов
 import voice_api  # noqa: E402  голос ролика (S11): запись диктора -> нарезка по сценам, черновой голос
+import talk_api  # noqa: E402  звериная речь (Animalese): голоса канала, послушать, фраза — звуком препродакшена
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -168,6 +169,10 @@ def mdapi():
 
 def vcapi():
     return _fresh(voice_api, "voice")
+
+
+def tkapi():
+    return _fresh(talk_api, "talk")
 
 
 def stapi():
@@ -1297,6 +1302,8 @@ def handle_get(h):
     p, q = u.path, parse_qs(u.query)
     if p.startswith("/api/") and not trusted(h):
         h.send_error(403); return True
+    if p.startswith("/api/talk/") and tkapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p == "/api/voice/state":                        # 🎙 голос: сцены сценария, файлы, откуда голос, записи диктора
         h._json(vcapi().state(sys.modules[__name__], q.get("video", [""])[0])); return True
     if p == "/api/voice/audio":                        # 🎙 послушать: сцена (i) или исходная запись (rec)
@@ -1449,6 +1456,8 @@ def handle_post(h):
         if p == "/api/assets/upload":                   # ⬆ своя 3D-модель (base64)
             j = start_job("assetupload", body.get("key", ""), f"assetupload:{body.get('el', '')}", {k: body.get(k) for k in ("el", "name", "data", "license", "author", "page")})
             h._json({"job": j.info()}); return True
+        if p.startswith("/api/talk/") and tkapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p in ("/api/voice/split", "/api/voice/tts"):  # 🎙 нарезать запись по сценам / черновой голос
             kind = "voicesplit" if p.endswith("split") else "voicetts"
             j = start_job(kind, "plan:" + body.get("video", ""), "voice", {"video": body.get("video", ""), "file": body.get("file", "")})
@@ -1668,6 +1677,8 @@ def cli(argv):
         return mnapi().script_cli(sys.modules[__name__], a)
     if cmd == "voice":
         return vcapi().cli(sys.modules[__name__], a)
+    if cmd == "talk":
+        return tkapi().cli(sys.modules[__name__], a)
     if cmd == "char":
         return chapi().cli(sys.modules[__name__], a)
     if cmd == "lib":

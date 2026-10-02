@@ -133,7 +133,7 @@ Object.assign(Plan, {
   },
   voice(d, key) {
     if (!d.project) return [h('section.card', h('h3', '🎙 Голос'), h('p', 'Голос появится, когда будет сценарий: этап «📝 Сценарий» → «🚀 Начать производство» → «✨ Написать сценарий».'),
-      h('a.btn', { href: `#/p/${d.id}/script` }, '→ к сценарию'))];
+      h('a.btn', { href: `#/p/${d.id}/script` }, '→ к сценарию')), Plan.talkBox(d)];
     const r = Plan.voiceLoad(d), job = Claude.running('plan:' + d.id, 'voice');
     if (!r) return h('p.dim', h('span.spin'), ' читаю голос…');
     if (r.error) return h('div.badline', '⚠ ' + r.error);
@@ -173,8 +173,62 @@ Object.assign(Plan, {
           h('div.row', h('b', x.title), h('span.sp'), h('span.dim.small', x.dur ? (+x.dur).toFixed(2) + ' с' : '')),
           x.silent ? h('div.dim.small', 'тихий бит — без голоса') : h('div.small', x.text),
           !x.silent && (x.file ? au('i=' + x.i) : h('span.dim.small', 'нет файла'))))) : h('p.dim', 'В сценарии нет сцен.')),
+      Plan.talkBox(d),
       h('p', h('a.btn', { href: `#/p/${d.id}/montage` }, 'Дальше → 🎞 Монтаж'), h('span.dim', ' — Claude соберёт ролик: сцены препродакшена под этот голос, звуки, музыка')),
     ];
+  },
+
+  // 🐾 звериная речь (Animalese, server/talk_api.py): голоса канала, ползунки, послушать — сразу; фраза -> звук препродакшена (в сцены и монтаж как el:)
+  talkSt: {},
+  talkBox(d) {
+    const T = Plan.talkSt[d.id] || (Plan.talkSt[d.id] = { text: Local.get('talk:' + d.id) || 'Будь другом, сбегай наверх! Кажется, там кто-то есть?' });
+    if (!T.r && !T.busy) {
+      T.busy = true;
+      api('GET', '/api/talk/voices?video=' + d.id).then(r => { T.r = r; T.name = Object.keys(r.voices)[0]; T.p = JSON.parse(JSON.stringify(r.voices[T.name])); T.busy = false; App.render(); })
+        .catch(e => { T.r = { error: e.message }; T.busy = false; App.render(); });
+    }
+    const head = h('div.card-head', h('h3', '🐾 Звериная речь'), h('span.dim.small', 'лепет как в Animal Crossing — для реплик героев без диктора; тот же движок, что у сборки ролика'));
+    if (!T.r) return h('section.card', head, h('p.dim', h('span.spin'), ' гружу голоса…'));
+    if (T.r.error) return h('section.card', head, h('div.badline', '⚠ ' + T.r.error));
+    const V = T.r.voices, p = T.p || {};
+    const play = async () => {
+      const ta = document.getElementById('talktext'); if (ta) T.text = ta.value;
+      Local.set('talk:' + d.id, T.text);
+      try {
+        T.playing = true; const r = await api('POST', '/api/talk/say', { video: d.id, text: T.text, p: T.p });
+        if (T.audio) T.audio.pause();
+        T.audio = new Audio(r.url); T.audio.play().catch(() => {});
+      } catch (e) { UI.toast(e.message, 'err'); }
+      T.playing = false;
+    };
+    const again = () => { clearTimeout(T.tm); T.tm = setTimeout(play, 350); };   // ползунок отпустил — сразу слышно
+    const pick = n => { T.name = n; T.p = JSON.parse(JSON.stringify(V[n])); App.render(); play(); };
+    return h('section.card.talk',
+      head,
+      h('div.row.wrap', Object.keys(V).map(n => h('button.chip', { class: T.name === n ? 'sel' : '', onclick: () => pick(n) }, n)),
+        h('span.sp'),
+        h('button', { title: 'Сохранить текущие ползунки голосом канала (им же озвучит Claude в роликах этого канала)', onclick: async () => {
+          const n = prompt('Имя голоса (например «ёжик», «мама», «кот-сыщик»):', T.name || ''); if (!n) return;
+          try { T.r.voices = (await api('POST', '/api/talk/voices', { video: d.id, name: n, p: T.p })).voices; T.name = n; UI.toast('💾 Голос «' + n + '» сохранён в канале'); App.render(); } catch (e) { UI.toast(e.message, 'err'); }
+        } }, '💾 Сохранить голос'),
+        Object.keys(V).length > 1 && h('button.icon', { title: 'Убрать этот голос из канала', onclick: async () => {
+          if (!confirm(`Убрать голос «${T.name}»?`)) return;
+          try { T.r.voices = (await api('POST', '/api/talk/voices', { video: d.id, name: T.name, p: null })).voices; pick(Object.keys(T.r.voices)[0]); } catch (e) { UI.toast(e.message, 'err'); }
+        } }, '🗑')),
+      h('textarea.box#talktext', { rows: 2, value: T.text, placeholder: 'Фраза героя', oninput: e => { T.text = e.target.value; } }),
+      h('div.row', h('button.primary', { onclick: play, title: 'Озвучить и послушать (секунда)' }, '▶ Послушать'),
+        h('select', { onchange: e => { T.p.voice = e.target.value; again(); } }, T.r.engines.map(([v, l]) => h('option', { value: v, selected: p.voice === v }, 'основа: ' + l))),
+        h('span.sp'),
+        h('button', { title: 'Фраза станет звуком препродакшена «🐾 …»: его можно поставить в сцену редактора или на монтаж', onclick: async () => {
+          const ta = document.getElementById('talktext'); if (ta) T.text = ta.value;
+          try { const r = await api('POST', '/api/talk/keep', { video: d.id, text: T.text, p: T.p, name: T.name }); await Store.load('plan:' + d.id, true); UI.toast(`➕ Звук в препродакшене (${r.dur} с) — ставь его в сцену или на монтаж`); }
+          catch (e) { UI.toast(e.message, 'err'); }
+        } }, '➕ В препродакшен звуком')),
+      h('div.talk-grid', T.r.params.map(([k, label, lo, hi, step, hint]) => h('label.talk-sl', { title: hint || '' },
+        h('span', label), h('input', { type: 'range', min: lo, max: hi, step, value: p[k] != null ? p[k] : T.r.defaults[k],
+          oninput: e => { T.p[k] = +e.target.value; e.target.nextSibling.textContent = (+e.target.value).toString(); }, onchange: again }),
+        h('span.dim', String(p[k] != null ? p[k] : T.r.defaults[k]))))),
+      h('p.dim.small', 'Подвинул ползунок — фраза сама переозвучивается. Голоса хранятся в канале (style/animalese.json). В сцене / на монтаже реплика — звук «🐾 …» из препродакшена.'));
   },
 
 

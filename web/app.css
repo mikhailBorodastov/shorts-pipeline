@@ -743,3 +743,7 @@ body.agent-open .stage-editor { right: 380px; }
 .mt-prevtabs button { flex: 1; font-size: 12px; }
 .mt-outslot { width: 300px; display: flex; flex-direction: column; gap: 4px; align-items: center; }
 .mt-outslot video { width: 300px; height: 533px; background: #000; border-radius: 10px; }
+
+/* 🐾 звериная речь */
+.talk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 14px; }
+.talk-sl { display: grid; grid-template-columns: 130px 1fr 44px; align-items: center; gap: 6px; font-size: 12px; }
