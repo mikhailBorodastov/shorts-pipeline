@@ -248,6 +248,8 @@ def generate(A, vid, montage=None):
             shutil.copy2(src, os.path.join(pd, "src", f))
     for f in ("review.js", "main.js", "script.html", "script.js", "refs.js"):   # ревью отвечает окну приложения (S8); main.js — субтитры (S9); раскадровка — окно «Сценарий» (S12.5)
         shutil.copy2(os.path.join(P.TPL_SRC, f), os.path.join(pd, "src", f))
+    for f in ("render.js", "build.sh"):                       # S12.8: быстрый рендер (H.264 в браузере) и склейка без x264
+        shutil.copy2(os.path.join(P.TEMPLATE, f), os.path.join(pd, f))
     vo = voice(vid)
     words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []
     report = {"copied": [], "units": [], "warn": []}

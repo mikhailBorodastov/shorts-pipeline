@@ -78,6 +78,7 @@ import media_api  # noqa: E402  медиа библиотеки (S10.3): вид�
 import voice_api  # noqa: E402  голос ролика (S11): запись диктора -> нарезка по сценам, черновой голос
 import talk_api  # noqa: E402  звериная речь (Animalese): голоса канала, послушать, фраза — звуком препродакшена
 import videos_api  # noqa: E402  S12: страница «Видео» (карточки, обложки, папка) и поп-ап «Новое видео»
+import render_api  # noqa: E402  S12.8: экспорт, очередь рендеров, готовые ролики
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -166,6 +167,10 @@ def wsapi():
 
 def mdapi():
     return _fresh(media_api, "media")
+
+
+def rdapi():
+    return _fresh(render_api, "renders")
 
 
 def vdapi():
@@ -1334,6 +1339,8 @@ def handle_get(h):
         return True
     if p.startswith("/api/videos/") and vdapi().handle_get(sys.modules[__name__], h, p, q):
         return True
+    if p.startswith("/api/renders") and rdapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
@@ -1465,6 +1472,8 @@ def handle_post(h):
                 h._json({"error": "нет ops"}, 400); return True
             h._json(apply_ops(body.get("key", ""), ops)); return True
         if p.startswith("/api/videos/") and vdapi().handle_post(sys.modules[__name__], h, p, q, body):
+            return True
+        if p.startswith("/api/renders/") and rdapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p == "/api/new":
             d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))

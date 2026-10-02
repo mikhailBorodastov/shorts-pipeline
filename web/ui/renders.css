@@ -1,0 +1,20 @@
+/* Claude Studio — S12.8: экспорт и «Рендеры» */
+.pbar { height: 6px; border-radius: 99px; background: var(--panel3); overflow: hidden; margin: 8px 0 4px; }
+.pbar i { display: block; height: 100%; background: var(--primary-bg); border-radius: 99px; transition: width .4s; }
+.rq { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.rq-row { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px 14px; }
+.rq-row.err { flex-direction: column; align-items: flex-start; gap: 4px; border-color: rgba(255,90,95,.35); }
+.rgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.rcard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; display: flex; flex-direction: column; }
+.rc-pic { position: relative; aspect-ratio: 16 / 11; background: #000; display: grid; place-items: center; cursor: pointer; overflow: hidden; }
+.rc-pic img { width: 100%; height: 100%; object-fit: contain; }
+.rc-play { position: absolute; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; font-size: 16px; opacity: 0; transition: opacity .15s; }
+.rc-pic:hover .rc-play { opacity: 1; }
+.rc-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; }
+.rc-body b { font-weight: 600; font-size: 13px; word-break: break-word; }
+.rc-foot { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.rc-foot .icon { padding: 3px; color: var(--text-mute); }
+.rc-video { width: 100%; max-height: 78vh; background: #000; border-radius: var(--r); }
+.ex-ch summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.ex-pre { white-space: pre-wrap; font: 12.5px/1.55 var(--mono); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; margin: 8px 0; max-height: 220px; overflow: auto; }
+.ex-prog { margin-top: 4px; }

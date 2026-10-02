@@ -45,10 +45,8 @@ const Workspace = {
       h('button.icon', { title: 'История: запуски Claude (что сделал, откатить), Ctrl+Z — откатить последнее', onclick: () => { AgentPanel.tab = 'history'; AgentPanel.toggle(true); } }, Icon('clock', 17)),
       h('button.icon', { title: 'Бриф: идея, контекст, вопросы', onclick: () => go(`#/p/${d.id}/idea`) }, Icon('book', 17)),
       h('button.icon', { title: 'Открыть папку видео', onclick: () => api('POST', '/api/videos/open', { id: d.id }).catch(e => UI.toast(e.message, 'err')) }, Icon('folder', 17)),
-      d.project && I.owned !== false
-        ? Claude.btn({ label: 'Экспорт', icon: '', action: 'montagebuild', key, scope: 'montage', params: { video: d.id }, noClaude: true, cls: 'ws-export',
-          title: 'Кадры, звук и mp4 в out/ (build.sh), 1–3 минуты. Окно экспорта с .srt и главами — в части 12.8', onResult: () => Montage.load(d, true) })
-        : h('button.primary', { disabled: true, title: d.project ? 'Рукописный ролик: собирается его build.sh' : 'Сначала проект ролика' }, Icon('download', 15), 'Экспорт'));
+      h('button.primary.ws-export', { disabled: !d.project, title: d.project ? 'Экспорт: имя, .srt, главы — в out/ всё для YouTube' : 'Сначала проект ролика', onclick: () => ExportDlg.open(d) },
+        Renders.of(d.id) ? h('span.spin') : Icon('download', 15), Renders.of(d.id) ? 'Рендер…' : 'Экспорт'));
   },
 
   // ---------------- слева: сцены + пайплайн ----------------

@@ -26,7 +26,11 @@ node render.js frames ${FPS:-60} ${WORKERS:-6}
 mkdir -p out
 NAME=$(basename "$PWD" | tr ' ' '_')
 EXT=$(cat build/frames/format.txt 2>/dev/null || echo png)
-ffmpeg -v error -y -framerate ${FPS:-60} -i build/frames/%05d.$EXT -i build/mix.wav -c:v libx264 -preset medium -crf 17 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "out/${NAME}.mp4"
+if [ "$EXT" = "h264" ]; then   # S12.8: кадры уже сжаты видеокартой в браузере (WebCodecs) — только склейка со звуком
+  ffmpeg -v error -y -fflags +genpts -framerate ${FPS:-60} -f h264 -i build/frames/video.h264 -i build/mix.wav -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart "out/${NAME}.mp4"
+else
+  ffmpeg -v error -y -framerate ${FPS:-60} -i build/frames/%05d.$EXT -i build/mix.wav -c:v libx264 -preset medium -crf 17 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "out/${NAME}.mp4"
+fi
 ffmpeg -v error -y -i "out/${NAME}.mp4" -i build/mix_no_vo.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest "out/${NAME}_NO_VO.mp4"
 cp build/mix_no_vo.wav out/music_sfx_no_vo.wav
 echo "OK -> out/${NAME}.mp4"

@@ -1,5 +1,5 @@
 // node render.js snap 1.2,5,9.5 [out.png]   -> contact sheet of given times
-// node render.js frames [fps] [workers]      -> build/frames/%05d.png (or .jpg with RENDER_FMT=jpg; env options in the frames branch)
+// node render.js frames [fps] [workers]      -> build/frames/video.h264 (S12.8: H.264 прямо в браузере, WebCodecs) или %05d.jpg / .png (RENDER_FMT=jpg|png; env options in the frames branch)
 // node render.js sfx                          -> build/sfx.json
 // node render.js thumb [out.png]              -> out/thumbnail.png (+ .jpg) from THUMBNAIL (or thumbnail_N from THUMBNAILS) in scenes.js
 const puppeteer = require('puppeteer-core');
@@ -92,10 +92,20 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       //   RENDER_RANGE=a:b  only frames a..b-1 (benchmarks)           RENDER_RECYCLE=N fresh browser every N frames (default 900)
       await closeB(browser);
       const fps = +(a1 || 30); let workers = +(a2 || 4);
-      const fmt = process.env.RENDER_FMT === 'png' ? 'png' : 'jpg';   // JPEG q0.95: PNG encoding was the bottleneck (27 vs 68 fps)
+      let fmt = process.env.RENDER_FMT === 'png' ? 'png' : process.env.RENDER_FMT === 'jpg' ? 'jpg' : 'h264';   // S12.8: по умолчанию H.264 в браузере (видеокарта)
       const dir = 'build/frames';
       const probeB = await launch(0), probe = await openPage(probeB);   // первый работник: страница уже загружена — не грузим её второй раз
       const total = await probe.evaluate(() => window.TOTAL);
+      // S12.8 замер (Ностальгия, 3D, 1080×1920): кадр + JPEG + base64 через CDP — ~39 мс; кадр + аппаратный H.264 (WebCodecs) — ~16 мс и ~66 КБ вместо ~650 КБ;
+      // x264 в конце не нужен — только склейка со звуком. Нет VideoEncoder / не поддерживает размер — старый путь JPEG.
+      const BITRATE = +(process.env.RENDER_BITRATE || (+(a1 || 30) > 40 ? 20e6 : 14e6));
+      if (fmt === 'h264') {
+        const ok = await probe.evaluate(async (fps, br) => {
+          try { const c = document.getElementById('c'); return typeof VideoEncoder !== 'undefined' && (await VideoEncoder.isConfigSupported({ codec: 'avc1.640033', width: c.width, height: c.height, bitrate: br, framerate: fps, hardwareAcceleration: 'prefer-hardware', avc: { format: 'annexb' } })).supported; }
+          catch (e) { return false; }
+        }, +(a1 || 30), BITRATE).catch(() => false);
+        if (!ok) { fmt = 'jpg'; console.log('[render] WebCodecs H.264 недоступен — кадры JPEG'); }
+      }
       if (!process.env.WORKERS && !process.env.RENDER_WORKERS_FORCE && await probe.evaluate(() => typeof X3 !== 'undefined' && !!X3.R))
         workers = Math.min(workers, 4);                   // 3D-сцены (WebGL): видеокарта одна — 4 окна быстрее 6 (замер: 1044 кадра 31 с против 48 с)
       const N = Math.ceil(total * fps);
@@ -103,9 +113,27 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       if (!process.env.RENDER_RANGE) { fs.rmSync(dir, { recursive: true, force: true }); }
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'format.txt'), fmt);
-      const CH = 60, RECYCLE = +(process.env.RENDER_RECYCLE || 900), TIMEOUT = 30000;
+      const CH = fmt === 'h264' ? 120 : 60, RECYCLE = +(process.env.RENDER_RECYCLE || 900), TIMEOUT = 30000;
       let nextChunk = r0, done = 0; const t0 = Date.now(), todo = r1 - r0;
       const grabF = (page, t) => page.evaluate((t, fmt) => { renderFrame(t); return document.getElementById('c').toDataURL(fmt === 'jpg' ? 'image/jpeg' : 'image/png', 0.95); }, t, fmt);
+      // кусок кадров a..b-1 -> один поток H.264 Annex B (начинается с ключевого кадра, SPS/PPS внутри) -> base64; куски склеиваются по порядку
+      const encChunk = (page, a, b) => page.evaluate(async (a, b, fps, br) => {
+        const c = document.getElementById('c'), parts = []; let err = null;
+        const enc = new VideoEncoder({ output: ch => { const u = new Uint8Array(ch.byteLength); ch.copyTo(u); parts.push(u); }, error: e => { err = e; } });
+        enc.configure({ codec: 'avc1.640033', width: c.width, height: c.height, bitrate: br, framerate: fps, hardwareAcceleration: 'prefer-hardware', avc: { format: 'annexb' }, latencyMode: 'quality' });
+        for (let i = a; i < b; i++) {
+          renderFrame(i / fps);
+          const f = new VideoFrame(c, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+          enc.encode(f, { keyFrame: i === a }); f.close();
+          if (enc.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 0));
+        }
+        await enc.flush(); enc.close();
+        if (err) throw err;
+        let n = 0; for (const q of parts) n += q.length;
+        const all = new Uint8Array(n); let o = 0; for (const q of parts) { all.set(q, o); o += q.length; }
+        let s = ''; for (let i = 0; i < all.length; i += 0x8000) s += String.fromCharCode.apply(null, all.subarray(i, i + 0x8000));
+        return btoa(s);
+      }, a, b, fps, BITRATE);
       const withTimeout = (p, ms) => { let tm; return Promise.race([p, new Promise((_, rej) => { tm = setTimeout(() => rej(new Error('frame timeout')), ms); })]).finally(() => clearTimeout(tm)); };   // сторож кадра снимается — иначе процесс ждал ещё 30 с после последнего кадра
       await Promise.all(Array.from({ length: workers }, async (_, w) => {
         await new Promise(r => setTimeout(r, w * 400));   // stagger browser starts
@@ -114,6 +142,16 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         const fresh = async () => { await closeB(br); br = await launch(w); page = await openPage(br); since = 0; };
         while (true) {
           const c0 = nextChunk; if (c0 >= r1) break; nextChunk += CH;
+          if (fmt === 'h264') {                          // S12.8: весь кусок — одним вызовом, наружу только сжатый поток
+            const c1 = Math.min(c0 + CH, r1);
+            for (let attempt = 0; ; attempt++) {
+              try { fs.writeFileSync(path.join(dir, `c${String(c0).padStart(6, '0')}.h264`), Buffer.from(await withTimeout(encChunk(page, c0, c1), TIMEOUT + (c1 - c0) * 500), 'base64')); break; }
+              catch (e) { if (attempt >= 3) throw e; console.log(`[render] worker ${w}: chunk ${c0} ${e.message}, restarting browser`); await fresh(); }
+            }
+            since += c1 - c0; if (since >= RECYCLE) await fresh();
+            done += c1 - c0; console.log(`${done}/${todo}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+            continue;
+          }
           for (let i = c0; i < Math.min(c0 + CH, r1); i++) {
             for (let attempt = 0; ; attempt++) {
               try { save(await withTimeout(grabF(page, i / fps), TIMEOUT), path.join(dir, `${String(i).padStart(5, '0')}.${fmt}`)); break; }
@@ -125,6 +163,11 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         }
         await closeB(br);
       }));
+      if (fmt === 'h264') {                              // куски по порядку -> build/frames/video.h264
+        const fd = fs.openSync(path.join(dir, 'video.h264'), 'w');
+        for (const f of fs.readdirSync(dir).filter(f => /^c\d{6}\.h264$/.test(f)).sort()) { fs.writeSync(fd, fs.readFileSync(path.join(dir, f))); fs.rmSync(path.join(dir, f)); }
+        fs.closeSync(fd);
+      }
       console.log(`frames done ${todo} in ${((Date.now() - t0) / 1000).toFixed(1)}s (${(todo / ((Date.now() - t0) / 1000)).toFixed(1)} fps, ${workers} workers, ${process.env.RENDER_GPU === '0' ? 'cpu' : 'gpu'}, ${fmt})`);
       return;
     }

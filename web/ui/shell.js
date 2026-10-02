@@ -31,7 +31,7 @@ const Shell = {
         item('#/style', 'sliders', 'Стиль', r.page === 'style'),
         item('#/memory', 'bulb', 'Память', r.page === 'memory'),
         item('#/thumbs', 'image', 'Обложки', r.page === 'thumbs'),
-        item('#/renders', 'film', 'Рендеры', r.page === 'renders')),
+        item('#/renders', 'film', 'Рендеры', r.page === 'renders', Renders.active().length ? h('span.live', { title: 'Идёт рендер: ' + Renders.active().map(x => x.video).join(', ') }) : null)),
       h('div.side-foot',
         h('nav.side-nav',
           item('#/settings', 'settings', 'Настройки', r.page === 'settings'),
@@ -60,7 +60,7 @@ const Shell = {
   page(r) {
     if (r.page === 'memory') return this.soon('bulb', 'Память', 'Правила, которые Claude выносит из твоих правок. Ты подтверждаешь — и он помнит их во всех следующих видео канала.', '12.10');
     if (r.page === 'thumbs') return this.soon('image', 'Обложки', 'Доска для обложек: картинки, промпты и генерации (Higgsfield), «Сделать обложкой». Можно работать, пока идёт монтаж.', '12.9');
-    if (r.page === 'renders') return this.soon('film', 'Рендеры', 'Очередь рендера и все готовые ролики канала: посмотреть, открыть папку, .srt.', '12.8');
+    if (r.page === 'renders') return Renders.page();     // S12.8
     return null;
   },
 };
