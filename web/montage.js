@@ -60,6 +60,7 @@ const Montage = {
   // ---- правка: локально + операция + пересборка предпросмотра
   save(M, why) {
     const d = MT.d, key = MT.key;
+    if (typeof Workspace !== 'undefined' && App.route.page === 'v') Workspace.track(this.clone(this.M(d)));   // S12.4: Ctrl+Z окна видео
     M.len = this.autoLen(d, M);
     Store.set(key, ['montage'], M, false);
     this.redraw();

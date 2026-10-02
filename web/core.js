@@ -545,7 +545,7 @@ const MENTION_RE = /@\[([^\]\n]{1,80})\]/g;
 const normName = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
 const Mention = {
   box: null, field: null, start: 0, list: [], sel: 0,
-  plan() { return App.route.page === 'p' ? Store.get('plan:' + App.route.id) : null; },
+  plan() { return App.route.page === 'p' || App.route.page === 'v' ? Store.get('plan:' + App.route.id) : null; },
   items(q) {
     const d = this.plan(), n = normName(q);
     const els = ((d && d.elements) || []).filter(e => e.status !== 'drop' && (e.name || '').trim() && (!n || normName(e.name).includes(n)));

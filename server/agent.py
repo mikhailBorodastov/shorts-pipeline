@@ -8,7 +8,7 @@
   и помечают им пачки сцены (`run` в history.jsonl) и обратные операции видео (`.studio/agent/runs/<run>.jsonl`) — «↺ отменить» откатывает весь запуск.
 - Пока агент работает, сцена, открытая у автора (контекст просьбы), заблокирована (scene_api.LOCKS) — редактор только смотрит.
 """
-import json, os, subprocess, sys, threading, time, uuid
+import json, os, shutil, subprocess, sys, threading, time, uuid
 
 import paths as P  # noqa: E402
 
@@ -46,6 +46,29 @@ def journal(run, rec):
     os.makedirs(os.path.join(AGENT_DIR, "runs"), exist_ok=True)
     with open(os.path.join(AGENT_DIR, "runs", run + ".jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _shot(A, vid, el, ts, name):
+    """S12.4: кадр сцены редактора в момент ts -> <видео>/build/agent_runs/<name> (для карточки «Применено»: до / после)."""
+    try:
+        S, key = A.scapi(), "plan:" + vid
+        tmp = os.path.join(S.work_dir(A, vid, el), "_agent_ab")
+        os.makedirs(tmp, exist_ok=True)
+        t = "%g" % round(float(ts), 2)
+        for f in os.listdir(tmp):
+            if f.startswith("element_") and f.endswith(".png"):
+                os.remove(os.path.join(tmp, f))
+        S.shoot(A, key, S.stage_url(A._docs(key)["port"], f"{vid}/{el}/work"), tmp, t)
+        src = os.path.join(tmp, f"element_{t}.png")
+        if not os.path.isfile(src):
+            return None
+        d = os.path.join(P.video(vid), "build", "agent_runs")
+        os.makedirs(d, exist_ok=True)
+        shutil.copy2(src, os.path.join(d, name))
+        return "build/agent_runs/" + name
+    except Exception as e:                              # кадр — приятное дополнение, запуск из-за него не падает
+        print("! кадр до/после:", e)
+        return None
 
 
 def log_path(vid):
@@ -237,6 +260,15 @@ class Session:
             self.ctx_scene = (ctx or {}).get("el")
             if self.ctx_scene:
                 A.scapi().LOCKS[A.scapi().skey("plan:" + self.vid, self.ctx_scene)] = "agent:" + self.vid
+            ab = (ctx or {}).get("ab") or {}                 # S12.4: сцена и момент под курсором — кадр «до» сейчас, «после» — в конце запуска
+            self.ab = None
+            if ab.get("el") and ab.get("ts") is not None:
+                self.ab = {"run": self.run, "el": ab["el"], "ts": float(ab["ts"]), "before": None}
+                def before(ab=self.ab, vid=self.vid, A=A):
+                    ab["before"] = _shot(A, vid, ab["el"], ab["ts"], ab["run"] + "-before.png")
+                ab_t = threading.Thread(target=before, daemon=True)
+                self.ab["thread"] = ab_t
+                ab_t.start()
         self.add("you", text, ctx=head)
         self.send({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": (head + "\n\n" if head else "") + text}]}})
 
@@ -273,7 +305,17 @@ class Session:
             os.remove(run_file(self.vid))
         except OSError:
             pass
-        self.add("done", text, ok=ok, undo=run_changes(self.A, self.vid, run) if run else {}, **(meta or {}))
+        ch = run_changes(self.A, self.vid, run) if run else {}
+        self.add("done", text, ok=ok, undo=ch, **(meta or {}))
+        ab = getattr(self, "ab", None)
+        if ab and ab.get("run") == run and (sum((ch.get("scenes") or {}).values()) or ch.get("plan")):
+            def after(ab=ab, vid=self.vid, A=self.A, s=self):
+                if ab.get("thread"):
+                    ab["thread"].join(60)
+                aft = _shot(A, vid, ab["el"], ab["ts"], ab["run"] + "-after.png")
+                if ab.get("before") or aft:
+                    s.add("shot", "", run=ab["run"], el=ab["el"], ts=ab["ts"], before=ab.get("before"), after=aft)
+            threading.Thread(target=after, daemon=True).start()
 
     def _err(self):
         for ln in self.proc.stderr:
@@ -391,6 +433,18 @@ def ctx_text(A, vid, ctx):
         bits.append("выбрано: " + ", ".join(ctx["sel"][:8]))
     if ctx.get("target"):
         bits.append(f"комментарий к {ctx['target']}")
+    sc = ctx.get("scope")
+    if sc == "all":
+        bits.append("область правки: всё видео")
+    elif sc == "scene" and not ctx.get("el"):
+        bits.append("область правки: сцена под курсором")
+    units = ctx.get("units") or []
+    if units:
+        bits.append(("область правки — выбранные сцены монтажа: " if sc == "selection" else "сцены: ")
+                    + "; ".join(f"№{u.get('n')} «{u.get('name', '')}» EL={u.get('el')} ({float(u.get('at') or 0):.2f}–{float(u.get('at') or 0) + float(u.get('len') or 0):.2f} с ролика)" for u in units[:12]))
+    if ctx.get("range"):
+        a, b = ctx["range"]
+        bits.append(f"выделен отрезок ролика {float(a):.2f}–{float(b):.2f} с")
     return "[контекст: " + "; ".join(bits) + "]" if bits else ""
 
 
@@ -434,6 +488,40 @@ def undo_run(A, vid, run):
     if s:
         s.add("note", f"↺ отменено: {len(done)} " + ("правка" if len(done) == 1 else "правок"), undone=run)
     return done
+
+
+def run_detail(A, vid, run):
+    """S12.4 «Посмотреть изменения»: что сделал запуск — пачки сцен (описания) и правки видео; отменён ли."""
+    S, key = A.scapi(), "plan:" + vid
+    out = {"run": run, "scenes": [], "plan": [], "undone": False}
+    for e in (A.load(key).get("elements") or []):
+        if e.get("kind") != "scene" or not (e.get("stage") or {}).get("work"):
+            continue
+        H = S.history(A, key, e["id"], 400)
+        mine = [h for h in H if h.get("run") == run and h.get("kind") != "undo"]
+        if mine:
+            gone = {h.get("undoes") for h in H if h.get("kind") == "undo"}
+            out["scenes"].append({"el": e["id"], "name": e.get("name", ""), "batches": [{"desc": h.get("desc", ""), "n": len(h.get("ops") or []), "undone": h.get("batch") in gone} for h in mine]})
+    jp = os.path.join(AGENT_DIR, "runs", run + ".jsonl")
+    for f, undone in ((jp, False), (jp + ".undone", True)):
+        if os.path.isfile(f):
+            out["undone"] = out["undone"] or undone
+            for ln in open(f, encoding="utf-8"):
+                try:
+                    r = json.loads(ln)
+                    out["plan"].append({"desc": r.get("desc") or "правка видео", "key": r.get("key")})
+                except ValueError:
+                    pass
+    return out
+
+
+def video_file(vid, path):
+    """Файл внутри папки видео (миниатюры кадров в ленте, до / после) — абсолютный путь или от папки видео."""
+    d = P.video(vid)
+    if not d:
+        return None
+    f = os.path.abspath(path if os.path.isabs(path) else os.path.join(d, path))
+    return f if f.startswith(os.path.abspath(d) + os.sep) and os.path.isfile(f) else None
 
 
 # ---------------------------------------------------------------- HTTP
@@ -480,6 +568,13 @@ def handle_get(A, h, p, q):
     if p == "/api/agent":
         reap()
         h._json(state(A, (q.get("video") or [""])[0], int((q.get("since") or ["0"])[0] or 0))); return True
+    if p == "/api/agent/run":
+        h._json(run_detail(A, (q.get("video") or [""])[0], (q.get("run") or [""])[0])); return True
+    if p == "/api/agent/file":
+        f = video_file((q.get("video") or [""])[0], (q.get("path") or [""])[0])
+        if not f:
+            h.send_error(404); return True
+        A._send_file(h, f); return True
     return False
 
 

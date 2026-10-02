@@ -19,7 +19,7 @@ const Workspace = {
     const I = MT.info[d.id] || {}, M = Montage.M(d);
     // ролик Studio: при первом открытии окна — пересобрать файлы проекта (свежий движок и превью без своей полосы управления — &clean)
     if (d.project && I.owned && !(MT.autogen || (MT.autogen = {}))[d.id]) { MT.autogen[d.id] = true; I.generated = true; setTimeout(() => Montage.regen(), 0); }
-    requestAnimationFrame(() => this.fit());
+    requestAnimationFrame(() => { this.fit(); this.pins(); });
     return h('div.ws', { class: d.mode === 'long' ? 'long' : 'short' },
       this.head(d, key),
       h('div.ws-main',
@@ -41,7 +41,7 @@ const Workspace = {
       h('span.sp'),
       h('label.ws-model', { title: 'Модель Claude для этого окна: Opus 5.5 — сборка и сложное, Sonnet 5.5 — быстрые правки' }, Icon('spark', 14),
         sel([{ value: 'opus', label: 'Opus 5.5' }, { value: 'sonnet', label: 'Sonnet 5.5' }], model, v => { AgentPanel.model = v; Local.set('agent.model', v); App.render(); })),
-      h('button.icon', { title: (d.backups || []).length ? 'Прошлые версии видео' : 'История версий — в части 12.4', disabled: !(d.backups || []).length, onclick: () => Plan.versions(d) }, Icon('clock', 17)),
+      h('button.icon', { title: 'История: запуски Claude (что сделал, откатить), Ctrl+Z — откатить последнее', onclick: () => { AgentPanel.tab = 'history'; AgentPanel.toggle(true); } }, Icon('clock', 17)),
       h('button.icon', { title: 'Бриф: идея, контекст, вопросы', onclick: () => go(`#/p/${d.id}/idea`) }, Icon('book', 17)),
       h('button.icon', { title: 'Открыть папку видео', onclick: () => api('POST', '/api/videos/open', { id: d.id }).catch(e => UI.toast(e.message, 'err')) }, Icon('folder', 17)),
       d.project && I.owned !== false
@@ -172,12 +172,83 @@ const Workspace = {
   onTime() {
     const d = MT.d; if (!d) return;
     const M = Montage.M(d), u = this.unitAt(M, MT.t);
+    this.pins();
     if ((u && u.id) !== this.curU) {
       this.curU = u && u.id;
       $$('.ws-scene').forEach(b => b.classList.toggle('on', b.dataset.u === this.curU));
       const n = $('.ws-scname'), I = MT.info[d.id] || {}, units = [...(M.units || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
       if (n) n.textContent = u ? `Сцена ${units.indexOf(u) + 1} · ${((I.scenes || []).find(s => s.el === u.scene) || {}).name || u.scene}` : '';
     }
+  },
+  // время ролика -> время сцены (обратная карта юнита)
+  v2s(d, u, tv) {
+    const P = Montage.pairs(d, u);
+    if (!P.length) return tv - (u.at || 0);
+    if (tv <= P[0][1]) return P[0][0] + (tv - P[0][1]);
+    for (let i = 0; i < P.length - 1; i++) { const [a0, b0] = P[i], [a1, b1] = P[i + 1]; if (tv <= b1) return a0 + (a1 - a0) * (tv - b0) / ((b1 - b0) || 1); }
+    const L = P[P.length - 1]; return L[0] + (tv - L[1]);
+  },
+
+  // ---------------- Ctrl+Z: ручные правки монтажа и запуски Claude ----------------
+  track(prev) { (WS.undo = WS.undo || []).push({ M: prev, ts: Date.now() }); if (WS.undo.length > 60) WS.undo.shift(); WS.redo = []; },
+  async undoLast() {
+    const local = (WS.undo || [])[WS.undo ? WS.undo.length - 1 : -1], run = AgentPanel.lastRun();
+    if (local && (!run || local.ts > run.ts)) {
+      WS.undo.pop();
+      (WS.redo = WS.redo || []).push({ M: Montage.clone(Montage.M(MT.d)), ts: Date.now() });
+      this.restore(local.M); UI.toast('↶ отменил правку монтажа');
+      return;
+    }
+    if (run) { if (await AgentPanel.undo(run.run, null, true)) UI.toast('↶ откатил запуск Claude'); return; }
+    UI.toast('Нечего отменять');
+  },
+  redoLast() {
+    const r = (WS.redo || []).pop();
+    if (!r) return UI.toast('Нечего вернуть');
+    (WS.undo = WS.undo || []).push({ M: Montage.clone(Montage.M(MT.d)), ts: Date.now() });
+    this.restore(r.M); UI.toast('↷ вернул правку монтажа');
+  },
+  restore(M) {
+    const d = MT.d, key = MT.key;
+    Store.set(key, ['montage'], M, false);
+    Montage.redraw();
+    clearTimeout(MT.genTimer); MT.genTimer = setTimeout(() => Montage.regen(), 500);
+  },
+
+  // ---------------- пометки на кадре: курсор-крестик над превью ----------------
+  pins() {
+    const host = MontagePreview.host, d = MT.d;
+    if (!host || !d || App.route.page !== 'v' || !host.classList.contains('clean')) return;
+    let ov = host.querySelector('.pv-pins');
+    if (!ov) {
+      ov = h('div.pv-pins', { title: 'Клик — пометка на этом кадре (что поправить)', onmousedown: ev => { if (ev.target === ov) this.newPin(ev); } });
+      host.append(ov);
+    }
+    const near = ((Store.get('plan:' + d.id) || {}).notes || []).filter(n => (n.status || 'open') === 'open' && Math.abs(n.t - MT.t) < 0.35);
+    const sig = near.map(n => n.id).join(',');
+    if (ov.dataset.sig === sig && !ov.querySelector('.pv-pop')) return;
+    ov.dataset.sig = sig;
+    ov.querySelectorAll('.pv-dot').forEach(x => x.remove());
+    near.forEach((n, i) => ov.append(h('div.pv-dot', { style: { left: n.x * 100 + '%', top: n.y * 100 + '%' }, title: n.text }, String(i + 1))));
+  },
+  newPin(ev) {
+    if (WS.playing) this.pause();
+    const ov = ev.currentTarget, r = ov.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+    ov.querySelectorAll('.pv-pop').forEach(p => p.remove());
+    const t = MT.t, key = 'plan:' + MT.d.id;
+    const inp = h('input.box', { placeholder: 'Что поправить в этом кадре? Enter — сохранить, Esc — отмена',
+      onkeydown: e => {
+        e.stopPropagation();
+        if (e.key === 'Escape') pop.remove();
+        if (e.key === 'Enter' && inp.value.trim()) {
+          Store.add(key, ['notes'], { id: uid('n'), t: +t.toFixed(2), x: +x.toFixed(3), y: +y.toFixed(3), text: inp.value.trim(), status: 'open', created: Date.now() }, true);
+          pop.remove(); UI.toast('✛ Пометка сохранена — вкладка «Правки» у Claude');
+          setTimeout(() => this.pins(), 50);
+        }
+      } });
+    const pop = h('div.pv-pop', { style: { left: Math.min(x, 0.55) * 100 + '%', top: Math.min(y, 0.85) * 100 + '%' } }, h('div.pv-dot.new'), inp);
+    ov.append(pop);
+    setTimeout(() => inp.focus(), 0);
   },
   unitAt(M, t) { return (M.units || []).find(u => t >= (u.at || 0) - 1e-3 && t < (u.at || 0) + (u.len || 0)) || null; },
 
@@ -229,6 +300,12 @@ const Workspace = {
 
 // клавиши окна видео: пробел, ←/→ (кадр, Shift — секунда), Home/End, Esc — снять выбор
 addEventListener('keydown', e => {
+  if (App.route.page === 'v' && MT.d && (e.ctrlKey || e.metaKey) && !e.altKey && (e.code === 'KeyZ' || e.code === 'KeyY')) {
+    const a = document.activeElement, typing = a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
+    if (typing || document.querySelector('.modal, .nv, .pal, .stage-editor')) return;
+    e.preventDefault();
+    return e.code === 'KeyY' || e.shiftKey ? Workspace.redoLast() : Workspace.undoLast();
+  }
   if (App.route.page !== 'v' || !MT.d || e.ctrlKey || e.altKey || e.metaKey) return;
   const a = document.activeElement, typing = a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
   if (typing || document.querySelector('.modal, .nv, .pal, .stage-editor')) return;

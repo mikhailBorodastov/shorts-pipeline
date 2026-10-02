@@ -1367,7 +1367,7 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
-    if p == "/api/agent":
+    if p == "/api/agent" or p.startswith("/api/agent/"):   # S12.4: и /api/agent/run, /api/agent/file
         try:
             if agapi().handle_get(sys.modules[__name__], h, p, q):
                 return True
