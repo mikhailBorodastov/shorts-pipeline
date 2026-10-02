@@ -111,6 +111,7 @@ def get(A, vid):
     m = doc.get("montage") or default(A, vid, doc)
     return {"montage": m, "saved": bool(doc.get("montage")), "scenes": scenes(A, vid, doc), "voice": voice(vid), "project": has_project(vid),
             "sources": sources(doc), "lib": lib_sounds(), "fixes": doc.get("fixes") or [], "generated": bool(vdir(vid)) and os.path.isfile(os.path.join(vdir(vid), "src", "montage.js")),
+            "owned": bool(vdir(vid)) and has_project(vid) and studio_owned(vdir(vid)),   # False — рукописный ролик: монтаж его не пересобирает
             "folder": vdir(vid), "out": [os.path.basename(x) for x in sorted(glob.glob(os.path.join(vdir(vid) or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")][-1:] if vdir(vid) else []}
 
 
@@ -211,11 +212,31 @@ def at(A, vid, tv):
     return {"el": u["scene"], "ts": round(ts, 3), "unit": u["id"], "name": sc.get("name") or u["scene"], "vt": round(tv, 3)}
 
 
+def studio_owned(pd):
+    """Можно ли генератору писать src/scenes.js проекта: файла нет, он уже сгенерирован монтажом или это нетронутая заглушка шаблона.
+    Рукописные ролики (до Studio: PS6, «Коты сыщики 3D» …) генератор не трогает — иначе он затирает их сцены и движок (случай 2 окт 2026)."""
+    f = os.path.join(pd, "src", "scenes.js")
+    if not os.path.isfile(f):
+        return True
+    with open(f, encoding="utf-8", errors="replace") as fh:
+        head = fh.read(600)
+    if "СГЕНЕРИРОВАНО монтажом" in head:
+        return True
+    try:
+        with open(os.path.join(P.TPL_SRC, "scenes.js"), encoding="utf-8", errors="replace") as a, open(f, encoding="utf-8", errors="replace") as b:
+            return a.read() == b.read()
+    except OSError:
+        return False
+
+
 def generate(A, vid, montage=None):
     """montage -> файлы проекта. Возвращает сводку: что скопировано, длина, сцены."""
     pd = vdir(vid)
     if not has_project(vid):
         raise ValueError("у видео ещё нет проекта ролика — «🚀 Начать производство»")
+    if not studio_owned(pd):
+        raise ValueError("src/scenes.js этого ролика написан руками (сделан до монтажа Studio) — монтаж его не перезапишет. "
+                         "Чтобы монтировать в Studio, сначала переведи сцены в редактор (препродакшен) и сохрани копию scenes.js.")
     plan = A.load("plan:" + vid)
     M = montage or plan.get("montage") or default(A, vid, plan)
     lib = _lib_dir(A, vid)

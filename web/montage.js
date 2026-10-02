@@ -143,6 +143,7 @@ const Montage = {
     const I = MT.info[d.id];
     if (!I) return h('p.dim', h('span.spin'), ' читаю монтаж…');
     if (I.error) return h('div.badline', '⚠ ' + I.error);
+    if (I.owned === false) return h('section.card', h('div.card-head', h('h3', '🎞 Монтаж')), h('p', 'Этот ролик собран руками (до монтажа Studio): его src/scenes.js монтаж не перезаписывает. Готовое видео — в папке out/.'));
     if (!I.generated && !(MT.autogen || (MT.autogen = {}))[d.id]) { MT.autogen[d.id] = true; I.generated = true; setTimeout(() => this.regen(), 0); }   // проект ещё не видел монтажа: сгенерировать файлы для предпросмотра
     const M = this.M(d), out = (I.out || [])[0];
     return [
