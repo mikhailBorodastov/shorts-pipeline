@@ -9,7 +9,8 @@ import paths as P  # noqa: E402
 
 SECRETS = {"sketchfab": "Sketchfab — скачивание моделей (sketchfab.com → Settings → Password & API → API token)",
            "meshy": "Meshy — «картинка → 3D» и авто-скелет (meshy.ai → API → API Key; бесплатные кредиты каждый месяц)",
-           "tripo": "Tripo — «картинка → 3D» и авто-скелет (platform.tripo3d.ai → API Keys; бесплатные кредиты)"}
+           "tripo": "Tripo — «картинка → 3D» и авто-скелет (platform.tripo3d.ai → API Keys; бесплатные кредиты)",
+           "higgsfield": "Higgsfield — генерация обложек (console.higgsfield.ai → API keys; вставь «ID ключа:секрет» через двоеточие)"}
 
 
 def _sp():

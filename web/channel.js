@@ -264,7 +264,7 @@ Object.assign(Pages, {
     const save = async body => { try { Pages._set = await api('POST', '/api/settings', body); UI.toast('Сохранено'); App.render(); } catch (e) { UI.toast(e.message, 'err'); } };
     const secretRow = (k, x) => {
       const inp = h('input.box', { type: 'password', placeholder: x.set ? 'сохранён: ' + x.mask + ' — вставь новый, чтобы заменить' : 'вставь ключ', style: { width: '360px' }, autocomplete: 'off' });
-      return h('div.setrow', h('b', { sketchfab: '🧊 Sketchfab', meshy: '✨ Meshy', tripo: '✨ Tripo' }[k] || k), h('div.dim.small', x.label),
+      return h('div.setrow', h('b', { sketchfab: '🧊 Sketchfab', meshy: '✨ Meshy', tripo: '✨ Tripo', higgsfield: '🖼 Higgsfield' }[k] || k), h('div.dim.small', x.label),
         h('div.row', inp, h('button.primary', { onclick: () => inp.value.trim() && save({ secrets: { [k]: inp.value.trim() } }) }, '💾'),
           x.set && h('span.ok-t.small', '✓ задан'), x.set && h('button', { onclick: () => confirm('Убрать ключ?') && save({ secrets: { [k]: '' } }) }, 'убрать')));
     };

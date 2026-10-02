@@ -78,6 +78,9 @@ def _scene_img(d):
 
 def _cover_src(A, d, vdir):
     """('file', путь) | ('mp4', путь) | None — в порядке: обложка → первый кадр ролика → кадр сцены."""
+    pick = ((d.get("pack") or {}).get("thumb") or "")      # S12.9: «Сделать обложкой» на доске
+    if pick and os.path.isfile(os.path.join(vdir, "out", pick)):
+        return ("file", os.path.join(vdir, "out", pick))
     t = _thumb_file(vdir)
     if t:
         return ("file", t)

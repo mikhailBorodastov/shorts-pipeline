@@ -79,6 +79,7 @@ import voice_api  # noqa: E402  голос ролика (S11): запись ди
 import talk_api  # noqa: E402  звериная речь (Animalese): голоса канала, послушать, фраза — звуком препродакшена
 import videos_api  # noqa: E402  S12: страница «Видео» (карточки, обложки, папка) и поп-ап «Новое видео»
 import render_api  # noqa: E402  S12.8: экспорт, очередь рендеров, готовые ролики
+import thumbs_api  # noqa: E402  S12.9: обложки — доски и генерация картинок
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -167,6 +168,10 @@ def wsapi():
 
 def mdapi():
     return _fresh(media_api, "media")
+
+
+def thapi():
+    return _fresh(thumbs_api, "thumbs")
 
 
 def rdapi():
@@ -1341,6 +1346,8 @@ def handle_get(h):
         return True
     if p.startswith("/api/renders") and rdapi().handle_get(sys.modules[__name__], h, p, q):
         return True
+    if p.startswith("/api/thumbs/") and thapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
@@ -1443,6 +1450,10 @@ def handle_post(h):
             if int(h.headers.get("Content-Length", 0)) > 2 * 1024 * 2**20:
                 h._json({"error": "файл больше 2 ГБ"}, 413); return True
             h._json(vdapi().broll_upload(sys.modules[__name__], q.get("id", [""])[0], q.get("el", [""])[0], q.get("name", ["clip.mp4"])[0], h._body())); return True
+        if p == "/api/thumbs/upload":                  # S12.9: картинка на доску обложек (сырые байты)
+            if int(h.headers.get("Content-Length", 0)) > 40 * 2**20:
+                h._json({"error": "картинка больше 40 МБ"}, 413); return True
+            h._json(thapi().upload(q.get("b", [""])[0], q.get("name", ["img.png"])[0], h._body())); return True
         if p == "/api/videos/voice":                   # S12: озвучка из поп-апа «Новое видео» (сырые байты) -> <видео>/refs/voice/
             if int(h.headers.get("Content-Length", 0)) > 600 * 2**20:
                 h._json({"error": "запись больше 600 МБ — сожми в mp3 / m4a"}, 413); return True
@@ -1474,6 +1485,8 @@ def handle_post(h):
         if p.startswith("/api/videos/") and vdapi().handle_post(sys.modules[__name__], h, p, q, body):
             return True
         if p.startswith("/api/renders/") and rdapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
+        if p.startswith("/api/thumbs/") and thapi().handle_post(sys.modules[__name__], h, p, q, body):
             return True
         if p == "/api/new":
             d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))

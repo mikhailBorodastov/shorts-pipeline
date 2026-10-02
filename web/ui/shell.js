@@ -59,7 +59,7 @@ const Shell = {
   },
   page(r) {
     if (r.page === 'memory') return this.soon('bulb', 'Память', 'Правила, которые Claude выносит из твоих правок. Ты подтверждаешь — и он помнит их во всех следующих видео канала.', '12.10');
-    if (r.page === 'thumbs') return this.soon('image', 'Обложки', 'Доска для обложек: картинки, промпты и генерации (Higgsfield), «Сделать обложкой». Можно работать, пока идёт монтаж.', '12.9');
+    if (r.page === 'thumbs') return Thumbs.page();       // S12.9
     if (r.page === 'renders') return Renders.page();     // S12.8
     return null;
   },

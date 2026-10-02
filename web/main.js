@@ -91,6 +91,7 @@ const App = {
     MontagePreview.follow(this.route);
     AgentPanel.follow(this.route);
     if (this.route.page === 'v') requestAnimationFrame(() => Workspace.fit());
+    if (this.route.page === 'thumbs') Thumbs.mount();     // канвас обложек рисуется своим кодом
     Sync.dirty();
   },
 
