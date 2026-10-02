@@ -87,10 +87,10 @@ const Videos = {
 
 // ---------------- поп-ап «Новое видео»: 1) бриф → 2) вопросы Claude → «Создать» ----------------
 const NewVideo = {
-  el: null, step: 1, id: null, f: null, voice: null, err: '', sending: false,
+  el: null, step: 1, id: null, f: null, voice: null, err: '', sending: false, edit: false,
 
   open() {
-    this.step = 1; this.id = null; this.err = ''; this.voice = null; this.sending = false;
+    this.step = 1; this.id = null; this.err = ''; this.voice = null; this.sending = false; this.edit = false;
     const ck = 'channel:' + (App.info.channel || {}).id;
     if (!Store.get(ck)) Store.load(ck).then(() => this.el && this.step === 1 && this.draw()).catch(() => {});   // подачи и визуалы канала
     const LK = Styles.looks(), eng = ((App.info.channel || {}).defaults || {}).engine || '3d';
@@ -102,9 +102,21 @@ const NewVideo = {
     this.draw();
     requestAnimationFrame(() => { const n = this.el && this.el.querySelector('[data-key="nv|name"]'); if (n) n.focus(); });
   },
+  // S12.13: то же окно для видео, у которого ещё нет брифа (заведено до поп-апа): бриф из идеи и контекста видео -> вопросы -> «Написать сценарий»
+  openFor(d) {
+    this.open();
+    const b = d.brief || {}, mm = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    this.id = d.id; this.edit = true;
+    Object.assign(this.f, { name: d.name || '', mode: d.mode === 'long' ? 'long' : 'short', len: b.len ? mm(b.len) : d.mode === 'long' ? '10:00' : '1:00',
+      topic: b.topic != null ? b.topic : (d.idea || ''), direction: b.direction != null ? b.direction : (b.topic == null ? (d.topic || '') : ''), script: b.script || '',
+      refs: (d.refs || []).map(r => r.url).filter(Boolean).join('\n') });
+    if (b.delivery) this.f.delivery = b.delivery;
+    if (b.look) this.f.look = b.look;
+    this.draw();
+  },
   close() {
     if (!this.el) return;
-    if (this.id && this.step === 2) UI.toast('Видео сохранено черновиком — вопросы ждут в нём');
+    if (this.id && this.step === 2 && !this.edit) UI.toast('Видео сохранено черновиком — вопросы ждут в нём');
     this.el.remove(); this.el = null; document.removeEventListener('keydown', this.esc);
     if (this.id) App.refreshState().then(() => App.render());
   },
@@ -134,7 +146,7 @@ const NewVideo = {
       h('span.dim', this.voice ? `${(this.voice.size / 2 ** 20).toFixed(1)} МБ` : 'или перетащи сюда'),
       this.voice && h('button.icon', { title: 'Убрать', onclick: e => { e.preventDefault(); this.voice = null; this.draw(); } }, Icon('x', 14)));
     return h('div.nv-box',
-      h('div.nv-head', h('h3', 'Новое видео'), h('span.nv-steps', h('b', '1'), ' Бриф', h('span.dim', ' → '), h('span.dim', '2 Вопросы Claude')), h('span.sp'),
+      h('div.nv-head', h('h3', this.edit ? 'Бриф видео' : 'Новое видео'), h('span.nv-steps', h('b', '1'), ' Бриф', h('span.dim', ' → '), h('span.dim', '2 Вопросы Claude')), h('span.sp'),
         h('button.icon', { onclick: () => this.close(), title: 'Закрыть (Esc)' }, Icon('x', 16))),
       h('div.nv-body',
         this.field('Название', null, this.inp('name', { placeholder: 'например: Почему PS2 тянула всё на 32 МБ' })),
@@ -180,6 +192,8 @@ const NewVideo = {
         if (d && d.name !== b.name) Store.set(key(), ['name'], b.name);
         if (d && d.mode !== b.mode) Store.set(key(), ['mode'], b.mode);
         await Store.load(key(), true);
+        if (this.edit && !((Store.get(key()) || {}).qa || []).length && !Claude.running(key(), 'questions'))
+          Claude.run({ action: 'questions', key: key(), params: b.script ? { n: 8, focus: 'У автора уже готовый сценарий (текст голоса). Не спрашивай про сюжет и факты — только про подачу, героев, картинку, тон и финал.' } : { n: 15 } });
       }
       this.step = 2;
     } catch (e) { this.err = e.message; }
@@ -205,8 +219,8 @@ const NewVideo = {
         h('p.hint', 'Отвечай коротко, «–» — пропустить, «не знаю, предложи» — Claude решит сам. Ответы — твои решения: Claude не будет их переписывать.')),
       h('div.nv-foot',
         h('button', { onclick: () => { this.step = 1; this.draw(); } }, '← Назад'), h('span.sp'),
-        h('button.ghost', { onclick: () => this.create(true), title: 'Создать без ответов на вопросы' }, 'Пропустить вопросы'),
-        h('button.primary', { disabled: this.sending, onclick: () => this.create() }, this.sending ? [h('span.spin'), ' Готовлю проект…'] : ['Создать', Icon('check', 15)])));
+        h('button.ghost', { onclick: () => this.create(true), title: this.edit ? 'Писать сценарий без ответов на вопросы' : 'Создать без ответов на вопросы' }, 'Пропустить вопросы'),
+        h('button.primary', { disabled: this.sending, onclick: () => this.create() }, this.sending ? [h('span.spin'), ' Готовлю проект…'] : [this.edit ? 'Написать сценарий' : 'Создать', Icon('check', 15)])));
   },
 
   // «Создать»: проект ролика в папке видео → Claude пишет сценарий (панель агента, режим script)
@@ -223,12 +237,15 @@ const NewVideo = {
       setTimeout(() => {
         if (!window.AgentPanel) return;
         AgentPanel.toggle(true);
-        AgentPanel.say('📝 Новое видео из поп-апа: прочитай бриф (тема, подача, визуал, длина, указания, свой сценарий — если есть) и мои ответы на вопросы. Сначала ресерч темы (WebSearch → research.md с источниками), потом сценарий. Потом montage check и montage tts.',
+        AgentPanel.say('📝 ' + (NewVideo.edit ? 'Бриф видео обновлён в поп-апе' : 'Новое видео из поп-апа') + ': прочитай бриф (тема, подача, визуал, длина, указания, свой сценарий — если есть) и мои ответы на вопросы. Сначала ресерч темы (WebSearch → research.md с источниками), потом сценарий. Потом montage check и montage tts.',
           { mode: 'script', model: 'opus' });
       }, 900);
     };
-    Claude.run({ action: 'produce', key, params: { id, name }, onResult: write });
-    UI.toast('Кладу проект ролика в папку видео — потом Claude начнёт сценарий');
+    if ((Store.get(key) || {}).project) write();          // видео уже с проектом (поп-ап для существующего) — сразу сценарий
+    else {
+      Claude.run({ action: 'produce', key, params: { id, name }, onResult: write });
+      UI.toast('Кладу проект ролика в папку видео — потом Claude начнёт сценарий');
+    }
     this.el.remove(); this.el = null; document.removeEventListener('keydown', this.esc);
     await App.refreshState();
     go(`#/v/${id}`);

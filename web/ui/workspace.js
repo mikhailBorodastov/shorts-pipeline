@@ -79,10 +79,9 @@ const Workspace = {
     const nav = tab => () => go(`#/v/${id}/${tab}`);
     const scriptDone = has && scr.template === false;
     const steps = [
-      { icon: 'pencil', label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : has ? 'Написать' : 'Начать', primary: !scriptDone,
-        btn: scriptDone ? () => ScriptWin.open(d) : has ? () => agent('📝 Напиши сценарий по этому видео: сначала ресерч темы (источники → research.md), потом сценарий по брифу, ответам на вопросы и препродакшену. Потом montage check и montage tts.', 'script')
-          : () => Claude.run({ action: 'produce', key: 'plan:' + id, params: { id, name: d.name } }),
-        title: has ? 'Раскадровка: текст сцен, правки, фактчек' : 'Положить проект ролика в папку видео' },
+      { icon: 'pencil', label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : 'Написать', primary: !scriptDone,
+        btn: scriptDone ? () => ScriptWin.open(d) : () => this.writeScript(d),
+        title: scriptDone ? 'Раскадровка: текст сцен, правки, фактчек' : d.brief ? 'Claude: ресерч и сценарий по брифу (проект ролика создастся сам)' : 'Сначала бриф и вопросы Claude — потом сценарий' },
       { icon: 'mic', label: 'Озвучка', sub: words.length ? '' : 'черновой голос или своя запись', st: words.length ? 'done' : '', act: words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone },
       { icon: 'clock', label: 'Тайминги', sub: words.length ? `${words.length} слов` : '', st: words.length ? 'done' : '', act: words.length ? 'Повторить' : 'Запустить', btn: nav('voice'), off: !scriptDone,
         title: 'Слова голоса по времени: из них субтитры и привязка сцен к словам' },
@@ -96,6 +95,15 @@ const Workspace = {
       { icon: 'package', label: 'Упаковка', sub: (d.pack || {}).titles ? 'название и описание' : '', st: (d.pack || {}).titles ? 'done' : '', act: 'Открыть', btn: nav('pack') },
     ];
     return steps;
+  },
+
+  // «Написать сценарий»: нет брифа (видео заведено до поп-апа) — поп-ап «Бриф → вопросы»; нет проекта — проект, потом сразу Claude (S12.13)
+  writeScript(d) {
+    if (!d.brief) return NewVideo.openFor(d);
+    const say = () => { AgentPanel.toggle(true); AgentPanel.say('📝 Напиши сценарий по этому видео: сначала ресерч темы (источники → research.md), потом сценарий по брифу, ответам на вопросы и препродакшену. Потом montage check и montage tts.', { mode: 'script', model: 'opus' }); };
+    if (d.project) return say();
+    UI.toast('Кладу проект ролика в папку видео — потом Claude начнёт сценарий');
+    Claude.run({ action: 'produce', key: 'plan:' + d.id, params: { id: d.id, name: d.name }, onResult: () => Store.load('plan:' + d.id, true).then(say) });
   },
 
   // ---------------- 🎞 монтаж в прямом эфире (S12.7) ----------------

@@ -56,7 +56,7 @@ const ctxA = bufA.getContext('2d'), ctxB = bufB.getContext('2d');
 function drawScene(c, k, T) {
   c.save();
   c.clearRect(0, 0, W, H);
-  SCENES[k].draw(c, T - B[k], B[k + 1] - B[k], T);
+  if (SCENES[k]) SCENES[k].draw(c, T - B[k], B[k + 1] - B[k], T);   // секций голоса больше, чем сцен (свежий проект, шаблонные сцены) — пустой кадр, а не ошибка
   c.restore();
 }
 
