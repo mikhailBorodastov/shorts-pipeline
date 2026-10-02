@@ -101,7 +101,7 @@ def _work(A):
         try:
             _render(A, it)
             it["status"], it["phase"] = "done", "готово"
-            _notify("Рендер готов", f"«{it['video']}» → out/{it['name']}.mp4")
+            _notify("Рендер готов", f"«{it['video']}» → out/{it['name']}.mp4 — нажмите, чтобы открыть папку", os.path.join(P.video(it["vid"]) or "", "out", it["name"] + ".mp4"))
         except Exception as e:
             if it.get("cancel"):
                 it["status"], it["phase"] = "cancelled", "отменён"
@@ -371,18 +371,38 @@ def delete(vid, name):
     return {"ok": True, "to": dst, "moved": moved}
 
 
-def _notify(title, text):
-    """Уведомление Windows (тост от имени PowerShell — работает без модулей)."""
+def _notify(title, text, target=None):
+    """Уведомление Windows (тост от имени PowerShell — без модулей и без записей в реестр). target — файл или папка: клик по тосту
+    (или кнопка «Открыть папку») открывает проводник с выделенным файлом. Protocol-активация file:/// у тоста PowerShell не срабатывает,
+    поэтому скрипт ждёт клика сам (событие Activated, до 15 минут), потом выходит. Текст скрипта — через -EncodedCommand (кириллица, кавычки)."""
     if os.name != "nt":
         return
-    esc = lambda s: str(s).replace("'", "''").replace("<", "").replace(">", "").replace("&", "и")
+    import base64
+    from xml.sax.saxutils import escape
+    tgt = os.path.abspath(target) if target and os.path.exists(target) else ""
+    btn = '<actions><action content="Открыть папку" arguments="open"/></actions>' if tgt else ""
+    xml = (f'<toast launch="open"><visual><binding template="ToastGeneric"><text>{escape(str(title))}</text><text>{escape(str(text))}</text></binding></visual>{btn}</toast>')
+    b64 = lambda x: base64.b64encode(x.encode("utf-8")).decode()
     ps = ("[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null;"
-          "$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
-          f"$t = $x.GetElementsByTagName('text'); $t.Item(0).AppendChild($x.CreateTextNode('{esc(title)}')) > $null; $t.Item(1).AppendChild($x.CreateTextNode('{esc(text)}')) > $null;"
-          "$n = [Windows.UI.Notifications.ToastNotification]::new($x);"
-          "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($n)")
+          "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null;"
+          "$x = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+          f"$x.LoadXml([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{b64(xml)}')));"
+          "$n = [Windows.UI.Notifications.ToastNotification]::new($x);")
+    if tgt:
+        ps += (f"$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{b64(tgt)}'));"
+               "Register-ObjectEvent -InputObject $n -EventName Activated -SourceIdentifier toastClick > $null;"
+               "Register-ObjectEvent -InputObject $n -EventName Dismissed -SourceIdentifier toastGone > $null;")
+    ps += "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show($n);"
+    if tgt:
+        ps += ("$t = [Diagnostics.Stopwatch]::StartNew();"
+               "while ($t.Elapsed.TotalMinutes -lt 15) {"
+               " $e = Wait-Event -Timeout 1;"
+               " if ($e) { Remove-Event -EventIdentifier $e.EventIdentifier;"
+               "  if ($e.SourceIdentifier -eq 'toastClick') { if (Test-Path -LiteralPath $p -PathType Leaf) { Start-Process explorer.exe -ArgumentList ('/select,\"' + $p + '\"') } else { Start-Process explorer.exe -ArgumentList ('\"' + $p + '\"') }; break }"
+               "  if ($e.SourceIdentifier -eq 'toastGone' -and $e.SourceEventArgs.Reason -ne 'TimedOut') { break } } }")
     try:
-        subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], creationflags=CF, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", base64.b64encode(ps.encode("utf-16-le")).decode()],
+                         creationflags=CF, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 

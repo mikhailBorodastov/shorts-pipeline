@@ -198,7 +198,8 @@ const Montage = {
     group('sfx', 'Звуки', 'sfx', it => Math.min(this.srcDur(d, it.src), 12), it => it.note || this.srcName(d, it.src));
     if ((M.overlays || []).length) group('overlays', 'Надписи', 'ov', it => it.dur || 2, it => it.text || it.kind);
     const body = h('div.mt-rows', { style: { width: width + 'px' } },
-      rows.map(([t, lane, n]) => h('div.mt-row', { style: { height: n * 22 + 6 + 'px' } }, h('div.mt-rowlabel', t), lane)),
+      rows.map(([t, lane, n]) => h('div.mt-row', { style: { height: n * 22 + 6 + 'px' } },
+        h('div.mt-rowlabel', typeof Icon === 'function' && { 'Сцены': 'clapper', 'Текст и голос': 'filetext', 'Музыка': 'music', 'Звуки': 'volume', 'Надписи': 'type' }[t] ? Icon({ 'Сцены': 'clapper', 'Текст и голос': 'filetext', 'Музыка': 'music', 'Звуки': 'volume', 'Надписи': 'type' }[t], 13) : null, t), lane)),
       h('div.mt-playhead', { style: { left: X(MT.t) + 'px' } }),
       h('div.mt-end', { style: { left: X(M.len || 0) + 'px' }, title: `конец ролика — ${(M.len || 0).toFixed(2)} с` }));
     return h('div.mt-scroll', ruler, body);

@@ -72,3 +72,11 @@ svg.tb-edges path.pend, svg.tb-edges path.tmp { stroke-dasharray: 5 5; stroke: v
 .tb-model { padding: 8px 8px 0; border-top: 1px solid var(--line); }
 .tb-model .tb-sel { width: 100%; max-width: none; }
 .tb-model + .tb-foot { border-top: 0; }
+
+/* S12.13: узкие окна */
+.tb-head > * { flex-shrink: 0; }
+.tb-head > b { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb-head .seg { flex: none; }
+.tb-pres { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+@media (max-width: 1440px) { .tb-page { grid-template-columns: 200px minmax(0, 1fr); } .tb-pmode { grid-template-columns: 360px minmax(0, 1fr); } }
+@media (max-width: 1200px) { .tb-pmode { grid-template-columns: 320px minmax(0, 1fr); } }

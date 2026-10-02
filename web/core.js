@@ -29,7 +29,13 @@ function h(tag, attrs, ...kids) {
     else if (v === true) el.setAttribute(k, '');
     else el.setAttribute(k, v);
   }
-  for (const k of kids.flat(Infinity)) if (k != null && k !== false && k !== '') el.append(k instanceof Node ? k : String(k));
+  const plain = /^(option|textarea|pre|code|title|style|script)$/i.test(el.tagName);   // S12.13: эмодзи в начале строки -> иконка (ui/icons.js)
+  for (const k of kids.flat(Infinity)) {
+    if (k == null || k === false || k === '') continue;
+    if (k instanceof Node) { el.append(k); continue; }
+    const ic = !plain && typeof emojiIcon === 'function' && typeof k === 'string' ? emojiIcon(k) : null;
+    if (ic) el.append(...ic); else el.append(String(k));
+  }
   if (value !== undefined) el.value = value;          // after children: <select> needs its options first
   return el;
 }

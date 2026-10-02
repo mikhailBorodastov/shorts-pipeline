@@ -8,7 +8,7 @@ const Shell = {
   // ---------------- боковая панель ----------------
   side() {
     const r = App.route, C = App.info.channel || {}, cs = App.info.channels || [];
-    document.body.classList.toggle('side-mini', this.mini);
+    document.body.classList.toggle('side-mini', this.mini || ((App.route.page === 'v' || App.route.page === 'thumbs') && innerWidth < 1440));   // S12.13: окну видео на узком экране нужна ширина
     const last = this.lastVideo();
     const item = (href, icon, label, on, extra) => h('a.nav', { href, class: on ? 'on' : '', title: label }, Icon(icon, 17), h('span.lbl', label), extra || null);
     const agentBusy = window.AgentPanel && AgentPanel.busy && last && AgentPanel.vid === last.id;

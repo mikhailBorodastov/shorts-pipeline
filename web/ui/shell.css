@@ -106,3 +106,8 @@ body.side-mini .side-nav .live { position: absolute; margin: -14px 0 0 16px; }
 .mem-empty { margin: 0 0 16px; }
 .pal-row .pal-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-row .pal-h { max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* S12.13: иконка вместо эмодзи в начале текста (core.js h -> emojiIcon) */
+svg.ico.emo { flex: none; display: inline-block; vertical-align: -0.17em; margin-right: .38em; opacity: .9; }
+svg.ico.emo.solo { margin-right: 0; }
+button > svg.ico.emo, .btn > svg.ico.emo, a.btn > svg.ico.emo { margin-right: 0; }

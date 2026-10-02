@@ -40,6 +40,8 @@ const Workspace = {
       line(key, ['name'], { cls: 'ws-name', title: 'Название видео' }),
       h('span.ws-saved', Icon('check', 13), h('span#ws-saved-t', 'сохранено локально')),
       h('span.sp'),
+      (() => { const b = d.brief || {}, L = (typeof Styles !== 'undefined' ? Styles.looks() : REF.looks || []).find(x => x.key === b.look);   // S12.13: визуал ролика, как «Pixel art · Crisp 640» в референсе
+        return L ? h('button.ws-look', { title: 'Визуал ролика (бриф): ' + (L.desc || ''), onclick: () => go(`#/v/${d.id}/brief`) }, Icon('palette', 14), L.label + (d.mode === 'long' ? ' · 16:9' : ' · 9:16')) : null; })(),
       h('label.ws-model', { title: 'Модель Claude для этого окна: Opus 5.5 — сборка и сложное, Sonnet 5.5 — быстрые правки' }, Icon('spark', 14),
         sel([{ value: 'opus', label: 'Opus 5.5' }, { value: 'sonnet', label: 'Sonnet 5.5' }], model, v => { AgentPanel.model = v; Local.set('agent.model', v); App.render(); })),
       h('button.icon', { title: 'История: запуски Claude (что сделал, откатить), Ctrl+Z — откатить последнее', onclick: () => { AgentPanel.tab = 'history'; AgentPanel.toggle(true); } }, Icon('clock', 17)),
@@ -64,7 +66,7 @@ const Workspace = {
       })) : h('p.ws-hint', d.project ? 'Сцен пока нет — соберите видео с Claude: «Сделать» в пайплайне.' : 'Проект ролика ещё не создан.'),
       h('div.ws-sec', 'Пайплайн'),
       h('div.ws-pipe', this.steps(d, M, I).map(s => h('div.ws-step', { class: s.st, title: s.title || '' },
-        h('span.ws-dot', s.st === 'done' ? Icon('check', 12) : s.st === 'part' ? h('i') : null),
+        h('span.ws-ico', { title: s.st === 'done' ? 'готово' : s.st === 'part' ? 'частично' : '' }, Icon(s.icon || 'hash', 15), s.st === 'done' && h('i.ok', Icon('check', 9))),
         h('span.lbl', s.label, s.sub ? h('small', s.sub) : null),
         s.btn && h('button.small', { class: s.primary ? 'primary' : '', disabled: !!s.off, onclick: s.btn }, s.act)))),
     ];
@@ -77,21 +79,21 @@ const Workspace = {
     const nav = tab => () => go(`#/v/${id}/${tab}`);
     const scriptDone = has && scr.template === false;
     const steps = [
-      { label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : has ? 'Написать' : 'Начать', primary: !scriptDone,
+      { icon: 'pencil', label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : has ? 'Написать' : 'Начать', primary: !scriptDone,
         btn: scriptDone ? () => ScriptWin.open(d) : has ? () => agent('📝 Напиши сценарий по этому видео: сначала ресерч темы (источники → research.md), потом сценарий по брифу, ответам на вопросы и препродакшену. Потом montage check и montage tts.', 'script')
           : () => Claude.run({ action: 'produce', key: 'plan:' + id, params: { id, name: d.name } }),
         title: has ? 'Раскадровка: текст сцен, правки, фактчек' : 'Положить проект ролика в папку видео' },
-      { label: 'Озвучка', sub: words.length ? '' : 'черновой голос или своя запись', st: words.length ? 'done' : '', act: words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone },
-      { label: 'Тайминги', sub: words.length ? `${words.length} слов` : '', st: words.length ? 'done' : '', act: words.length ? 'Повторить' : 'Запустить', btn: nav('voice'), off: !scriptDone,
+      { icon: 'mic', label: 'Озвучка', sub: words.length ? '' : 'черновой голос или своя запись', st: words.length ? 'done' : '', act: words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone },
+      { icon: 'clock', label: 'Тайминги', sub: words.length ? `${words.length} слов` : '', st: words.length ? 'done' : '', act: words.length ? 'Повторить' : 'Запустить', btn: nav('voice'), off: !scriptDone,
         title: 'Слова голоса по времени: из них субтитры и привязка сцен к словам' },
-      { label: 'Препродакшен', sub: els.length ? `${ok} из ${els.length} утверждено` : '', st: els.length && ok === els.length ? 'done' : els.length ? 'part' : '', act: App.route.tab === 'pre' ? 'Открыт' : 'Открыть',
+      { icon: 'users', label: 'Препродакшен', sub: els.length ? `${ok} из ${els.length} утверждено` : '', st: els.length && ok === els.length ? 'done' : els.length ? 'part' : '', act: App.route.tab === 'pre' ? 'Открыт' : 'Открыть',
         btn: () => go(`#/v/${id}/pre`), off: App.route.tab === 'pre' && !App.route.sub },
-      { label: 'Синхронизация', sub: (d.sync || {}).at ? 'шаги, звуки, анимации' : '', st: (d.sync || {}).at ? 'done' : '', act: (d.sync || {}).at ? 'Повторить' : 'Запустить', off: !has || !(M.units || []).length,
+      { icon: 'link', label: 'Синхронизация', sub: (d.sync || {}).at ? 'шаги, звуки, анимации' : '', st: (d.sync || {}).at ? 'done' : '', act: (d.sync || {}).at ? 'Повторить' : 'Запустить', off: !has || !(M.units || []).length,
         btn: () => agent(`🔊 Шаг «Синхронизация»: соедини ассеты препродакшена со сценами и голосом — шаги персонажей к касаниям ног, звуки к действиям и маркерам сцен, анимации, которые персонажи умеют, там, где их требует сценарий или «Для финала», музыку под смысловые блоки (montage: music, приглушить под голос). Потом montage gen и проверь кадрами (montage snap). В конце — список «сцена · момент · что привязал». Когда закончишь: set plan:${id} sync '{"at": ${Date.now()}}'`, 'montage'),
         title: 'Claude привязывает звуки и анимации к действиям в сценах' },
-      { label: 'Монтаж', sub: (M.units || []).length ? `${(M.len || 0).toFixed(1)} с` : '', st: d.montage && (M.units || []).length ? 'done' : '', act: d.montage ? 'Пересобрать' : 'Сделать', primary: !d.montage && has, off: !has || I.owned === false,
+      { icon: 'clapper', label: 'Монтаж', sub: (M.units || []).length ? `${(M.len || 0).toFixed(1)} с` : '', st: d.montage && (M.units || []).length ? 'done' : '', act: d.montage ? 'Пересобрать' : 'Сделать', primary: !d.montage && has, off: !has || I.owned === false,
         btn: () => this.make(d), title: 'Монтаж в прямом эфире: сцены сразу встают по сценарию, Claude доводит их по одной — смотрите и пишите правки по ходу' },
-      { label: 'Упаковка', sub: (d.pack || {}).titles ? 'название и описание' : '', st: (d.pack || {}).titles ? 'done' : '', act: 'Открыть', btn: nav('pack') },
+      { icon: 'package', label: 'Упаковка', sub: (d.pack || {}).titles ? 'название и описание' : '', st: (d.pack || {}).titles ? 'done' : '', act: 'Открыть', btn: nav('pack') },
     ];
     return steps;
   },
@@ -151,14 +153,14 @@ const Workspace = {
     const units = [...(M.units || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
     const jump = dir => { const t = MT.t, list = units.map(x => x.at || 0); const n = dir < 0 ? list.filter(a => a < t - 0.05).pop() : list.find(a => a > t + 0.05); this.seek(n != null ? n : dir < 0 ? 0 : M.len || 0); };
     return h('div.ws-transport',
-      h('button.icon', { title: 'К началу сцены (Home — к началу ролика)', onclick: () => jump(-1) }, '⏮'),
-      h('button.icon.ws-play', { title: 'Играть / пауза (пробел)', onclick: () => (WS.playing ? this.pause() : this.play()) }, WS.playing ? '❚❚' : '▶'),
-      h('button.icon', { title: 'К следующей сцене', onclick: () => jump(1) }, '⏭'),
+      h('button.icon', { title: 'К началу сцены (Home — к началу ролика)', onclick: () => jump(-1) }, Icon('skipback', 17)),
+      h('button.icon.ws-play', { title: 'Играть / пауза (пробел)', onclick: () => (WS.playing ? this.pause() : this.play()) }, Icon(WS.playing ? 'pause' : 'play', 19)),
+      h('button.icon', { title: 'К следующей сцене', onclick: () => jump(1) }, Icon('skipfwd', 17)),
       h('span.ws-time', h('b.mt-time', this.fmt(MT.t)), h('span.dim', ' / ' + this.fmt(M.len || 0))),
       h('span.ws-scname', u ? `Сцена ${units.indexOf(u) + 1} · ${(sc && sc.name) || u.scene}` : ''),
       h('span.sp'),
-      h('button.icon', { title: 'Кадр назад (←), Shift — на секунду', onclick: () => this.seek(MT.t - 1 / FPS) }, '‹'),
-      h('button.icon', { title: 'Кадр вперёд (→), Shift — на секунду', onclick: () => this.seek(MT.t + 1 / FPS) }, '›'),
+      h('button.icon.ws-fstep', { title: 'Кадр назад (←), Shift — на секунду', onclick: () => this.seek(MT.t - 1 / FPS) }, Icon('chevl', 16)),
+      h('button.icon.ws-fstep', { title: 'Кадр вперёд (→), Shift — на секунду', onclick: () => this.seek(MT.t + 1 / FPS) }, Icon('chevr', 16)),
       h('button.icon', { title: 'Снимок кадра → out/shots/', disabled: WS.snapBusy || !d.project, onclick: () => this.snap(d) }, WS.snapBusy ? h('span.spin') : '📷'),
       h('button.icon', { class: WS.muted ? 'on' : '', title: WS.muted ? 'Включить звук' : 'Выключить звук', onclick: () => { WS.muted = !WS.muted; Local.set('ws-muted', WS.muted ? '1' : '0'); MTA.mute(WS.muted); this.redrawTransport(); } }, WS.muted ? '🔇' : '🔊'),
       h('button.icon', { class: WS.loop ? 'on' : '', title: 'Повтор: выбранные сцены или весь ролик', onclick: () => { WS.loop = !WS.loop; this.redrawTransport(); } }, '🔁'),
@@ -349,7 +351,7 @@ addEventListener('keydown', e => {
   else if (e.key === 'End') { e.preventDefault(); Workspace.seek(M.len || 0); }
   else if (e.key === 'Escape' && ((MT.multi || []).length || MT.sel)) { MT.multi = []; MT.sel = null; Montage.redraw(); }
 });
-addEventListener('resize', () => App.route.page === 'v' && Workspace.fit());
+addEventListener('resize', () => { if (App.route.page !== 'v') return; document.body.classList.toggle('side-mini', Shell.mini || innerWidth < 1440); Workspace.fit(); });
 // S12.7: пока Claude монтирует — каждая его пересборка (montage gen) сразу в превью
 setInterval(async () => {
   const d = MT.d;
