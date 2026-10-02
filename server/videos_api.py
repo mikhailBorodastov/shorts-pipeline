@@ -428,6 +428,10 @@ def handle_get(A, h, p, q):
     if p == "/api/videos/scriptver":
         vid, name = q.get("id", [""])[0], q.get("v", [""])[0]
         h._json(script_version(vid, name) if name else {"versions": script_versions(vid)}); return True
+    if p == "/api/videos/genat":                     # S12.7: когда монтаж последний раз писал файлы проекта (окно перезагружает превью)
+        vdir = P.video(q.get("id", [""])[0])
+        fs = [os.path.join(vdir, "src", n) for n in ("montage.js", "scenes.js")] if vdir else []
+        h._json({"t": max([os.path.getmtime(f) for f in fs if os.path.isfile(f)] or [0])}); return True
     if p == "/api/videos/cover":
         f = cover_path(A, q.get("id", [""])[0])
         if not f:

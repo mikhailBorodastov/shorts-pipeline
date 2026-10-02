@@ -94,3 +94,16 @@ body.ws-tl-big .ws-tl { height: 54vh; }
 .mt-word:hover { background: rgba(255, 255, 255, .16); color: var(--text); }
 .mt-wave { position: absolute; left: 0; right: 0; top: 24px; height: 22px; pointer-events: none; }
 .mt-wave canvas { position: absolute; top: 0; height: 22px; }
+
+/* S12.7: монтаж в прямом эфире — заглушки и «Claude собирает» */
+.mt-ph { position: absolute; top: 3px; height: 19px; border-radius: 6px; font-size: 11px; line-height: 19px; padding: 0 6px; overflow: hidden; white-space: nowrap; pointer-events: none; box-sizing: border-box; }
+.mt-ph.empty { background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 6px, rgba(255,255,255,.1) 6px 12px); border: 1px dashed var(--line-strong); color: var(--text-mute); }
+.mt-ph.live { border: 1px solid var(--agent); color: #e4d8ff; background: repeating-linear-gradient(135deg, rgba(180,140,255,.12) 0 8px, rgba(180,140,255,.26) 8px 16px); background-size: 22.6px 22.6px; animation: phrun 1s linear infinite; z-index: 2; }
+@keyframes phrun { to { background-position: 22.6px 0; } }
+.ws-live { position: absolute; inset: 0; z-index: 60; pointer-events: none; display: flex; flex-direction: column; align-items: center; }
+.ws-livebadge { margin-top: 12px; background: rgba(20, 16, 34, .88); border: 1px solid rgba(180,140,255,.5); color: #e4d8ff; font-size: 12px; padding: 5px 12px; border-radius: var(--r-pill); }
+.ws-livebadge .spin { width: 10px; height: 10px; border-top-color: var(--agent); vertical-align: -1px; }
+.ws-hole { margin: auto; max-width: 300px; text-align: center; background: rgba(24,24,27,.92); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; }
+.ws-hole small { color: var(--text-mute); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.ws-hole b { font-size: 15px; }
+.ws-hole p { margin: 0; color: var(--dim); font-size: 12.5px; line-height: 1.5; }

@@ -70,6 +70,7 @@ const Montage = {
   },
   async regen() {
     const d = MT.d, key = MT.key;
+    MT.selfGenAt = Date.now();                            // S12.7: своя пересборка — окно не перезагружает превью второй раз
     if (!d || !d.project) return;
     MT.genBusy = true; this.status('обновляю предпросмотр…');
     try {
@@ -235,6 +236,11 @@ const Montage = {
           onmousedown: ev => this.dragMarker(ev, u, m) }, h('span', '⚑ ' + (m.name || ''))));
       }
     }
+    for (const ph of this.holes(d, M)) {                 // S12.7: секции голоса без сцены — заглушки; секция, которую Claude собирает сейчас, — бегущая полоса
+      sceneRow.append(h('div.mt-ph', { class: (ph.empty ? 'empty' : '') + (ph.live ? ' live' : ''), style: { left: X(ph.a) + 'px', width: Math.max(6, (ph.b - ph.a) * Z) + 'px' },
+        title: (ph.live ? 'Claude собирает: ' + (ph.note || '') + '\n' : '') + (ph.empty ? `Сцены нет: «${ph.title}» — заглушка (текст голоса в кадре)` : '') },
+        h('span', ph.live ? '◌ ' + (ph.note || 'Claude собирает…') : ph.title || 'нет сцены')));
+    }
     rows.push(['Сцены', sceneRow, 1]);
     // текст и голос (S12): сверху слова — что звучит (из них субтитры и привязка сцен), под ними волна голоса
     if (words.length) {
@@ -262,6 +268,20 @@ const Montage = {
       h('div.mt-playhead', { style: { left: X(MT.t) + 'px' } }),
       h('div.mt-end', { style: { left: X(M.len || 0) + 'px' }, title: `конец ролика — ${(M.len || 0).toFixed(2)} с` }));
     return h('div.mt-scroll', ruler, body);
+  },
+  // секции голоса (сцены сценария), которые не покрыты юнитами монтажа, и та, которую агент собирает сейчас (video.json → live)
+  holes(d, M) {
+    const I = MT.info[d.id] || {}, V = I.voice && !I.voice.studio ? I.voice.sections || [] : [];
+    const live = d.live && window.AgentPanel && AgentPanel.busy && AgentPanel.vid === d.id ? d.live : null;
+    const out = [];
+    V.forEach((s, i) => {
+      const a = s.start || 0, b = a + (s.dur || 0);
+      if (b - a < 0.05) return;
+      const cov = (M.units || []).reduce((acc, u) => acc + Math.max(0, Math.min(b, (u.at || 0) + (u.len || 0)) - Math.max(a, u.at || 0)), 0);
+      const empty = cov < (b - a) * 0.5, isLive = !!live && +live.sec === i;
+      if (empty || isLive) out.push({ i, a, b, title: (s.title || '').replace(/^[\d:.,–—\s-]+—\s*/, ''), empty, live: isLive, note: isLive ? live.note : '' });
+    });
+    return out;
   },
   // волна голоса под словами: секции голоса (audiomap) -> canvas на каждую, минимум / максимум на пиксель
   waves(d, host, X) {

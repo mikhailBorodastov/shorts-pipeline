@@ -20,7 +20,7 @@ const Workspace = {
     // ролик Studio: при первом открытии окна — пересобрать файлы проекта (свежий движок и превью без своей полосы управления — &clean)
     // пустой монтаж не собираем — превью без сцен падает
     if (d.project && I.owned && (M.units || []).length && !(MT.autogen || (MT.autogen = {}))[d.id]) { MT.autogen[d.id] = true; I.generated = true; setTimeout(() => Montage.regen(), 0); }
-    requestAnimationFrame(() => { this.fit(); this.pins(); });
+    requestAnimationFrame(() => { this.fit(); this.pins(); this.liveOverlay(); });
     return h('div.ws', { class: d.mode === 'long' ? 'long' : 'short' },
       this.head(d, key),
       h('div.ws-main',
@@ -92,12 +92,43 @@ const Workspace = {
         btn: () => agent(`🔊 Шаг «Синхронизация»: соедини ассеты препродакшена со сценами и голосом — шаги персонажей к касаниям ног, звуки к действиям и маркерам сцен, анимации, которые персонажи умеют, там, где их требует сценарий или «Для финала», музыку под смысловые блоки (montage: music, приглушить под голос). Потом montage gen и проверь кадрами (montage snap). В конце — список «сцена · момент · что привязал». Когда закончишь: set plan:${id} sync '{"at": ${Date.now()}}'`, 'montage'),
         title: 'Claude привязывает звуки и анимации к действиям в сценах' },
       { label: 'Монтаж', sub: (M.units || []).length ? `${(M.len || 0).toFixed(1)} с` : '', st: d.montage && (M.units || []).length ? 'done' : '', act: d.montage ? 'Пересобрать' : 'Сделать', primary: !d.montage && has, off: !has || I.owned === false,
-        btn: () => Montage.smart(d), title: 'Claude собирает ролик: сцены под голос, переходы, надписи, субтитры' },
+        btn: () => this.make(d), title: 'Монтаж в прямом эфире: сцены сразу встают по сценарию, Claude доводит их по одной — смотрите и пишите правки по ходу' },
       { label: 'Упаковка', sub: (d.pack || {}).titles ? 'название и описание' : '', st: (d.pack || {}).titles ? 'done' : '', act: 'Открыть', btn: nav('pack') },
     ];
     return steps;
   },
 
+  // ---------------- 🎞 монтаж в прямом эфире (S12.7) ----------------
+  async make(d) {
+    const M = Montage.M(d);
+    if (!(d.montage && (M.units || []).length)) {         // каркас за секунды — все сцены на своих местах, Claude доводит дальше
+      try {
+        UI.toast('⚡ Раскладываю сцены по сценарию…');
+        await api('POST', '/api/montage/auto', { video: d.id });
+        await Store.load('plan:' + d.id, true); delete MT.info[d.id]; Montage.load(d, true);
+        await Montage.regen();
+      } catch (e) { UI.toast('Каркас не собрался: ' + e.message + ' — Claude начнёт с нуля', 'err'); }
+    }
+    AgentPanel.toggle(true); AgentPanel.tab = 'chat';
+    AgentPanel.say('🎞 Смонтируй ролик в прямом эфире: каркас уже стоит, иди по секциям голоса по порядку, перед каждой — live, после — montage gen (я смотрю превью). Пожелания и правки напишу по ходу.', { mode: 'montage', model: 'opus' });
+  },
+  // заглушка в кадре: секция без сцены (название + текст голоса) и плашка «Claude собирает…»
+  liveOverlay() {
+    const d = MT.d, st = $('.ws-stage');
+    if (!d || !st) return;
+    const M = Montage.M(d), I = MT.info[d.id] || {}, holes = Montage.holes(d, M);
+    const hole = holes.find(x => x.empty && MT.t >= x.a - 1e-3 && MT.t < x.b), live = holes.find(x => x.live);
+    const sig = (hole ? hole.i : '-') + '|' + (live ? live.i + live.note : '-');
+    let ov = st.querySelector('.ws-live');
+    if (ov && ov.dataset.sig === sig) return;
+    if (ov) ov.remove();
+    if (!hole && !live) return;
+    const words = hole ? Montage.words(d).filter(w => w.t >= hole.a - 0.01 && w.t < hole.b).map(w => w.w).join(' ') : '';
+    ov = h('div.ws-live', { 'data-sig': sig },
+      live && h('div.ws-livebadge', h('span.spin'), ` Claude собирает · сцена ${live.i + 1}` + (live.note ? ' · ' + live.note : '')),
+      hole && h('div.ws-hole', h('small', `Сцена ${hole.i + 1} · сцены ещё нет`), h('b', hole.title || 'без названия'), words && h('p', '«' + words + '»')));
+    st.append(ov);
+  },
   // ---------------- центр: превью ----------------
   overlay(d, M, I) {
     if (!d.project) return h('div.ws-over', h('div.es-ico', Icon('clapper', 24)), h('b', 'Проекта ролика ещё нет'),
@@ -175,6 +206,7 @@ const Workspace = {
     const d = MT.d; if (!d) return;
     const M = Montage.M(d), u = this.unitAt(M, MT.t);
     this.pins();
+    this.liveOverlay();
     if ((u && u.id) !== this.curU) {
       this.curU = u && u.id;
       $$('.ws-scene').forEach(b => b.classList.toggle('on', b.dataset.u === this.curU));
@@ -320,6 +352,24 @@ addEventListener('keydown', e => {
   else if (e.key === 'Escape' && ((MT.multi || []).length || MT.sel)) { MT.multi = []; MT.sel = null; Montage.redraw(); }
 });
 addEventListener('resize', () => App.route.page === 'v' && Workspace.fit());
+// S12.7: пока Claude монтирует — каждая его пересборка (montage gen) сразу в превью
+setInterval(async () => {
+  const d = MT.d;
+  if (App.route.page !== 'v' || App.route.tab || !d || !window.AgentPanel || !AgentPanel.busy || AgentPanel.vid !== d.id || document.hidden || WS.genBusy) return;
+  WS.genBusy = true;
+  try {
+    const r = await api('GET', '/api/videos/genat?id=' + d.id);
+    if (WS.genSeen == null || WS.genVid !== d.id) { WS.genSeen = r.t; WS.genVid = d.id; }
+    else if (r.t > WS.genSeen) {
+      WS.genSeen = r.t;
+      if (Date.now() - (MT.selfGenAt || 0) > 2500) {
+        delete MT.info[d.id]; Montage.load(d, true); MTA.load(d, true); MontagePreview.reload(MT.t);
+        Montage.status('Claude пересобрал — превью обновлено');
+      }
+    }
+  } catch {}
+  WS.genBusy = false;
+}, 1500);
 // Ctrl + колесо над таймлайном — масштаб
 addEventListener('wheel', e => {
   if (App.route.page !== 'v' || !e.ctrlKey || !e.target.closest || !e.target.closest('.ws-tl')) return;

@@ -224,7 +224,7 @@ const AgentPanel = {
     if (this.busy) {
       const start = [...E].reverse().find(e => e.kind === 'you');
       items.push(h('div.ag-working', h('span.spin'), ' Claude работает · ', this.model === 'opus' ? 'opus-5.5' : 'sonnet-5.5', ' · ',
-        h('span.elapsed2', { 'data-start': start ? start.ts : Date.now() }, '0 с'), h('span.sp'),
+        h('span.elapsed2', { 'data-start': start ? start.ts : Date.now() }, fmtSec((Date.now() - (start ? start.ts : Date.now())) / 1000)), h('span.sp'),
         h('button.small', { onclick: () => this.stop(), title: 'Остановить (сделанное останется — его можно откатить)' }, Icon('x', 12), 'Стоп')));
     }
     return h('div.ag-feed', items.length ? items : h('div.ag-empty',
