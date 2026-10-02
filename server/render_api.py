@@ -122,7 +122,7 @@ def _render(A, it):
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", FPS=str(it["fps"]))
     env["REVIEW_PORT"] = str(A.stapi().project_port(vdir))
     it["phase"] = "звук"
-    t0 = None
+    t0, base = None, 0
     pr = Q["proc"] = subprocess.Popen([mn._bash(), "build.sh"], cwd=vdir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True,
                                       encoding="utf-8", errors="replace", creationflags=CF)
     log = []
@@ -131,10 +131,11 @@ def _render(A, it):
         log.append(line)
         m = re.match(r"^(\d+)/(\d+)\s", line)
         if m:
-            t0 = t0 or time.time()
+            if t0 is None:                                     # S12.12: продолжение рендера — уже готовые кадры не считаем в скорость
+                t0, base = time.time(), int(m.group(1))
             it["phase"], it["done"], it["total"] = "кадры", int(m.group(1)), int(m.group(2))
             el = max(0.5, time.time() - t0)
-            it["fpsr"] = round(it["done"] / el, 1)
+            it["fpsr"] = round(max(0, it["done"] - base) / el, 1)
             it["eta"] = round((it["total"] - it["done"]) / max(0.1, it["fpsr"]))
         elif line.startswith("frames done"):
             it["phase"], it["done"], it["eta"] = "склейка", it["total"] or it["done"], 3
@@ -183,6 +184,11 @@ def finish(A, it):
         files.append(name + "_thumbnail" + ext)
     open(os.path.join(out, name + ".txt"), "w", encoding="utf-8").write(youtube_text(A, d, it))
     files.append(name + ".txt")
+    if it.get("mode") == "long":                          # S12.12: главы отдельным файлом — вставить в описание YouTube
+        ch = chapters(A, it["vid"])
+        if ch["chapters"]:
+            open(os.path.join(out, name + "_chapters.txt"), "w", encoding="utf-8").write(ch["text"] + "\n")
+            files.append(name + "_chapters.txt")
     return files
 
 
@@ -239,8 +245,46 @@ def make_srt(A, vid):
     return "\n".join(out)
 
 
+CHAPTER = re.compile(r"^#{1,3}\s+(?:\*\*)?Глава\b\s*[\dIVXLC]*\s*[.:—–-]?\s*(.*?)(?:\*\*)?\s*$", re.I)
+SCENE_HEAD = re.compile(r"^#{2,3}\s+(.+?)\s*$", re.M)
+
+
+def script_chapters(A, vid):
+    """S12.12: главы длинного видео из script.md — заголовок «## Глава 2. Название» перед сценами; время главы = начало её первой сцены с голосом
+    (секции vo_timing по порядку). [] — глав в сценарии нет."""
+    vdir = P.video(vid)
+    f = os.path.join(vdir or "", "script.md")
+    if not os.path.isfile(f):
+        return []
+    text = open(f, encoding="utf-8").read()
+    vo = A.mnapi().voice(vid) or {}
+    secs = vo.get("sections") or []
+    norm = lambda s: re.sub(r"[*_\s]+", " ", s or "").strip().lower()
+    starts = {}
+    for s in secs:
+        starts.setdefault(norm(s.get("title")), s.get("start") or 0)
+    out, pending = [], None
+    for m in SCENE_HEAD.finditer(text):
+        line = m.group(0).strip()
+        c = CHAPTER.match(line)
+        if c:
+            pending = c.group(1).strip() or line.lstrip("#").strip()
+            continue
+        if pending is not None and norm(m.group(1)) in starts:
+            out.append({"t": float(starts[norm(m.group(1))]), "title": pending})
+            pending = None
+    if out:
+        out[0]["t"] = 0.0
+    return out
+
+
 def chapters(A, vid):
-    """Главы YouTube: начала сцен монтажа с их названиями (первая — 0:00)."""
+    """Главы YouTube: из сценария (## Глава …) или начала сцен монтажа с их названиями (первая — 0:00)."""
+    sc = script_chapters(A, vid)
+    if sc:
+        text = "\n".join(f"{_fmt(c['t'])} {c['title']}" for c in sc)
+        ok = len(sc) >= 3 and all(b["t"] - a["t"] >= 10 for a, b in zip(sc, sc[1:]))
+        return {"chapters": sc, "text": text, "ok": ok, "from": "script"}
     d = A.load("plan:" + vid)
     M = d.get("montage") or {}
     names = {e["id"]: e.get("name", "") for e in d.get("elements") or []}
@@ -258,7 +302,7 @@ def chapters(A, vid):
             if not ch or s["start"] - ch[-1]["t"] >= 10:
                 ch.append({"t": 0.0 if not ch else s["start"], "title": re.sub(r"^[\d:.,–—\s-]+—\s*", "", s.get("title") or "")})
     text = "\n".join(f"{_fmt(c['t'])} {c['title']}" for c in ch)
-    return {"chapters": ch, "text": text, "ok": len(ch) >= 3}
+    return {"chapters": ch, "text": text, "ok": len(ch) >= 3, "from": "scenes"}
 
 
 # ---------------------------------------------------------------- готовые ролики

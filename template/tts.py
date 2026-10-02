@@ -27,6 +27,7 @@ OUT = os.path.join("build", "vo")
 
 
 SCENE_HEAD = re.compile(r"^#{2,3}\s+(.+?)\s*$", re.M)
+CHAPTER = re.compile(r"^#{1,3}\s+(?:\*\*)?Глава\b\s*[\dIVXLC]*\s*[.:—–-]?\s*(.*?)(?:\*\*)?\s*$", re.I)   # S12.12: главы длинного видео
 TIMECODE = re.compile(r"(\d+:\d{2}(?:\.\d+)?)\s*[–—-]\s*(\d+:\d{2}(?:\.\d+)?)")
 
 
@@ -111,9 +112,13 @@ def parse_script(path="script.md"):
         m = re.match(r"\s*произношение\s*:\s*(.+?)\s*=\s*(.+)", line, re.I)
         if m:
             cfg["pron"][m.group(1).strip()] = m.group(2).strip()
-    sections = []
+    sections, chapter = [], None
     for k, h in enumerate(heads):
         block = text[h.end():heads[k + 1].start() if k + 1 < len(heads) else len(text)]
+        ch = CHAPTER.match(h.group(0).strip())
+        if ch:                                  # S12.12: «## Глава 2. Название» — начало главы длинного видео, сам заголовок не звучит
+            chapter = ch.group(1).strip() or h.group(1).strip()
+            continue
         voice = _voice_of(block)
         if not voice:
             # a scene with a timecode and a picture but no voice = a silent beat of that length
@@ -121,14 +126,14 @@ def parse_script(path="script.md"):
             if tc and re.search(r"\**(Картинка|Визуал)\**\s*:", block, re.I):
                 dur = _secs(tc.group(2)) - _secs(tc.group(1))
                 if dur > 0:
-                    sections.append({"title": h.group(1).replace("**", "").strip(), "text": "", "silence": round(dur, 3)})
+                    sections.append({"title": h.group(1).replace("**", "").strip(), "text": "", "silence": round(dur, 3), **({"chapter": chapter} if chapter else {})})
             continue
         voice = re.sub(r"\*\([^)]*\)\*", " ", voice)                   # director's notes *(…)* are not spoken
         voice = re.sub(r"[*_]{1,2}", "", voice)                          # markdown emphasis
         voice = re.sub(r"\s+", " ", voice).strip().strip("«»\"")
         voice, pauses = split_pauses(voice)
         if voice:
-            sections.append({"title": h.group(1).replace("**", "").strip(), "text": voice, "pauses": pauses})
+            sections.append({"title": h.group(1).replace("**", "").strip(), "text": voice, "pauses": pauses, **({"chapter": chapter} if chapter else {})})
     if not sections:
         sys.exit("В script.md не найдено ни одной сцены с голосом (поле «Голос:» или «**VO:**» с цитатой «> …»)")
     return cfg, sections
@@ -339,7 +344,7 @@ async def main():
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
                             "-t", str(s["silence"]), "-b:a", "96k", path], check=True)
             sections.append({"title": s["title"], "start": round(t, 3), "dur": s["silence"], "file": path.replace("\\", "/"),
-                             "words": [], "silent": True})
+                             "words": [], "silent": True, **({"chapter": s["chapter"]} if s.get("chapter") else {})})
             print(f"sec{i} «{s['title']}»: start {t:.2f}  тишина {s['silence']:.2f}")
             t += s["silence"] + GAP
             continue
@@ -356,7 +361,7 @@ async def main():
             shown = insert_pauses(path, shown, s["pauses"])
         d = duration(path)
         sections.append({"title": s["title"], "start": round(t, 3), "dur": round(d, 3), "file": path.replace("\\", "/"),
-                         "words": shown})
+                         "words": shown, **({"chapter": s["chapter"]} if s.get("chapter") else {})})
         print(f"sec{i} «{s['title']}»: start {t:.2f}  dur {d:.2f}")
         t += d + GAP
     total = t - GAP + cfg.get("tail", TAIL)

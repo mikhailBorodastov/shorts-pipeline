@@ -102,6 +102,7 @@
     const other = $('otherlist'); other.innerHTML = '';
     data.blocks.forEach((b, i) => {
       if (b.scene) box.appendChild(sceneCard(b, i));
+      else if (b.chapter) box.appendChild(Object.assign(document.createElement('div'), { className: 'chapter', textContent: b.title.replace(/\*\*/g, '') }));   // S12.12: глава длинного видео
       else if (!b.hr) other.appendChild(otherBlock(b, i));
     });
     if (!sceneIdx().length) box.innerHTML = '<div class="empty">В script.md пока нет сцен. Сцена — это заголовок «### …» или «## …» с полем VO / Голос.</div>';

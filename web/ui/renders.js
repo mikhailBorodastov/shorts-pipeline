@@ -73,7 +73,7 @@ const ExportDlg = {
   open(d) {
     this.d = d;
     const own = Renders.of(d.id);
-    this.f = { name: (own && own.name) || (d.name || 'video').replace(/[\\/:*?"<>|]+/g, ' ').trim().replace(/\s+/g, '_'), srt: true, fps: 60 };
+    this.f = { name: (own && own.name) || (d.name || 'video').replace(/[\\/:*?"<>|]+/g, ' ').trim().replace(/\s+/g, '_'), srt: true, fps: d.mode === 'long' ? 30 : 60 };   // длинное — 30 fps: 10–20 минут рендерятся вдвое быстрее
     this.ch = null;
     this.el = h('div.nv', { onmousedown: e => { if (e.target === this.el) this.close(); } });
     document.body.append(this.el);
@@ -95,7 +95,8 @@ const ExportDlg = {
         h('div.nv-field', h('label', 'Субтитры'), h('label.ws-chk', h('input', { type: 'checkbox', checked: f.srt, disabled: !!run, onchange: e => { f.srt = e.target.checked; } }), 'сохранить .srt рядом с видео (YouTube их любит)'))),
       h('details.ex-ch', { open: long },
         h('summary', 'Главы YouTube', h('span.dim', long ? '' : ' — для длинных видео')),
-        this.ch ? [h('pre.ex-pre', this.ch.text || '(сцен ещё нет)'), !this.ch.ok && h('p.hint', 'YouTube покажет главы, если их хотя бы 3 и каждая не короче 10 с.'),
+        this.ch ? [h('pre.ex-pre', this.ch.text || '(сцен ещё нет)'), h('p.hint', this.ch.from === 'script' ? 'Из сценария: заголовки «## Глава …». Сохранятся в out/ (_chapters.txt и в описании).' : 'По сценам монтажа. Свои главы — заголовки «## Глава 1. Название» в сценарии перед сценами.'),
+          !this.ch.ok && h('p.hint', 'YouTube покажет главы, если их хотя бы 3 и каждая не короче 10 с.'),
           h('button.small', { onclick: () => UI.copy(this.ch.text) }, Icon('book', 13), 'Скопировать')] : h('p.dim.small', 'считаю…')),
     ];
     if (run) {

@@ -21,6 +21,13 @@ const EDGE = BROWSERS.find(p => fs.existsSync(p));
 if (!EDGE) { console.error('Не найден Chrome/Edge. Укажи путь: CHROME="C:/.../chrome.exe" node render.js ...'); process.exit(1); }
 const URL = `http://localhost:${process.env.REVIEW_PORT || 8765}/src/${process.env.RENDER_PAGE || 'index.html'}`;   // RENDER_PAGE=demo.html renders another page
 
+// отпечаток проекта для возобновления рендера: настройки + размер и время изменения файлов src/ и assets/ (vo_timing.js, scenes.js, картинки, модели)
+function projectSig(o) {
+  const crypto = require('crypto'), hsh = crypto.createHash('sha1').update(JSON.stringify(o));
+  const walk = d => { let L = []; try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) L = L.concat(walk(f)); else { const st = fs.statSync(f); L.push(`${f}|${st.size}|${Math.round(st.mtimeMs)}`); } } } catch (e) {} return L; };
+  for (const x of [...walk('src'), ...walk('assets')].sort()) hsh.update(x);
+  return hsh.digest('hex');
+}
 const fmt0 = () => { try { return JSON.parse((fs.readFileSync('src/format.js', 'utf8').match(/FRAME_SIZE\s*=\s*(\[[^\]]+\])/) || [])[1]) || [1080, 1920]; } catch (e) { return [1080, 1920]; } };   // кадр проекта (src/format.js)
 async function openPage(browser) {
   const page = await browser.newPage();
@@ -66,7 +73,7 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       const dir = 'build/snap_tmp'; fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
       const page = await openPage(browser);
       for (let i = 0; i < times.length; i++) save(await grab(page, times[i]), path.join(dir, `s${String(i).padStart(3, '0')}.png`));
-      const cols = Math.min(times.length, 6);
+      const cols = Math.min(times.length, fmt0()[0] > fmt0()[1] ? 3 : 6);   // 16:9 — по 3 в ряд
       execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', path.join(dir, 's%03d.png'), '-vf', `scale=${fmt0()[0] > fmt0()[1] ? '640:360' : '360:640'},tile=${cols}x${Math.ceil(times.length / cols)}`, '-frames:v', '1', out]);
       console.log('wrote', out);
     } else if (mode === 'thumb') {
@@ -90,6 +97,8 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       // every frame has a watchdog: a stalled page is killed and the frame is rendered again in a fresh browser.
       //   RENDER_GPU=0      software raster (slower, fallback)       RENDER_FMT=png   lossless PNG frames (2.5x slower)
       //   RENDER_RANGE=a:b  only frames a..b-1 (benchmarks)           RENDER_RECYCLE=N fresh browser every N frames (default 900)
+      //   S12.12 возобновление: build/frames/sig.json — отпечаток (кадр, fps, формат, файлы src/ и assets/). Совпал — готовые куски не рендерятся заново
+      //   (сбой, отмена, закрытое окно на 20-минутном ролике), всё готово — рендер пропускается. RENDER_FRESH=1 — начать с нуля.
       await closeB(browser);
       const fps = +(a1 || 30); let workers = +(a2 || 4);
       let fmt = process.env.RENDER_FMT === 'png' ? 'png' : process.env.RENDER_FMT === 'jpg' ? 'jpg' : 'h264';   // S12.8: по умолчанию H.264 в браузере (видеокарта)
@@ -108,13 +117,29 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       }
       if (!process.env.WORKERS && !process.env.RENDER_WORKERS_FORCE && await probe.evaluate(() => typeof X3 !== 'undefined' && !!X3.R))
         workers = Math.min(workers, 4);                   // 3D-сцены (WebGL): видеокарта одна — 4 окна быстрее 6 (замер: 1044 кадра 31 с против 48 с)
-      const N = Math.ceil(total * fps);
+      const N = Math.ceil(total * fps), CH0 = fmt === 'h264' ? 120 : 60;
       const [r0, r1] = (process.env.RENDER_RANGE || `0:${N}`).split(':').map(Number);
-      if (!process.env.RENDER_RANGE) { fs.rmSync(dir, { recursive: true, force: true }); }
+      const sig = projectSig({ fps, fmt, N, size: fmt0(), br: fmt === 'h264' ? BITRATE : 0 });
+      const sigF = path.join(dir, 'sig.json');
+      const old = (() => { try { return JSON.parse(fs.readFileSync(sigF, 'utf8')); } catch (e) { return null; } })();
+      const same = !process.env.RENDER_FRESH && !process.env.RENDER_RANGE && old && old.sig === sig;
+      if (same && old.complete && fs.existsSync(path.join(dir, fmt === 'h264' ? 'video.h264' : `${String(N - 1).padStart(5, '0')}.${fmt}`))) {
+        console.log(`[render] кадры уже готовы (проект не менялся) — пропускаю`);
+        console.log(`frames done ${N} in 0.0s (0.0 fps, 0 workers, cached, ${fmt})`);
+        await closeB(probeB); return;
+      }
+      if (!process.env.RENDER_RANGE && !same) { fs.rmSync(dir, { recursive: true, force: true }); }
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'format.txt'), fmt);
-      const CH = fmt === 'h264' ? 120 : 60, RECYCLE = +(process.env.RENDER_RECYCLE || 900), TIMEOUT = 30000;
+      if (!process.env.RENDER_RANGE) fs.writeFileSync(sigF, JSON.stringify({ sig, N, fps, fmt, started: Date.now() }));
+      const chunkF = c0 => path.join(dir, `c${String(c0).padStart(6, '0')}.h264`), frameF = i => path.join(dir, `${String(i).padStart(5, '0')}.${fmt}`);
+      const have = c0 => (fmt === 'h264' ? (fs.existsSync(chunkF(c0)) && fs.statSync(chunkF(c0)).size > 0)
+        : Array.from({ length: Math.min(CH0, r1 - c0) }, (_, k) => fs.existsSync(frameF(c0 + k))).every(Boolean));
+      const CH = CH0, RECYCLE = +(process.env.RENDER_RECYCLE || 900), TIMEOUT = 30000;
       let nextChunk = r0, done = 0; const t0 = Date.now(), todo = r1 - r0;
+      let reused = 0;
+      if (same) for (let c = r0; c < r1; c += CH) if (have(c)) reused += Math.min(CH, r1 - c);
+      if (reused) { done = reused; console.log(`[render] продолжаю: ${reused} из ${todo} кадров уже готовы`); console.log(`${done}/${todo}  0s`); }
       const grabF = (page, t) => page.evaluate((t, fmt) => { renderFrame(t); return document.getElementById('c').toDataURL(fmt === 'jpg' ? 'image/jpeg' : 'image/png', 0.95); }, t, fmt);
       // кусок кадров a..b-1 -> один поток H.264 Annex B (начинается с ключевого кадра, SPS/PPS внутри) -> base64; куски склеиваются по порядку
       const encChunk = (page, a, b) => page.evaluate(async (a, b, fps, br) => {
@@ -142,10 +167,11 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         const fresh = async () => { await closeB(br); br = await launch(w); page = await openPage(br); since = 0; };
         while (true) {
           const c0 = nextChunk; if (c0 >= r1) break; nextChunk += CH;
+          if (same && have(c0)) continue;                 // готово с прошлого запуска
           if (fmt === 'h264') {                          // S12.8: весь кусок — одним вызовом, наружу только сжатый поток
             const c1 = Math.min(c0 + CH, r1);
             for (let attempt = 0; ; attempt++) {
-              try { fs.writeFileSync(path.join(dir, `c${String(c0).padStart(6, '0')}.h264`), Buffer.from(await withTimeout(encChunk(page, c0, c1), TIMEOUT + (c1 - c0) * 500), 'base64')); break; }
+              try { const buf = Buffer.from(await withTimeout(encChunk(page, c0, c1), TIMEOUT + (c1 - c0) * 500), 'base64'); fs.writeFileSync(chunkF(c0) + '.tmp', buf); fs.renameSync(chunkF(c0) + '.tmp', chunkF(c0)); break; }   // целиком или никак — для возобновления
               catch (e) { if (attempt >= 3) throw e; console.log(`[render] worker ${w}: chunk ${c0} ${e.message}, restarting browser`); await fresh(); }
             }
             since += c1 - c0; if (since >= RECYCLE) await fresh();
@@ -168,6 +194,7 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         for (const f of fs.readdirSync(dir).filter(f => /^c\d{6}\.h264$/.test(f)).sort()) { fs.writeSync(fd, fs.readFileSync(path.join(dir, f))); fs.rmSync(path.join(dir, f)); }
         fs.closeSync(fd);
       }
+      if (!process.env.RENDER_RANGE) fs.writeFileSync(sigF, JSON.stringify({ sig, N, fps, fmt, complete: Date.now() }));
       console.log(`frames done ${todo} in ${((Date.now() - t0) / 1000).toFixed(1)}s (${(todo / ((Date.now() - t0) / 1000)).toFixed(1)} fps, ${workers} workers, ${process.env.RENDER_GPU === '0' ? 'cpu' : 'gpu'}, ${fmt})`);
       return;
     }

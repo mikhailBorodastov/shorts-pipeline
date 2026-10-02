@@ -124,6 +124,7 @@ def parse(text=None):
         tc = TIMECODE.search(title)
         blocks.append({"level": len(h.group(1)), "title": title, "raw": raw, "hash": _hash(raw),
                        "fields": fields, "scene": is_scene(title, fields),
+                       "chapter": bool(re.match(r"^(?:\*\*)?Глава\b", title, re.I)),   # S12.12: «## Глава 2. …» — начало главы длинного видео
                        "tc": [tc.group(1), tc.group(2)] if tc else None,
                        "name": re.sub(r"^\s*" + TIMECODE.pattern + r"\s*[—–-]?\s*", "", title).strip() if tc else title})
         if tail:
@@ -204,7 +205,7 @@ def timing(doc):
             break
         s, b = secs[n], doc["blocks"][k]
         spoken = "".join(w["w"] for w in s.get("words", []))
-        vt = voice_text(b["fields"])
+        vt = re.sub(r"\[\s*пауза\s+[\d.]+\s*(?:с|сек)?\s*\]", " ", voice_text(b["fields"]), flags=re.I)   # [пауза N] не звучит — не «изменено»
         stale = (_norm(spoken) != _norm(vt)) if not s.get("silent") else bool(vt)
         res[k] = {"start": s["start"], "dur": s["dur"], "file": "/" + s.get("file", "").replace("\\", "/"),
                   "silent": bool(s.get("silent")), "stale": stale}

@@ -1,6 +1,7 @@
 // Review tool: live player + timecoded notes with pins, saved to review/notes.{json,md}
 (() => {
   const $ = id => document.getElementById(id);
+  { const wr = $('wrap'); if (wr) { wr.style.aspectRatio = `${W} / ${H}`; if (W > H) Object.assign(wr.style, { height: 'auto', width: '100%', maxHeight: '100%' }); } }   // рамка кадра по формату проекта (src/format.js): 16:9 — по ширине
   const FPS = 60;
   const fmt = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
   const SEG_COLORS = ['#6d28d9', '#c2410c', '#be185d', '#1d4ed8', '#0e7490', '#a16207'];
@@ -329,16 +330,16 @@
   async function shot(n) {
     const keepT = T;
     renderFrame(n.t);
-    const c = document.createElement('canvas'); c.width = 540; c.height = 960;
+    const c = document.createElement('canvas'); c.width = W / 2; c.height = H / 2;   // половина кадра проекта (9:16 или 16:9)
     const g = c.getContext('2d');
-    g.drawImage($('c'), 0, 0, 540, 960);
+    g.drawImage($('c'), 0, 0, W / 2, H / 2);
     if (n.x != null) {
       g.lineWidth = 6; g.strokeStyle = '#fff'; g.fillStyle = '#ff3fd0';
       g.beginPath(); g.arc(n.x / 2, n.y / 2, 22, 0, TAU); g.fill(); g.stroke();
       g.fillStyle = '#fff'; g.font = '800 22px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
       g.fillText(n.id, n.x / 2, n.y / 2 + 1);
     }
-    g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(0, 0, 540, 36);
+    g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(0, 0, W / 2, 36);
     g.fillStyle = '#ffd23f'; g.font = '700 20px sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
     g.fillText(`#${n.id} · ${fmt(n.t)} · ${n.scene}. ${n.sceneName}`, 10, 18);
     T = keepT; draw();
