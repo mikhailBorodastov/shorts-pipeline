@@ -18,13 +18,14 @@ const Workspace = {
     if (d.project) { Montage.load(d); MTA.mute(WS.muted); MTA.warm(d); }
     const I = MT.info[d.id] || {}, M = Montage.M(d);
     // ролик Studio: при первом открытии окна — пересобрать файлы проекта (свежий движок и превью без своей полосы управления — &clean)
-    if (d.project && I.owned && (M.units || []).length && !(MT.autogen || (MT.autogen = {}))[d.id]) {   // пустой монтаж не собираем — превью без сцен падает MT.autogen[d.id] = true; I.generated = true; setTimeout(() => Montage.regen(), 0); }
+    // пустой монтаж не собираем — превью без сцен падает
+    if (d.project && I.owned && (M.units || []).length && !(MT.autogen || (MT.autogen = {}))[d.id]) { MT.autogen[d.id] = true; I.generated = true; setTimeout(() => Montage.regen(), 0); }
     requestAnimationFrame(() => { this.fit(); this.pins(); });
     return h('div.ws', { class: d.mode === 'long' ? 'long' : 'short' },
       this.head(d, key),
       h('div.ws-main',
         h('aside.ws-left', this.left(d, M, I)),
-        h('section.ws-center',
+        App.route.tab === 'pre' ? h('section.ws-center', Plan.preWs(d, key, App.route.sub)) : h('section.ws-center',
           h('div.ws-stage', h('div.mt-prevslot.ws-slot'), this.overlay(d, M, I)),
           this.transport(d, M),
           h('div.ws-tl',
@@ -85,7 +86,8 @@ const Workspace = {
       { label: 'Озвучка', sub: words.length ? '' : 'черновой голос или своя запись', st: words.length ? 'done' : '', act: words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone },
       { label: 'Тайминги', sub: words.length ? `${words.length} слов` : '', st: words.length ? 'done' : '', act: words.length ? 'Повторить' : 'Запустить', btn: nav('voice'), off: !scriptDone,
         title: 'Слова голоса по времени: из них субтитры и привязка сцен к словам' },
-      { label: 'Препродакшен', sub: els.length ? `${ok} из ${els.length} утверждено` : '', st: els.length && ok === els.length ? 'done' : els.length ? 'part' : '', act: 'Открыть', btn: nav('pre') },
+      { label: 'Препродакшен', sub: els.length ? `${ok} из ${els.length} утверждено` : '', st: els.length && ok === els.length ? 'done' : els.length ? 'part' : '', act: App.route.tab === 'pre' ? 'Открыт' : 'Открыть',
+        btn: () => go(`#/v/${id}/pre`), off: App.route.tab === 'pre' && !App.route.sub },
       { label: 'Синхронизация', sub: (d.sync || {}).at ? 'шаги, звуки, анимации' : '', st: (d.sync || {}).at ? 'done' : '', act: (d.sync || {}).at ? 'Повторить' : 'Запустить', off: !has || !(M.units || []).length,
         btn: () => agent(`🔊 Шаг «Синхронизация»: соедини ассеты препродакшена со сценами и голосом — шаги персонажей к касаниям ног, звуки к действиям и маркерам сцен, анимации, которые персонажи умеют, там, где их требует сценарий или «Для финала», музыку под смысловые блоки (montage: music, приглушить под голос). Потом montage gen и проверь кадрами (montage snap). В конце — список «сцена · момент · что привязал». Когда закончишь: set plan:${id} sync '{"at": ${Date.now()}}'`, 'montage'),
         title: 'Claude привязывает звуки и анимации к действиям в сценах' },

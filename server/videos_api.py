@@ -319,6 +319,98 @@ def open_file(vid, rel):
     return {"ok": True, "path": f}
 
 
+# ---------------------------------------------------------------- 🎞 B-roll (S12.6)
+VIDEO_EXT = (".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi")
+
+
+def _ts(x):
+    """'1:23.5' | '83.5' -> секунды (или None)."""
+    if x in (None, ""):
+        return None
+    s = 0.0
+    for part in str(x).strip().split(":"):
+        s = s * 60 + float(part.replace(",", "."))
+    return s
+
+
+def broll_upload(A, vid, el, name, data):
+    """Файл с компьютера -> <видео>/files/broll_<el>_src<ext>; путь — источником для «Взять кусок»."""
+    vdir = P.video(vid)
+    ext = os.path.splitext(name or "")[1].lower()
+    if not vdir or ext not in VIDEO_EXT:
+        raise ValueError("нужно видео: " + " ".join(VIDEO_EXT))
+    os.makedirs(os.path.join(vdir, "files"), exist_ok=True)
+    f = os.path.join(vdir, "files", f"broll_{re.sub(r'[^\w-]', '', el)}_src{ext}")
+    with open(f, "wb") as fh:
+        fh.write(data)
+    return {"src": f, "name": name}
+
+
+def run_broll(A, job):
+    """Кусок видео (ссылка YouTube и др. через yt-dlp — до 1080p; файл — ffmpeg) -> files/broll_<el>.mp4 + кадр-превью; в элемент — broll{}."""
+    import json as _j
+    vid, pr = job.key[5:], job.params
+    el = re.sub(r"[^\w-]", "", pr.get("el") or "")
+    vdir = P.video(vid)
+    src = (pr.get("src") or "").strip()
+    if not vdir or not el or not src:
+        raise ValueError("нужны видео, элемент и источник")
+    t0, t1 = _ts(pr.get("from")), _ts(pr.get("to"))
+    if t0 is not None and t1 is not None and t1 <= t0:
+        raise ValueError("«по» должно быть позже «с»")
+    cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    tmp, cut = None, True
+    if re.match(r"^https?://", src):
+        import tempfile, sys as _s
+        td = tempfile.mkdtemp(prefix="broll_")
+        out = os.path.join(td, "src.%(ext)s")
+        cmd = [_s.executable, "-m", "yt_dlp", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b", "--merge-output-format", "mp4", "--no-playlist", "--no-part", "-o", out]
+        if t0 is not None or t1 is not None:
+            cmd += ["--download-sections", f"*{t0 or 0}-{t1 if t1 is not None else 'inf'}", "--force-keyframes-at-cuts"]
+        job.summary = "yt-dlp: качаю кусок…"
+        r = subprocess.run(cmd + [src], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800, creationflags=cf)
+        fs = [f for f in glob.glob(os.path.join(td, "src.*")) if not f.endswith(".part")]
+        if r.returncode != 0 or not fs:
+            raise RuntimeError("yt-dlp не скачал: " + (r.stderr or r.stdout)[-500:])
+        tmp, cut = fs[0], False                          # кусок уже вырезан
+    elif os.path.isfile(src):
+        tmp = src
+    else:
+        raise ValueError("нужна ссылка или файл с компьютера")
+    dst = os.path.join(vdir, "files", f"broll_{el}.mp4")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    job.summary = "ffmpeg: готовлю mp4…"
+    cmd = ["ffmpeg", "-v", "error", "-y"]
+    if cut and t0 is not None:
+        cmd += ["-ss", f"{t0:.3f}"]
+    cmd += ["-i", tmp]
+    if cut and t1 is not None:
+        cmd += ["-t", f"{t1 - (t0 or 0):.3f}"]
+    cmd += ["-vf", "scale='min(1920,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", dst]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800, creationflags=cf)
+    if r.returncode != 0 or not os.path.isfile(dst):
+        raise RuntimeError("ffmpeg: " + (r.stderr or r.stdout)[-400:])
+    pr2 = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=width,height", "-of", "json", dst], capture_output=True, text=True, creationflags=cf)
+    info = _j.loads(pr2.stdout or "{}")
+    dur = float((info.get("format") or {}).get("duration") or 0)
+    st = next((s for s in info.get("streams") or [] if s.get("width")), {})
+    thumb = os.path.join(vdir, "files", f"broll_{el}.jpg")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{dur / 2:.2f}", "-i", dst, "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", thumb], capture_output=True, creationflags=cf)
+    title = ""
+    if re.match(r"^https?://", src):
+        try:
+            from media_api import probe_title
+            title = probe_title(src) or ""
+        except Exception:
+            pass
+    item = {"src": src if re.match(r"^https?://", src) else os.path.basename(src), "from": pr.get("from") or "", "to": pr.get("to") or "",
+            "file": f"files/{vid}/broll_{el}.mp4", "thumb": f"files/{vid}/broll_{el}.jpg" if os.path.isfile(thumb) else "",
+            "dur": round(dur, 2), "w": st.get("width"), "h": st.get("height"), "title": title, "owner": pr.get("owner") or "", "at": int(time.time() * 1000)}
+    A.apply_ops(job.key, [{"op": "set", "path": ["elements", el, "broll"], "value": item}])
+    job.result = item
+    job.summary = f"🎞 B-roll готов: {dur:.1f} с" + (f", {st.get('width')}×{st.get('height')}" if st.get("width") else "")
+
+
 # ---------------------------------------------------------------- HTTP
 def handle_get(A, h, p, q):
     if p == "/api/videos/extra":
@@ -353,6 +445,9 @@ def handle_post(A, h, p, q, body):
         h._json(script_restore(body.get("id", ""), body.get("v", ""))); return True
     if p == "/api/videos/create":
         h._json(create(A, body)); return True
+    if p == "/api/videos/broll":                       # S12.6: B-roll элемента — кусок видео (задача brollfetch)
+        j = A.start_job("brollfetch", body.get("key", ""), "broll:" + (body.get("el") or ""), {k: body.get(k) for k in ("el", "src", "from", "to", "owner")})
+        h._json({"job": j.info()}); return True
     if p == "/api/videos/snap":
         h._json(snap(A, body.get("id", ""), body.get("t", 0))); return True
     if p == "/api/videos/brief":

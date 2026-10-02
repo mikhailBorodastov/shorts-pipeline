@@ -44,6 +44,7 @@ const App = {
     const r = this.route;
     Shell.remember(r);                                 // «Редактор» в боковой панели — последнее открытое видео
     if (r.page === 'p' && r.tab === 'montage') { go('#/v/' + r.id); return; }   // S12.3: монтаж — это окно видео
+    if (r.page === 'p' && r.tab === 'pre' && App.plans.some(p => p.id === r.id)) { go(`#/v/${r.id}/pre` + (r.sub ? '/' + r.sub : '') + (r.sub2 ? '/' + r.sub2 : '')); return; }   // S12.6: препродакшен — в окне видео (служебные видео мастерской — по-старому)
     if (r.page !== 'v') Workspace.leave();
     document.body.classList.toggle('ws-mode', r.page === 'v');
     const need = { p: ['plan:' + r.id], v: ['plan:' + r.id] }[r.page] || [];
@@ -122,7 +123,7 @@ const App = {
 const StageEditor = {
   el: null, frame: null,
   follow(r) {
-    const want = r.page === 'p' && r.tab === 'pre' && r.sub && r.sub2 === 'stage' ? `${r.id}/${r.sub}` : null;
+    const want = (r.page === 'p' || r.page === 'v') && r.tab === 'pre' && r.sub && r.sub2 === 'stage' ? `${r.id}/${r.sub}` : null;
     if (want === this.el) return;
     this.close();
     if (!want) return;
@@ -170,7 +171,7 @@ addEventListener('message', ev => {
     return;
   }
   if (ev.data.ws) { const w = ev.data.ws; go(w.lib && w.service ? `#/lib/item/${w.lib.id}` : `#/p/${r.id}/pre/${w.asset}`); return; }   // 🛠 мастерская (S10)
-  go(`#/p/${r.id}/pre/${r.sub}`);
+  go(`#/${r.page === 'v' ? 'v' : 'p'}/${r.id}/pre/${r.sub}`);
   Store.load('plan:' + r.id).then(() => App.render()).catch(() => {});
 });
 

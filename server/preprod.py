@@ -25,9 +25,9 @@ import paths as P  # где что лежит (Claude Studio)
 import json, os, re, shutil, subprocess, wave
 import numpy as np
 
-KINDS = {"char": "Персонажи", "prop": "Пропсы и реквизит", "scene": "Сцены", "sound": "Звуки"}   # order of work: scenes after what stands in them
-ONE = {"char": "персонаж", "prop": "пропс", "scene": "сцена", "sound": "звук"}
-ICON = {"char": "🦔", "prop": "🧸", "scene": "🏠", "sound": "🔊"}
+KINDS = {"char": "Персонажи", "prop": "Пропсы и реквизит", "scene": "Сцены", "sound": "Звуки", "vfx": "Визуальные эффекты", "broll": "B-roll (реальные кадры)"}   # S12.6: эффекты, B-roll   # order of work: scenes after what stands in them
+ONE = {"char": "персонаж", "prop": "пропс", "scene": "сцена", "sound": "звук", "vfx": "эффект", "broll": "B-roll"}
+ICON = {"char": "🦔", "prop": "🧸", "scene": "🏠", "sound": "🔊", "vfx": "✨", "broll": "🎞"}
 STATUS = {"ok": "✓ утверждён", "": "предложен (не проверен автором)", "drop": "не нужен"}
 MENTION = re.compile(r"@\[([^\]\n]{1,80})\]")
 BASE = "refs/препродакшен"
@@ -400,6 +400,10 @@ def export(doc, data, dst, toolkit):
                                   "kind": a.get("kind"), "fmt": a.get("fmt"), "file": main, "dir": base + "/", "preview": prev, "model": is_model(a),
                                   "license": a.get("license", ""), "attr": bool(a.get("attr")), "author": a.get("author", ""),
                                   "source": SRC_NAMES.get(a.get("src"), a.get("src", "")), "page": a.get("page", ""), "why": a.get("why", ""), "note": a.get("note", "")})
+        br = e.get("broll") or {}                        # S12.6: B-roll — сам клип рядом (монтажу и Claude)
+        if br.get("file") and os.path.isfile(P.resolve(br["file"])):
+            rec["broll"] = {"file": put(br["file"], f"{folder}/clip.mp4"), "dur": br.get("dur"), "src": br.get("src", ""), "from": br.get("from", ""), "to": br.get("to", ""),
+                            "title": br.get("title", ""), "owner": br.get("owner", "")}
         r = el_render(e)
         if r:
             png = paths[(eid, "render", r["img"])] = put(r["img"], f"{folder}/v{r.get('v')}.png")

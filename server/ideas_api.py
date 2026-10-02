@@ -96,7 +96,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts", "brollfetch")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -913,6 +913,8 @@ def _run_job(job):
             chnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("voicesplit", "voicetts"):          # 🎙 голос ролика (S11): нарезка записи / черновой голос
             vcapi().run_job(sys.modules[__name__], job)
+        elif job.kind == "brollfetch":                         # 🎞 B-roll элемента (S12.6): кусок видео -> files/<id>/broll_<el>.mp4
+            vdapi().run_broll(sys.modules[__name__], job)
         elif job.kind == "mediaadd":                           # 🎞 видео кадрами для экранов (S10.3)
             mdapi().run_job(sys.modules[__name__], job)
         elif job.kind == "montagebuild":                       # монтаж (S6): генератор + build.sh
@@ -1430,6 +1432,10 @@ def handle_post(h):
     if not trusted(h, post=True):
         h.send_error(403); return True
     try:
+        if p == "/api/videos/brollup":                 # S12.6: файл B-roll с компьютера (сырые байты) -> files видео
+            if int(h.headers.get("Content-Length", 0)) > 2 * 1024 * 2**20:
+                h._json({"error": "файл больше 2 ГБ"}, 413); return True
+            h._json(vdapi().broll_upload(sys.modules[__name__], q.get("id", [""])[0], q.get("el", [""])[0], q.get("name", ["clip.mp4"])[0], h._body())); return True
         if p == "/api/videos/voice":                   # S12: озвучка из поп-апа «Новое видео» (сырые байты) -> <видео>/refs/voice/
             if int(h.headers.get("Content-Length", 0)) > 600 * 2**20:
                 h._json({"error": "запись больше 600 МБ — сожми в mp3 / m4a"}, 413); return True

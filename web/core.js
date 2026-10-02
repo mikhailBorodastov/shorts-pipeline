@@ -182,7 +182,7 @@ const Claude = {
   on: false, jobs: {}, cbs: {},
   running(key, scope) { return Object.values(this.jobs).find(j => j.status === 'running' && j.key === key && j.scope === scope); },
   async run({ action, key, scope = action, params = {}, onResult, confirm: q }) {
-    const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch', montagebuild: '/api/montage/build' }[action];
+    const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch', montagebuild: '/api/montage/build', brollfetch: '/api/videos/broll' }[action];
     if (!this.on && !local) return UI.toast('Claude Code не найден — кнопки ✨ не работают', 'err');
     if (q && !confirm(q)) return;
     Unread.ask();                                     // browser notifications: asked once, on a click (browsers require a gesture)

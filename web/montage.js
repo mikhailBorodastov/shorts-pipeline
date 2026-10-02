@@ -491,7 +491,7 @@ const MTA = {
 const MontagePreview = {
   host: null, frame: null, id: null, url: null,
   follow(r) {
-    const d = (r.page === 'p' && r.tab === 'montage') || r.page === 'v' ? Store.get('plan:' + r.id) : null;   // S12: и окно видео
+    const d = (r.page === 'p' && r.tab === 'montage') || (r.page === 'v' && !r.tab) ? Store.get('plan:' + r.id) : null;   // S12: и окно видео (не препродакшен)
     const want = d && d.project ? d.id + (r.page === 'v' ? '|v' : '') : null;
     if (want === this.id) return this.place();
     this.close();

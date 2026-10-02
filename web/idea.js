@@ -365,14 +365,14 @@ Object.assign(Plan, {
   elCard(d, key, e) {
     const r = elRender(e), s = elSound(e), K = KIND(e.kind), nfx = fxCount((e.fx || {}).main), nmix = elMix(e).length, nfin = (e.final || []).filter(f => (f.text || '').trim()).length;
     const busy = Claude.running(key, 'element:' + e.id) || Claude.running(key, 'sound:' + e.id);
-    const pic = r ? r.img : ((e.refs || []).find(x => x.img) || {}).img;
+    const pic = r ? r.img : e.kind === 'broll' && e.broll && e.broll.thumb ? e.broll.thumb : ((e.refs || []).find(x => x.img) || {}).img;
     const open = () => go(`#/p/${d.id}/pre/${e.id}`);
     return h('div.elcard', { class: e.status || 'new', title: 'Открыть', tabindex: 0, role: 'link', 'aria-label': `${K.one}: ${e.name || 'без названия'}, ${{ ok: 'утверждён', drop: 'не нужен' }[e.status] || 'предложен'}`,
       onclick: ev => { if (!ev.target.closest('audio,button,a')) open(); },
       onkeydown: ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target === ev.currentTarget) { ev.preventDefault(); open(); } } },
       e.kind !== 'sound'
         ? h('div.elpic', { class: pic ? '' : 'noimg' }, pic ? h('img', { src: '/' + pic, alt: '' }) : h('span.elph', K.icon),
-          busy && h('span.elbusy', h('span.spin'), ' рисую…'), !r && pic && h('span.eltag', 'референс'))
+          busy && h('span.elbusy', h('span.spin'), ' рисую…'), e.kind === 'broll' && e.broll ? h('span.eltag', `🎞 ${(e.broll.dur || 0).toFixed(1)} с`) : !r && pic && h('span.eltag', 'референс'))
         : h('div.elsnd', s ? h('audio', { controls: true, preload: 'none', src: '/' + s.file })
           : h('span.dim.small', busy ? '⏳ ищу звук…' : (e.sounds || []).length ? `кандидатов: ${e.sounds.length}, не выбран` : 'звук не выбран')),
       h('div.elbody', h('b', e.name || '(без названия)'), e.desc && h('div.eldesc', e.desc),
@@ -453,8 +453,8 @@ Object.assign(Plan, {
           Plan.linksBar(d, e),
           h('div.row', { style: { marginTop: '10px' } }, e.by === 'claude' && h('span.dim.small', '🤖 предложил Claude'), h('span.sp'),
             h('button.icon.del', { title: 'Удалить элемент', onclick: () => { if (confirm(`Удалить «${e.name}»?`)) { Store.del(key, ['elements'], e.id, false); go(`#/p/${d.id}/pre`); } } }, '🗑 удалить'))),
-          e.kind !== 'sound' && Plan.assetBox(d, key, e)),
-        h('div.elright', h('section.card.elwork', e.kind === 'sound' ? Plan.elSound(d, key, e) : Plan.elDraw(d, key, e)), Plan.finalBox(d, key, e))),
+          e.kind !== 'sound' && e.kind !== 'broll' && Plan.assetBox(d, key, e)),
+        h('div.elright', h('section.card.elwork', e.kind === 'sound' ? Plan.elSound(d, key, e) : e.kind === 'broll' ? Plan.elBroll(d, key, e) : Plan.elDraw(d, key, e)), Plan.finalBox(d, key, e))),
     ];
   },
 
