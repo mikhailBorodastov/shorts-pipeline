@@ -48,7 +48,7 @@ body.side-mini { grid-template-columns: 60px minmax(0, 1fr); }
 .side-chan select { width: 100%; border-radius: var(--r); padding: 7px 9px; }
 .side-search { width: 100%; justify-content: flex-start; gap: 8px; background: var(--field); border-color: var(--line); border-radius: var(--r); color: var(--text-mute); padding: 7px 9px; }
 .side-search:hover { background: var(--panel); color: var(--dim); }
-.side-search .lbl:first-of-type { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-search .ss-t { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .side-search kbd { flex: none; }
 .side-nav { display: flex; flex-direction: column; gap: 1px; }
 .side-nav .nav { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-sm); color: var(--dim); text-decoration: none; font-weight: 500; }

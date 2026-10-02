@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 20
+API_VERSION = 21
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -77,6 +77,7 @@ import ws_api  # noqa: E402  мастерская ассета (S10): служе
 import media_api  # noqa: E402  медиа библиотеки (S10.3): видео кадрами для живых экранов
 import voice_api  # noqa: E402  голос ролика (S11): запись диктора -> нарезка по сценам, черновой голос
 import talk_api  # noqa: E402  звериная речь (Animalese): голоса канала, послушать, фраза — звуком препродакшена
+import videos_api  # noqa: E402  S12: страница «Видео» (карточки, обложки, папка) и поп-ап «Новое видео»
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -165,6 +166,10 @@ def wsapi():
 
 def mdapi():
     return _fresh(media_api, "media")
+
+
+def vdapi():
+    return _fresh(videos_api, "videos")
 
 
 def vcapi():
@@ -492,8 +497,10 @@ def plan_md(d, img=lambda p: p, where=None, folders=None):
     ideas, beats, titles = d.get("ideas", []), d.get("beats", []), d.get("titles", [])
     idea_flow = is_idea(d)
     L = [f"# Штурм: {d.get('name', '')}",
-         f"{mode['icon']} {mode['label']} ({mode['len']}) · жанр: {next((g['label'] for g in R.get('genres', []) if g['key'] == (d.get('genre') or 'news')), 'новость')}"
-         f" · статус: {STATUS.get(d.get('status'), d.get('status'))} · id `{d['id']}`"
+         f"{mode['icon']} {mode['label']} ({mode['len']}) · "
+         + (f"подача: {next((x['label'] for x in R.get('deliveries', []) if x['key'] == (d.get('brief') or {}).get('delivery')), 'авто')}"   # S12: бриф поп-апа
+            if d.get("brief") else f"жанр: {next((g['label'] for g in R.get('genres', []) if g['key'] == (d.get('genre') or 'news')), 'новость')}")
+         + f" · статус: {STATUS.get(d.get('status'), d.get('status'))} · id `{d['id']}`"
          + (f" · проект: «{d['project']}»" if d.get("project") else "") + (" · путь: есть идея → препродакшен" if idea_flow else ""),
          f"Обновлён {time.strftime('%Y-%m-%d %H:%M', time.localtime(d.get('updated', 0) / 1000))}. "
          f"Сделан в сервисе «Штурм идей» по методике «Мастер-планера». Пути к картинкам — от папки _ideas (в проекте — refs/штурм/).",
@@ -1323,6 +1330,8 @@ def handle_get(h):
         except Exception as e:
             h._json({"error": str(e) if isinstance(e, ValueError) else f"поиск не ответил: {e}"}, 502)
         return True
+    if p.startswith("/api/videos/") and vdapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
@@ -1421,6 +1430,10 @@ def handle_post(h):
     if not trusted(h, post=True):
         h.send_error(403); return True
     try:
+        if p == "/api/videos/voice":                   # S12: озвучка из поп-апа «Новое видео» (сырые байты) -> <видео>/refs/voice/
+            if int(h.headers.get("Content-Length", 0)) > 600 * 2**20:
+                h._json({"error": "запись больше 600 МБ — сожми в mp3 / m4a"}, 413); return True
+            h._json(vdapi().save_voice(sys.modules[__name__], q.get("id", [""])[0], q.get("name", ["voice.wav"])[0], h._body())); return True
         if p == "/api/voice/upload":                   # 🎙 запись диктора целиком (сырые байты) -> refs/voice/
             size = int(h.headers.get("Content-Length", 0))
             if size > 600 * 2**20:
@@ -1445,6 +1458,8 @@ def handle_post(h):
             if not isinstance(ops, list):
                 h._json({"error": "нет ops"}, 400); return True
             h._json(apply_ops(body.get("key", ""), ops)); return True
+        if p.startswith("/api/videos/") and vdapi().handle_post(sys.modules[__name__], h, p, q, body):
+            return True
         if p == "/api/new":
             d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))
             h._json({"id": d["id"], "flow": "idea"}); return True

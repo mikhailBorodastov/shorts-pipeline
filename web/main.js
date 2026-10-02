@@ -67,6 +67,7 @@ const App = {
     try { page = this.page(); } catch (e) { console.error(e); page = h('div.card.empty', '⚠ Ошибка отрисовки: ' + e.message); }
     $('#view').replaceChildren(page);
     $('#side').replaceChildren(...[Shell.side()].flat(Infinity).filter(x => x instanceof Node));   // S12: новая боковая панель (ui/shell.js)
+    NewVideo.refresh();                               // поп-ап «Новое видео» (шаг 2: вопросы Claude) — до восстановления фокуса
     this.shown = this.shownSig();
     main.scrollTop = opts.top ? 0 : top;
     if (fk) {
@@ -103,7 +104,7 @@ const App = {
     if (r.page === 'help') return Pages.help();
     const soon = Shell.page(r);                        // S12: Память, Обложки, Рендеры — разделы следующих частей
     if (soon) return soon;
-    return Pages.home();
+    return Videos.page();                              // S12.2: «Видео» — сетка карточек (ui/videos.js)
   },
 };
 

@@ -20,7 +20,7 @@ const Shell = {
         sel([...cs.map(c => ({ value: c.id, label: `${c.icon || '📺'} ${c.name}` })), { value: '__new', label: '+ новый канал…' }], C.id,
           v => v === '__new' ? go('#/newchan') : Pages.useChannel(v), { class: 'box', 'aria-label': 'Канал' })),
       h('button.side-search', { onclick: () => Palette.open(), title: 'Поиск по каналу и команды (Ctrl K)' },
-        Icon('search', 15), h('span.lbl', 'Поиск или команда…'), h('kbd.lbl', 'Ctrl K')),
+        Icon('search', 15), h('span.lbl.ss-t', 'Поиск или команда…'), h('kbd.lbl', 'Ctrl K')),
       h('nav.side-nav',
         item('#/lib', 'library', 'Библиотека', r.page === 'lib'),
         item('#/videos', 'grid', 'Видео', r.page === 'home' || r.page === 'videos', h('span.cnt.lbl', String(App.plans.filter(p => p.status !== 'archived').length || ''))),
@@ -84,8 +84,7 @@ const Palette = {
     nav('Настройки', '#/settings', 'settings', 'ключи модели');
     nav('Справочник', '#/help', 'book', 'карта превью');
     const cmd = (label, icon, run, kw = '') => r.push({ group: 'Команды', label, icon, kw, run });
-    cmd('Новое видео (шортс 9:16)', 'plus', () => Pages.newPlan('short'), 'создать short');
-    cmd('Новое длинное видео (16:9)', 'plus', () => Pages.newPlan('long'), 'создать long');
+    cmd('Новое видео', 'plus', () => NewVideo.open(), 'создать short long шортс длинное');
     for (const c of App.info.channels || []) if (c.id !== C.id) cmd('Канал: ' + c.name, 'tv', () => Pages.useChannel(c.id), 'переключить сменить');
     cmd('Новый канал…', 'tv', () => go('#/newchan'));
     for (const p of App.plans.filter(p => p.status !== 'archived'))

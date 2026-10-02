@@ -1,4 +1,4 @@
-// Claude Studio — экраны вне одного видео: проект-канал (видео + библиотека), библиотека, ⚙ стиль, справочник. Боковая панель — ui/shell.js (S12).
+// Claude Studio — экраны вне одного видео: библиотека, ⚙ стиль, справочник. Боковая панель — ui/shell.js, «Видео» — ui/videos.js (S12).
 'use strict';
 
 const STAGES = [['idea', '💡', 'Идея'], ['qa', '❓', 'Вопросы'], ['title', '🎯', 'Название'], ['script', '📝', 'Сценарий'], ['pre', '🎬', 'Препродакшен'],
@@ -21,34 +21,6 @@ const Pages = {
       App.focusName = true;                           // rename right away (see App.render)
       go(`#/p/${r.id}/idea`);
     } catch (e) { UI.toast(e.message, 'err'); }
-  },
-
-  // ---------------- проект-канал: видео слева, библиотека справа ----------------
-  home() {
-    const C = App.info.channel || {}, ps = App.plans, showArch = Local.get('arch') === '1';
-    const group = (st, label) => { const list = ps.filter(p => p.status === st); return list.length > 0 && [h('div.sec', label + ` · ${list.length}`), list.map(Pages.card)]; };
-    if (!LIB.items && !LIB.busy) Pages.loadLib();
-    return h('div.project',
-      h('div.phead', h('h1', `${C.icon || '📺'} ${C.name || 'Claude Studio'}`), h('span.sp'),
-        h('a.btn', { href: '#/style', title: 'Стиль канала: стайл-гайд, по которому пишутся сценарии и рисуется всё' }, '⚙ стиль'),
-        h('button', { onclick: () => Pages.newPlan('long'), title: 'Длинное видео 16:9 на 8–15 минут' }, Icon('wide', 15), 'Длинное'),
-        h('button.primary', { onclick: () => Pages.newPlan('short') }, Icon('plus', 15), 'Новое видео')),
-      C.about && h('p.dim', C.about),
-      h('div.cols',
-        h('section.card.videos',
-          h('div.card-head', h('h3', '🎬 Видео'), h('span.dim', `${ps.length}`)),
-          ps.length ? [group('prod', '🛠 В работе'), group('draft', '💡 Черновики'), group('out', '✅ Вышли'), showArch && group('archived', '📦 Архив'),
-            ps.some(p => p.status === 'archived') && h('p', h('a', { href: 'javascript:void 0', onclick: () => { Local.set('arch', showArch ? '0' : '1'); App.render(); } }, showArch ? 'Скрыть архив' : 'Показать архив'))]
-            : h('div.empty', 'Видео пока нет. «+ видео» — идея, вопросы Claude, название, препродакшен…')),
-        h('section.card.libside', Pages.libPanel(true))));
-  },
-
-  card(p) {
-    const M = REF.modes[p.mode] || REF.modes.short, st = STAGE_OF[p.stage] || STAGE_OF.idea;
-    return h('a.vrow', { href: `#/p/${p.id}/${p.stage || 'idea'}` },
-      h('span.mode', { class: p.mode }, M.icon), h('span.t.grow', p.name, dot(Unread.has(p.id))),
-      h('span.stage', { title: 'Этап, на котором остановились' }, st.icon + ' ' + st.label),
-      h('span.dim.small', STATUS_L[p.status] || p.status), h('span.dim.small', fmtDate(p.updated)));
   },
 
   // ---------------- 📚 библиотека канала ----------------
