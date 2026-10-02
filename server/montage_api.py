@@ -643,6 +643,10 @@ def auto_layout(A, vid):
 
 
 def handle_get(A, h, p, q):
+    if p == "/api/montage/out":                              # готовый ролик: имя и время (страница монтажа ловит новый mp4 сразу, кто бы его ни собрал)
+        pd = vdir((q.get("video") or [""])[0])
+        outs = [x for x in sorted(glob.glob(os.path.join(pd or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")]
+        h._json({"file": os.path.basename(outs[-1]) if outs else "", "mtime": int(os.path.getmtime(outs[-1]) * 1000) if outs else 0}); return True
     if p == "/api/montage/audiomap":                         # S11: живой звук монтажа
         h._json(audiomap(A, (q.get("video") or [""])[0])); return True
     if p == "/api/montage/file":                             # файл проекта ролика (голос по секциям, звуки монтажа file:) — только внутри папки видео
