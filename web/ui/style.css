@@ -1,0 +1,30 @@
+/* S12.10 — «Стиль»: Обзор, Подачи, Визуалы; библиотека в новом виде */
+.st-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.st-item { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r2, 10px); background: var(--field); }
+.st-item > .row { gap: 10px; align-items: center; }
+.st-name { font-weight: 600; max-width: 320px; }
+.st-item textarea { min-height: 54px; }
+.st-refs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.st-ref { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.st-ref img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: zoom-in; }
+.st-ref .st-link { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; aspect-ratio: 1; border-radius: 6px;
+  background: var(--field); color: var(--text-mute); font-size: 12px; text-align: center; padding: 8px; word-break: break-all; text-decoration: none; }
+.st-ref .st-link:hover { color: var(--text); }
+.st-ref input { font-size: 12px; padding: 4px 6px; }
+.st-ref .del { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,.6); opacity: 0; }
+.st-ref:hover .del { opacity: 1; }
+.st-ref.add { justify-content: center; gap: 8px; border-style: dashed; background: transparent; min-height: 150px; }
+.st-ref.add button { display: flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* библиотека — сетка */
+.lib-tabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 4px 0 14px; }
+.lib-tabs button { border-radius: 999px; padding: 4px 12px; }
+.lib-tabs button.sel { background: var(--primary-bg); color: var(--primary-fg); border-color: transparent; }
+.lib-tabs .cnt { opacity: .6; margin-left: 4px; font-size: 12px; }
+.lib-tabs input { margin-left: auto; width: 220px; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.lib-tile { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; cursor: pointer; text-decoration: none; color: inherit; }
+.lib-tile:hover { border-color: var(--line-strong); }
+.lib-tile .pv { aspect-ratio: 1; background: var(--field) center/contain no-repeat; display: flex; align-items: center; justify-content: center; color: var(--text-mute); }
+.lib-tile .nm { padding: 8px 10px 2px; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-tile .mt { padding: 0 10px 9px; font-size: 12px; color: var(--text-mute); }

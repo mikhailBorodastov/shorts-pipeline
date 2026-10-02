@@ -444,6 +444,14 @@ def handle_post(A, h, p, body):
             import io
             Image.open(io.BytesIO(data)).convert("RGB").save(os.path.join(c["dir"], "style", "captions-ref.png"))
             h._json({"ok": True}); return True
+        if body.get("kind") == "ref":                       # S12.10: картинка-референс канала / визуала -> style/refs/
+            import uuid
+            ext = os.path.splitext(body.get("name") or "")[1].lower()
+            ext = ext if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif") else ".png"
+            os.makedirs(os.path.join(c["dir"], "style", "refs"), exist_ok=True)
+            fn = "r" + uuid.uuid4().hex[:8] + ext
+            open(os.path.join(c["dir"], "style", "refs", fn), "wb").write(data)
+            h._json({"f": "style/refs/" + fn}); return True
         raise ValueError("что загружаем?")
     if p == "/api/channel/stylefile":
         h._json({"path": save_style_file(A, cid, body.get("kind"), body.get("value"))}); return True

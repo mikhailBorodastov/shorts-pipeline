@@ -91,7 +91,10 @@ const NewVideo = {
 
   open() {
     this.step = 1; this.id = null; this.err = ''; this.voice = null; this.sending = false;
-    this.f = { name: '', mode: 'short', delivery: 'auto', look: (App.info.channel || {}).defaults?.engine === '2d' ? 'paper' : 'diorama', len: '1:00', topic: '', script: '', direction: '', refs: '' };
+    const ck = 'channel:' + (App.info.channel || {}).id;
+    if (!Store.get(ck)) Store.load(ck).then(() => this.el && this.step === 1 && this.draw()).catch(() => {});   // подачи и визуалы канала
+    const LK = Styles.looks(), eng = ((App.info.channel || {}).defaults || {}).engine || '3d';
+    this.f = { name: '', mode: 'short', delivery: (Styles.deliveries()[0] || {}).key || 'auto', look: (LK.find(x => (x.engine || '2d') === eng) || LK[0] || {}).key || 'paper', len: '1:00', topic: '', script: '', direction: '', refs: '' };
     this.el = h('div.nv', { onmousedown: e => { if (e.target === this.el) this.close(); } });
     document.body.append(this.el);
     this.esc = e => { if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('.mention')) this.close(); };
@@ -121,7 +124,7 @@ const NewVideo = {
 
   step1() {
     const f = this.f, R = REF, words = Math.round(this.secs(f.len) * 2.65);
-    const dl = (R.deliveries || []).find(x => x.key === f.delivery), lk = (R.looks || []).find(x => x.key === f.look);
+    const DL = Styles.deliveries(), LK = Styles.looks(), dl = DL.find(x => x.key === f.delivery), lk = LK.find(x => x.key === f.look);
     const pick = (k, list) => sel(list.map(x => ({ value: x.key, label: x.label })), f[k], v => { f[k] = v; this.draw(); }, { class: 'box' });
     const voice = h('label.nv-drop', { class: this.voice ? 'has' : '',
       ondragover: e => { e.preventDefault(); e.currentTarget.classList.add('over'); }, ondragleave: e => e.currentTarget.classList.remove('over'),
@@ -141,8 +144,8 @@ const NewVideo = {
           this.field('Ориентировочная длина', null, this.inp('len', { placeholder: '1:00', class: 'len', oninput: () => { const w = this.el.querySelector('.nv-words'); if (w) w.textContent = `≈ ${Math.round(this.secs(f.len) * 2.65)} слов`; } }), h('span.nv-words.dim', `≈ ${words} слов`))),
         this.field('Озвучка', 'по желанию', voice, h('p.hint', 'WAV, MP3, M4A. Можно добавить позже: сначала сценарий и черновой голос нейросетью, потом своя запись.')),
         h('div.nv-row',
-          this.field('Подача', '— как пишется сценарий', pick('delivery', R.deliveries || []), dl && h('p.hint', dl.desc)),
-          this.field('Визуал', '— как выглядит', pick('look', R.looks || []), lk && h('p.hint', lk.desc))),
+          this.field('Подача', '— как пишется сценарий', pick('delivery', DL), dl && h('p.hint', dl.desc)),
+          this.field('Визуал', '— как выглядит', pick('look', LK), lk && h('p.hint', lk.desc))),
         this.field('Тема', 'по желанию: Claude поищет и напишет сценарий', this.inp('topic', { placeholder: 'например: как Resident Evil 2 влез в картридж N64' })),
         this.field('Сценарий', 'по желанию: свой текст вместо темы', this.ta('script', 'Вставь текст голоса — Claude не будет его переписывать, только разложит по сценам.', 3)),
         this.field('Указания для Claude', 'по желанию', this.ta('direction', 'Тон, герои, на чём сделать акцент, камера…', 2)),

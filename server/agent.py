@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 16                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 17                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -135,6 +135,10 @@ def system_prompt(A, vid, mode):
 - Новые предметы — из префабов сцены (scene brief → prefabs), 3D-пропсов и персонажей видео / библиотеки; нового по описанию не выдумывай — предложи сделать его в препродакшене.
 - Если просьба непонятна — спроси одной фразой и жди ответа. В конце — 1–2 фразы, что сделано.
 - Автор присылает контекст в начале сообщения: этап, открытая сцена (EL), момент курсора, выбранные объекты. «Здесь», «этот» — это оно.
+- ПАМЯТЬ (S12.10): если автор поправил тебя так, что это похоже на общее правило канала, а не на разовую правку этого видео («звуки на переходах тише»,
+  «надписи всегда снизу», «без морали в конце»), в конце запуска предложи правило одной фразой:
+  python {sp} memory propose "правило" --why "из какой правки" --video {vid}   (--all — если правило для всех каналов). Не больше 1–2 за запуск; сомневаешься — не предлагай.
+  Автор примет его в разделе «Память» — тогда оно придёт тебе в системном промпте. Уже действующие правила — в начале этого промпта; не предлагай их снова.
 
 {C.SCENE_RULES}"""
     build = ""
@@ -554,13 +558,18 @@ def video_file(vid, path):
 # ---------------------------------------------------------------- HTTP
 def get_session(A, vid, model, mode):
     s = SESS.get(vid)
-    if s and s.alive() and s.model == model and s.mode == mode and getattr(s, "rules", 0) == RULES_REV:
+    try:
+        mem = A.mmapi().prompt_text(P.index()["videos"].get(vid, {}).get("channel"))   # S12.10: принятое правило — со следующего запуска
+    except Exception:
+        mem = ""
+    if s and s.alive() and s.model == model and s.mode == mode and getattr(s, "rules", 0) == RULES_REV and getattr(s, "mem", "") == mem:
         return s
     if s:
         if s.busy:
             raise RuntimeError("агент ещё работает — дождись или останови")
         s.close()
     s = SESS[vid] = Session(A, vid, model, mode)
+    s.mem = mem
     s.add("note", f"новая сессия · {model}" + (" · ✨ сборка" if mode == "build" else " · 📝 сценарий" if mode == "script" else " · 🎞 монтаж" if mode == "montage" else ""))
     return s
 

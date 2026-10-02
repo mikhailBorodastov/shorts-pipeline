@@ -48,22 +48,33 @@ const Pages = {
       it.rig && h('span.small', { title: `скелет ${it.skeleton}` }, '🦴 ' + it.skeleton),
       h('b', it.name, it.d3 ? h('span.small', { title: `есть 3D-версия v${it.d3}` }, ' 🧊') : ''), h('span.dim.small', `lib:${it.id}@${it.latest}`));
   },
+  // S12.10: библиотека в новом виде — вкладки видов, поиск, сетка плиток; ниже — готовое к публикации из видео
+  libTile(it) {
+    const src = it.preview ? `/api/lib/file/${LIB.channel}/${it.preview}` : '';
+    const K = LIB.kinds || {};
+    return h('a.lib-tile', { href: '#/lib/item/' + it.id, title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : '') },
+      h('div.pv', src ? { style: { backgroundImage: `url("${src}")` } } : {}, !src && Icon(it.kind === 'sounds' ? 'music' : 'library', 28)),
+      h('div.nm', it.name, it.d3 ? h('span.dim', { title: `есть 3D-версия v${it.d3}` }, ' · 3D') : ''),
+      h('div.mt', (K[it.kind] || it.kind || '') + ` · v${it.latest}` + (it.from && it.from.videoName ? ' · ' + it.from.videoName : '')));
+  },
   lib() {
     const cid = (App.info.channel || {}).id;
     if (LIB.items && LIB.channel && LIB.channel !== cid) { LIB.items = null; LIB.cand = null; }   // канал сменился не через переключатель — библиотека другого канала
     if (!LIB.items && !LIB.busy) Pages.loadLib();
     if (!LIB.cand && !LIB.cbusy) { LIB.cbusy = true; api('GET', '/api/lib/candidates').then(j => { LIB.cand = j.items; LIB.cbusy = false; App.render(); }).catch(() => { LIB.cand = []; LIB.cbusy = false; }); }
-    const cand = (LIB.cand || []).filter(x => x.ready);
-    return h('div',
-      h('div.phead', h('h1', '📚 Библиотека канала'), h('span.dim', (App.info.channel || {}).name || '')),
-      h('section.card', Pages.libPanel(false)),
-      h('section.card',
-        h('div.card-head', h('h3', '✓ Утверждено в видео'), h('span.dim', 'опубликуй в библиотеку, чтобы брать в другие ролики (новой версией, если уже есть)')),
-        !LIB.cand ? h('p.dim', 'Смотрю видео…') : !cand.length ? h('p.dim', 'Утверждённых ✓ персонажей, пропсов и звуков с черновиком пока нет.')
-          : h('div.cands', cand.map(x => h('div.row.cand',
-            h('span', KIND_ICON[x.kind] || '•'), h('b', x.name), x.d3 && h('span.small', { title: '3D-пропс: в сцене встанет объёмным' }, '🧊 3D'), h('span.dim.small', 'из «' + x.videoName + '»'), h('span.sp'),
-            x.lib && h('span.dim.small', `уже: lib:${x.lib.id}@${x.lib.v}`),
-            h('button', { onclick: () => Pages.publish(x, x.lib ? x.lib.id : 'new') }, x.lib ? '⬆ новая версия' : '📚 в библиотеку'))))));
+    const cand = (LIB.cand || []).filter(x => x.ready), items = LIB.items || [], K = LIB.kinds || {};
+    const q = h('input.box', { key: 'libq', placeholder: 'Поиск: ёжик, стол, гул…', value: LIB.q, oninput: e => { LIB.q = e.target.value; clearTimeout(LIB.t); LIB.t = setTimeout(() => Pages.loadLib(), 250); } });
+    return h('div.page.lib-page',
+      h('div.page-head', h('div.grow', h('h1', 'Библиотека'),
+        h('p.sub', `Утверждённые персонажи, предметы, 3D-модели, звуки и видео канала «${(App.info.channel || {}).name || ''}» — их можно брать в любой ролик. Открой предмет, чтобы покрутить, сравнить версии или поправить с Claude.`))),
+      h('div.lib-tabs', [['', 'Всё'], ...Object.entries(K)].map(([k, l]) => h('button', { class: LIB.kind === k ? 'sel' : '', onclick: () => { LIB.kind = k; Pages.loadLib(); } }, l)), q),
+      LIB.items === null ? h('p.dim', 'Загружаю…') : items.length ? h('div.lib-grid', items.map(Pages.libTile))
+        : h('p.dim', LIB.q || LIB.kind ? 'Ничего не нашлось.' : 'Пока пусто. Утверждённое ✓ в препродакшене появится ниже — опубликуйте его сюда.'),
+      LIB.cand && cand.length > 0 && [h('div.ws-sec', 'Утверждено в видео — можно в библиотеку', h('span.cnt', String(cand.length))),
+        h('div.cands', cand.map(x => h('div.row.cand',
+          h('span', KIND_ICON[x.kind] || '•'), h('b', x.name), x.d3 && h('span.small', { title: '3D-пропс: в сцене встанет объёмным' }, '3D'), h('span.dim.small', 'из «' + x.videoName + '»'), h('span.sp'),
+          x.lib && h('span.dim.small', `уже: lib:${x.lib.id}@${x.lib.v}`),
+          h('button.small', { onclick: () => Pages.publish(x, x.lib ? x.lib.id : 'new') }, x.lib ? 'Новая версия' : 'В библиотеку'))))]);
   },
   async publish(x, as) {
     try {

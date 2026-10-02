@@ -80,6 +80,7 @@ import talk_api  # noqa: E402  звериная речь (Animalese): голос
 import videos_api  # noqa: E402  S12: страница «Видео» (карточки, обложки, папка) и поп-ап «Новое видео»
 import render_api  # noqa: E402  S12.8: экспорт, очередь рендеров, готовые ролики
 import thumbs_api  # noqa: E402  S12.9: обложки — доски и генерация картинок
+import memory_api  # noqa: E402  S12.10: память — правила из правок автора
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -168,6 +169,10 @@ def wsapi():
 
 def mdapi():
     return _fresh(media_api, "media")
+
+
+def mmapi():
+    return _fresh(memory_api, "memory")
 
 
 def thapi():
@@ -959,7 +964,12 @@ def _docs(key):
         port = 8790
     plan = load(key) if key.startswith("plan:") else None
     ch = (P.channel(P.index()["videos"].get(key[5:], {}).get("channel")) if plan else None) or P.channel() or {}
-    return {"plan": plan, "channel": ch, "brand": channel_brand(ch), "bank": {"items": []}, "stats": {"items": []},
+    mem = ""
+    try:
+        mem = mmapi().prompt_text(ch.get("id")) if ch else ""
+    except Exception:
+        pass
+    return {"plan": plan, "channel": ch, "brand": channel_brand(ch), "memory": mem, "bank": {"items": []}, "stats": {"items": []},
             "key": key, "data": DATA, "save": save_file, "port": port, "here": HERE, "root": ROOT, "pipe": PIPE, "sound": fetch_sound}
 
 
@@ -971,7 +981,9 @@ def channel_brand(ch):
             guide = f.read()[:1500]
     except (OSError, KeyError, TypeError):
         pass
-    return {"name": (ch or {}).get("name", ""), "bring": (ch or {}).get("about", ""), "differ": "", "killer": guide, "never": ""}
+    refs = [(r.get("url") or r.get("img") or "") + (f" — {r['note']}" if r.get("note") else "") for r in (ch or {}).get("refs") or [] if r.get("url") or r.get("img")]
+    about = (ch or {}).get("about", "") + (("\nРеференсы канала (вкладка «Обзор»): " + "; ".join(refs)) if refs else "")
+    return {"name": (ch or {}).get("name", ""), "bring": about, "differ": "", "killer": guide, "never": ""}
 
 
 def rel_data(path):
@@ -1348,6 +1360,8 @@ def handle_get(h):
         return True
     if p.startswith("/api/thumbs/") and thapi().handle_get(sys.modules[__name__], h, p, q):
         return True
+    if p.startswith("/api/memory") and mmapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
@@ -1487,6 +1501,8 @@ def handle_post(h):
         if p.startswith("/api/renders/") and rdapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/thumbs/") and thapi().handle_post(sys.modules[__name__], h, p, q, body):
+            return True
+        if p.startswith("/api/memory/") and mmapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p == "/api/new":
             d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))
@@ -1736,6 +1752,8 @@ def cli(argv):
         return mdapi().cli(sys.modules[__name__], a)
     if cmd == "model":
         return m3d().cli(sys.modules[__name__], a)
+    if cmd == "memory":                                # S12.10: правила из правок автора
+        return mmapi().cli(sys.modules[__name__], a)
     if cmd == "produce":
         job = Job("produce", _plan_key(a[0]), "produce", {"name": a[1] if len(a) > 1 else "", "attach": "--attach" in a})
         produce(job)

@@ -29,7 +29,7 @@ const Shell = {
       h('div.side-sec.lbl', 'Студия'),
       h('nav.side-nav',
         item('#/style', 'sliders', 'Стиль', r.page === 'style'),
-        item('#/memory', 'bulb', 'Память', r.page === 'memory'),
+        item('#/memory', 'bulb', 'Память', r.page === 'memory', Memory.newCount() ? h('span.newb', { title: 'Claude предложил правила' }, Memory.newCount() + ' new') : null),
         item('#/thumbs', 'image', 'Обложки', r.page === 'thumbs'),
         item('#/renders', 'film', 'Рендеры', r.page === 'renders', Renders.active().length ? h('span.live', { title: 'Идёт рендер: ' + Renders.active().map(x => x.video).join(', ') }) : null)),
       h('div.side-foot',
@@ -58,7 +58,7 @@ const Shell = {
       h('div.empty-state', h('div.es-ico', Icon(icon, 26)), h('b', title + ' — скоро'), h('p', text), h('span.dim.small', 'S12, часть ' + part)));
   },
   page(r) {
-    if (r.page === 'memory') return this.soon('bulb', 'Память', 'Правила, которые Claude выносит из твоих правок. Ты подтверждаешь — и он помнит их во всех следующих видео канала.', '12.10');
+    if (r.page === 'memory') return Memory.page();       // S12.10
     if (r.page === 'thumbs') return Thumbs.page();       // S12.9
     if (r.page === 'renders') return Renders.page();     // S12.8
     return null;
@@ -96,8 +96,14 @@ const Palette = {
   filter() {
     const q = this.norm(this.q).trim(), words = q.split(/\s+/).filter(Boolean);
     const all = this.all();
+    if (q.length >= 2 && this.found && this.found.q === q)          // S12.10: поиск по каналу на сервере — сценарии, элементы, библиотека, рендеры, память
+      for (const x of this.found.items) if (!all.some(y => y.label === x.label && y.group === x.group)) all.push({ group: x.group, label: x.label, icon: x.icon, hint: x.hint, kw: x.label + ' ' + (x.hint || ''), always: true, run: () => go(x.href) });
     const hit = x => { const t = this.norm(x.label + ' ' + x.kw + ' ' + x.group); return words.every(w => t.includes(w)); };
-    this.items = (q ? all.filter(hit) : all.filter(x => x.group !== 'Библиотека')).slice(0, 60);
+    this.items = (q ? all.filter(x => x.always || hit(x)) : all.filter(x => x.group !== 'Библиотека')).slice(0, 80);
+    if (q.length >= 2 && (!this.found || this.found.q !== q) && this.wantQ !== q) {
+      this.wantQ = q; clearTimeout(this.ft);
+      this.ft = setTimeout(() => api('GET', '/api/videos/search?q=' + encodeURIComponent(q)).then(items => { this.found = { q, items }; if (this.norm(this.q).trim() === q) this.draw(); }).catch(() => {}), 180);
+    }
     this.i = Math.min(this.i, Math.max(0, this.items.length - 1));
   },
 
@@ -128,7 +134,7 @@ const Palette = {
     this.items.forEach((x, k) => {
       if (x.group !== g) { g = x.group; rows.push(h('div.pal-g', g)); }
       rows.push(h('div.pal-row', { class: k === this.i ? 'on' : '', onmousemove: () => { if (this.i !== k) { this.i = k; this.draw(); } }, onclick: () => this.pick(x) },
-        Icon(x.icon, 16), h('span.grow', x.label), x.hint && h('span.dim.small', x.hint), k === this.i && Icon('enter', 14, 'dim')));
+        Icon(x.icon, 16), h('span.grow.pal-l', x.label), x.hint && h('span.dim.small.pal-h', x.hint), k === this.i && Icon('enter', 14, 'dim')));
     });
     this.list.replaceChildren(...(rows.length ? rows : [h('div.pal-empty', 'Ничего не нашлось')]));
     const on = this.list.querySelector('.pal-row.on');

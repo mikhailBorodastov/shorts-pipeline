@@ -4,7 +4,7 @@
 
 const CH = { files: null, cid: null, voiceUrl: null, saving: false };
 const CH_BLOCKS = [['visual', '🎨 Визуал и герой'], ['delivery', '🗣 Подача и голос'], ['montage', '🎞 Монтаж и звук'], ['pack', '📦 Упаковка']];
-const CH_TABS = [['interview', '🎤 Интервью'], ['guide', '📝 Стайл-гайд'], ['look', '🎨 Палитра и шрифты'], ['voice', '🎙 Голос и субтитры'], ['rules', '⚙ Правила'], ['hero', '🦸 Герой'], ['history', '🕘 История']];
+const CH_TABS = [['overview', 'Обзор'], ['deliveries', 'Подачи'], ['looks', 'Визуалы'], ['interview', '🎤 Интервью'], ['guide', '📝 Стайл-гайд'], ['look', '🎨 Палитра и шрифты'], ['voice', '🎙 Голос и субтитры'], ['rules', '⚙ Правила'], ['hero', '🦸 Герой'], ['history', '🕘 История']];
 
 Object.assign(Pages, {
   newChannel() {
@@ -35,9 +35,9 @@ Object.assign(Pages, {
     CH.wasBusy = busy;
     const d = Store.get(ckey), F = CH.files;
     const done = d && d.interview && d.interview.done;
-    const tab = App.route.id || (done ? 'guide' : 'interview');
+    const tab = App.route.id || (done ? 'overview' : 'interview');
     const body = !d || !F ? h('p.dim', h('span.spin'), ' загружаю стиль…') : F.err ? h('div.badline', '⚠ ' + F.err)
-      : ({ interview: Pages.chInterview, guide: Pages.chGuide, look: Pages.chLook, voice: Pages.chVoice, rules: Pages.chRules, hero: Pages.chHero, history: Pages.chHistory }[tab] || Pages.chGuide).call(Pages, C, d, ckey, F);
+      : ({ overview: Pages.chOverview, deliveries: Pages.chDeliveries, looks: Pages.chLooks, interview: Pages.chInterview, guide: Pages.chGuide, look: Pages.chLook, voice: Pages.chVoice, rules: Pages.chRules, hero: Pages.chHero, history: Pages.chHistory }[tab] || Pages.chGuide).call(Pages, C, d, ckey, F);
     return h('div',
       h('div.phead', h('h1', `${C.icon || '📺'} ${C.name} — стиль канала`), h('span.sp'), h('a.btn', { href: '#/newchan' }, '+ новый канал')),
       h('div.subtabs', CH_TABS.map(([k, l]) => h('a.btn', { class: k === tab ? 'sel' : '', href: '#/style/' + k }, l))),

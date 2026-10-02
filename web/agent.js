@@ -100,6 +100,7 @@ const AgentPanel = {
         Store.load('plan:' + vid, true).then(() => App.render()).catch(() => {});
         if (window.MT && MT.info) { delete MT.info[vid]; }
         if (App.route.page === 'v') setTimeout(() => window.Montage && MT.d && Montage.regen(), 300);   // превью — по новым сценам
+        if (typeof Memory !== 'undefined') setTimeout(() => Memory.load(), 500);   // S12.10: Claude мог предложить правило
       }
       if (changed) { if (this.btn) this.btn.classList.toggle('busy', this.busy); if (this.open) this.draw(); }
       if (was !== this.busy && App.route.page === 'v') App.render();   // точка «Claude работает» у «Редактора», пайплайн

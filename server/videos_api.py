@@ -9,6 +9,7 @@ POST /api/videos/brief            <- {id, …brief}    поправить бри
 POST /api/videos/snap             <- {id, t}         📷 кадр ролика -> out/shots/shot-<t>.png
 """
 import glob
+import json
 import os
 import re
 import subprocess
@@ -136,16 +137,29 @@ def _fmt_len(sec):
     return f"{sec // 60}:{sec % 60:02d}" if sec else ""
 
 
-def brief_text(A, b):
+def _lists(A, cid=None):
+    """Подачи и визуалы: канала (channel.json — вкладки «Стиль»), иначе стартовые из ref.json."""
+    R, c = A.ref(), P.channel(cid) if cid else P.channel()
+    try:
+        cj = json.load(open(os.path.join(c["dir"], "channel.json"), encoding="utf-8")) if c else {}
+    except (OSError, ValueError):
+        cj = {}
+    return (cj.get("deliveries") or R.get("deliveries", [])), (cj.get("looks") or R.get("looks", [])), c
+
+
+def brief_text(A, b, cid=None):
     """Бриф поп-апа -> «Контекст» видео (topic): его читают все кнопки ✨ и агент (video.md)."""
-    R = A.ref()
-    dl = next((x for x in R.get("deliveries", []) if x["key"] == b.get("delivery")), None)
-    lk = next((x for x in R.get("looks", []) if x["key"] == b.get("look")), None)
+    DL, LK, c = _lists(A, cid)
+    dl = next((x for x in DL if x.get("key") == b.get("delivery")), None)
+    lk = next((x for x in LK if x.get("key") == b.get("look")), None)
     L = []
     if dl and dl["key"] != "auto":
         L.append(f"Подача: {dl['label']} — {dl['desc']}")
     if lk:
-        L.append(f"Визуал: {lk['label']} — {lk['desc']}")
+        L.append(f"Визуал: {lk['label']} — {lk.get('desc', '')}")
+        refs = [(r.get("url") or ("<канал>/" + r["img"])) + (f" ({r['note']})" if r.get("note") else "") for r in lk.get("refs") or [] if r.get("img") or r.get("url")]
+        if refs and c:
+            L.append("Референсы визуала: " + "; ".join(x.replace("<канал>", c["dir"].replace(chr(92), "/")) for x in refs))
     if b.get("len"):
         L.append(f"Ориентировочная длина: {_fmt_len(b['len'])} (≈ {round(int(b['len']) * 2.65)} слов голоса при 2,65 сл/с; на монтаже может измениться)")
     if (b.get("direction") or "").strip():
@@ -162,13 +176,14 @@ def create(A, body, channel=None):
     if not name:
         raise ValueError("нужно название")
     mode = "long" if body.get("mode") == "long" else "short"
-    look = next((x for x in A.ref().get("looks", []) if x["key"] == body.get("look")), None)
+    _dl, LK, _c = _lists(A, channel or body.get("channel"))
+    look = next((x for x in LK if x.get("key") == body.get("look")), None)
     d = A.new_plan(mode, name, channel=channel or body.get("channel"))
     b = {k: body.get(k) for k in ("delivery", "look", "len", "topic", "script", "direction")}
     b["len"] = int(body.get("len") or 0)
     ops = [{"op": "set", "path": ["brief"], "value": b},
            {"op": "set", "path": ["idea"], "value": (body.get("topic") or "").strip() or ("Свой сценарий автора" if (body.get("script") or "").strip() else name)},
-           {"op": "set", "path": ["topic"], "value": brief_text(A, b)}]
+           {"op": "set", "path": ["topic"], "value": brief_text(A, b, channel or body.get("channel"))}]
     if look and look.get("engine"):
         ops.append({"op": "set", "path": ["engine"], "value": look["engine"]})
     for u in body.get("refs") or []:
@@ -187,8 +202,9 @@ def set_brief(A, vid, body):
     for k in ("delivery", "look", "len", "topic", "script", "direction", "voice"):
         if k in body:
             b[k] = int(body[k] or 0) if k == "len" else body[k]
-    ops = [{"op": "set", "path": ["brief"], "value": b}, {"op": "set", "path": ["topic"], "value": brief_text(A, b)}]
-    look = next((x for x in A.ref().get("looks", []) if x["key"] == b.get("look")), None)
+    cid = P.index()["videos"].get(vid, {}).get("channel")
+    ops = [{"op": "set", "path": ["brief"], "value": b}, {"op": "set", "path": ["topic"], "value": brief_text(A, b, cid)}]
+    look = next((x for x in _lists(A, cid)[1] if x.get("key") == b.get("look")), None)
     if look and look.get("engine"):
         ops.append({"op": "set", "path": ["engine"], "value": look["engine"]})
     return A.apply_ops(key, ops)
@@ -414,6 +430,73 @@ def run_broll(A, job):
     job.summary = f"🎞 B-roll готов: {dur:.1f} с" + (f", {st.get('width')}×{st.get('height')}" if st.get("width") else "")
 
 
+# ---------------------------------------------------------------- 🔍 поиск по каналу (S12.10, Ctrl K)
+_TXT = {}
+
+
+def _text_of(f):
+    try:
+        k = (f, os.path.getmtime(f))
+    except OSError:
+        return ""
+    if k not in _TXT:
+        try:
+            _TXT[k] = open(f, encoding="utf-8", errors="replace").read()
+        except OSError:
+            _TXT[k] = ""
+    return _TXT[k]
+
+
+def search(A, q, limit=40):
+    """Видео (название, идея, тема, текст сценария), элементы препродакшена, библиотека, готовые ролики, правила памяти."""
+    norm = lambda s: (s or "").lower().replace("ё", "е")
+    words = [w for w in norm(q).split() if w]
+    if not words:
+        return []
+    hit = lambda s: all(w in norm(s) for w in words)
+    def snip(s):
+        t, i = norm(s), norm(s).find(words[0])
+        if i < 0:
+            return ""
+        a = max(0, i - 50)
+        return ("…" if a else "") + " ".join(s[a:i + 90].split()) + "…"
+    out = []
+    ch = P.channel()
+    for d in A.plans(ch["id"] if ch else None):
+        if d.get("service") or d.get("status") == "archived":
+            continue
+        vid, name = d["id"], d.get("name", "")
+        if hit(name + " " + (d.get("idea") or "") + " " + (d.get("topic") or "")):
+            out.append({"group": "Видео", "label": name, "hint": (d.get("idea") or "")[:80], "href": f"#/v/{vid}", "icon": "tall" if d.get("mode") != "long" else "wide"})
+        vdir = P.video(vid)
+        sc = _text_of(os.path.join(vdir, "script.md")) if vdir else ""
+        if sc and "Зачем ежу иголки" not in sc[:400] and hit(sc):
+            out.append({"group": "Сценарии", "label": name, "hint": snip(sc), "href": f"#/v/{vid}", "icon": "book"})
+        for e in d.get("elements") or []:
+            if e.get("status") != "drop" and not e.get("ws") and hit((e.get("name") or "") + " " + (e.get("desc") or "")):
+                out.append({"group": "Препродакшен", "label": e.get("name", ""), "hint": f"{name} · {e.get('kind')}", "href": f"#/v/{vid}/pre/{e['id']}", "icon": "users"})
+        for f in glob.glob(os.path.join(vdir or "", "out", "*.mp4")):
+            n = os.path.basename(f)
+            if not n.endswith("_NO_VO.mp4") and hit(n + " " + name):
+                out.append({"group": "Рендеры", "label": n, "hint": name, "href": "#/renders", "icon": "film"})
+    try:
+        c = A.stapi().channel_dir(ch["id"]) if ch else None
+        idx = json.load(open(os.path.join(A.stapi().lib_dir(c), "index.json"), encoding="utf-8")) if c else {}
+        for it in (idx.get("items") if isinstance(idx, dict) else idx) or []:
+            if hit((it.get("name") or "") + " " + (it.get("desc") or "") + " " + " ".join(it.get("tags") or [])):
+                out.append({"group": "Библиотека", "label": it.get("name", ""), "hint": it.get("kind", ""), "href": "#/lib/item/" + it["id"], "icon": "library"})
+    except Exception:
+        pass
+    try:
+        R = A.mmapi().rules(ch["id"] if ch else None)
+        for r in R["channel"] + R["all"]:
+            if hit(r.get("text") + " " + (r.get("why") or "")):
+                out.append({"group": "Память", "label": r["text"][:90], "hint": {"new": "предложено", "on": "действует", "off": "выключено"}.get(r.get("status"), ""), "href": "#/memory", "icon": "bulb"})
+    except Exception:
+        pass
+    return out[:limit]
+
+
 # ---------------------------------------------------------------- HTTP
 def handle_get(A, h, p, q):
     if p == "/api/videos/extra":
@@ -431,6 +514,8 @@ def handle_get(A, h, p, q):
     if p == "/api/videos/scriptver":
         vid, name = q.get("id", [""])[0], q.get("v", [""])[0]
         h._json(script_version(vid, name) if name else {"versions": script_versions(vid)}); return True
+    if p == "/api/videos/search":
+        h._json(search(A, q.get("q", [""])[0])); return True
     if p == "/api/videos/genat":                     # S12.7: когда монтаж последний раз писал файлы проекта (окно перезагружает превью)
         vdir = P.video(q.get("id", [""])[0])
         fs = [os.path.join(vdir, "src", n) for n in ("montage.js", "scenes.js")] if vdir else []
