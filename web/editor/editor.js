@@ -2,7 +2,6 @@
 // время и воспроизведение (Premiere), звуки дорожки, хоткеи (keymap.json), версии, клип, меню, блокировка на время работы агента.
 // ТЗ: _pipeline/docs/studio/stage1-editor.md. Модули: viewport.js (3D), panels.js (дерево и свойства), timeline.js, agent.js, ops.js, keys.js.
 import { initAnim } from './anim.js';
-import { initWorkshop } from './workshop.js';
 import { applyBatch, structural, clone, newId } from './ops.js';
 import { find, kindOf, keyAllOps, delKeysAtOps, allKeys, setOps, valueAt, EPS } from './keys.js';
 import { initViewport } from './viewport.js';
@@ -377,7 +376,6 @@ ED.objCtx = (x, y, id) => {
   const items = [
     !ED.readonly && ED.objMenu && ['💬 Пометка для Claude…', () => ED.objMenu({ clientX: x, clientY: y }, id || ids[0])],   // S7 (agent.js)
     ['⧉ Дублировать — Shift+D / Ctrl+D', duplicate],
-    one && one.src && !(ED.info.ws && one.id === 'asset') && /^(lib|el):/.test(one.src.prefab || '') && ['🛠 Мастерская предмета', () => parent.postMessage({ type: 'editor-ws', src: one.src.prefab, key: ED.key }, location.origin)],
     ids.length > 1 && ['▢ Сгруппировать — Ctrl+G', group],
     one && one.type === 'group' && ['⊟ Разгруппировать — Ctrl+Shift+G', ungroup],
     ED.active && ids.length > 1 && ['🔗 Привязать к активному — Ctrl+P', linkSel],
@@ -740,7 +738,6 @@ const pic = (k, src) => new Promise(ok => { const im = new Image(); im.onload = 
     ED.panels = initPanels(ED);
     ED.tl = initTimeline(ED);
     ED.agent = initAgent(ED);
-    if (ED.info.ws) initWorkshop(ED);                               // 🛠 мастерская ассета (S10): сборка / анимация, клип из ключей позы
     splitters();
     $('back').onclick = back;
     $('autokey').onclick = () => { ED.autokey = !ED.autokey; $('autokey').setAttribute('aria-pressed', ED.autokey); ED.msg(ED.autokey ? '⏺ Автоключ включён: правка анимированного свойства ставит ключ' : 'Автоключ выключен: правка меняет значение, ключи не ставятся'); };

@@ -1,18 +1,7 @@
-// «Штурм идей» — the «есть идея» path (flow idea): Идея и референсы → Вопросы и биты → Препродакшен
-// (сцены, персонажи, пропсы, звуки: черновик нашим движком с правками по пинам, звуки — подбор Claude, поиск и ссылка).
-// Смыслы и название, обложка, «В работу» и «Итоги» — общие с брейншторм-путём, в plan.js.
+// Claude Studio — карточки препродакшена (сцены, персонажи, пропсы, звуки, эффекты: черновик нашим движком с правками по пинам, «✨ Сделать 3D»,
+// звуки — подбор Claude, поиск и ссылка) и строки брифа (референсы, вопросы). Окно препродакшена — ui/preprod.js, бриф — ui/panels.js.
 'use strict';
 
-const HINTS2 = {
-  idea: `<p>Запиши идею так, как рассказал бы другу: о чём ролик и где крючок. В <b>контекст</b> — всё, что уже знаешь: откуда идея, тон, что точно должно быть, финал, факты, ссылки.</p>
-<p><b>Референсы</b> — чужие ролики, по которым хочешь снять: вставь ссылку или путь к файлу, и скрипт нарежет кадры и расшифрует речь, чтобы Claude их «посмотрел». Напиши у референса, <b>что из него берём</b>: подачу, темп, структуру, шутки, визуал. Картинки — Ctrl+V.</p>`,
-  qa: `<p>Claude читает идею, контекст и референсы и задаёт <b>15–20 вопросов</b> — всё, что ему непонятно для сценария и анимации: сюжет, герои, мир и детали, тон, упаковка, неудобные вопросы. Отвечай коротко; «не знаю, предложи» — тоже ответ. Неважное — «–».</p>
-<p>Ответил — жми <b>✨ Ещё вопросы</b> (уточняющий раунд) или иди к названию: твои ответы — решения, дальше на них строится всё.</p>`,
-  pre: `<p><b>Препродакшен</b> — всё, из чего соберём ролик: <b>персонажи</b>, <b>пропсы и реквизит</b> (предметы, надписи, мебель, свет, текстуры), <b>сцены</b> (локации) и <b>звуки</b>. Claude накидает список по идее и твоим ответам; чего не хватает — впиши в поле «чего не хватает?» и жми ✨, или добавь сам.</p>
-<p><b>Порядок:</b> сначала персонажи и пропсы, потом сцены. У сцены есть «Что в сцене» — её персонажи и пропсы: утверждённые черновики Claude ставит прямо в неё. 3D-сцену можно смотреть живьём и крутить камерой — кнопка 🧊.</p>
-<p>Открой элемент: накидай референсы (Ctrl+V), и Claude нарисует <b>черновик нашим движком</b> — поправишь пинами, как в ревью. Для звука Claude сам найдёт и скачает кандидатов, или найди сам поиском либо ссылкой (YouTube тоже); несколько звуков можно свести в один — со сдвигом, громкостью и пояснением, что куда. Утверди ✓ всё, что годится.</p>
-<p><b>Черновик — не финал:</b> это согласованный образ и стартовый код. Что хочешь видеть в готовом ролике, пиши в <b>🎬 Для финала</b> (у утверждённого — ещё и пином на картинке): это ТЗ для сборки. <b>@</b> в любом поле — ссылка на другой элемент («поставь сюда @[Табличка трассы]»).</p>`,
-};
 const KIND = k => REF.kinds.find(x => x.key === k) || REF.kinds[2];
 // 2D / 3D у персонажа и пропса (S3): нет поля dim — 2D, если черновики уже есть, иначе по умолчанию канала (как ideas_claude.dim_of)
 const dimOf = e => e.dim || ((e.renders || []).length ? '2d' : (((App.info.channel || {}).defaults || {}).dim || '2d'));
@@ -129,11 +118,6 @@ async function renderArchive(key, e, r, force) {
     await Store.load(key, true); App.render(); UI.toast(`🗄 v${r.v} в архиве` + (x.left ? '' : ' — элемент пуст, можно делать заново'));
   } catch (err) { UI.toast(err.message, 'err'); }
 }
-// 🛠 мастерская ассета (S10, server/ws_api.py): служебная сцена редактора с одним персонажем / пропсом
-async function wsOpen(body) {
-  try { UI.toast('Открываю мастерскую…'); const r = await api('POST', '/api/ws/open', body); go(`#/p/${r.video}/pre/${r.el}/stage`); }
-  catch (e) { UI.toast(e.message, 'err'); }
-}
 // 📚 из библиотеки в препродакшен (studio_api.import_to_video): выбрать предмет, версию и написать, что это в ролике и где — Claude это прочтёт
 async function libImport(d, key, K) {
   const kind = K.key === 'char' ? 'characters' : 'props';
@@ -178,28 +162,6 @@ Object.assign(Plan, {
   pinMode: {},                                        // element id -> what a click on its draft places: 'fix' | 'final'
   mixPlay: null,                                      // ▶ the mix that is playing: {el, ctx}
   sres: {},                                           // sound search results per element (page memory only): {q, list, errs, busy}
-
-  // ---------------- 💡 Идея ----------------
-  idea(d, key) {
-    const refs = d.refs || [], qa = d.qa || [];
-    return [
-      hint('idea', HINTS2.idea),
-      h('section.card',
-        h('div.card-head', h('h3', '💡 Идея'), h('span.dim', 'одна-две фразы: о чём ролик и где крючок')),
-        area(key, ['idea'], { cls: 'big', ph: 'Например: детская поликлиника — советские Backrooms. Мама послала ёжика за забытой сумкой, а он нажал в лифте кнопку без цифры…' }),
-        h('div.card-head', { style: { marginTop: '12px' } }, h('h3', 'Контекст'), h('span.dim', 'всё, что уже знаешь: откуда идея, тон, что точно должно быть, финал, факты, ссылки')),
-        area(key, ['topic'], { cls: 'big', ph: 'Хочу в 3D, как Paper Mario. Тон — жутко, но смешно. Точно нужны гудящие лампы, бахилы, регистратура…' })),
-      h('section.card',
-        h('div.card-head', h('h3', '📼 Референсы'), h('span.dim', 'Claude посмотрит их, когда будет спрашивать и собирать биты')),
-        Plan.refAdd(d, key),
-        refs.filter(r => r.kind !== 'image').map(r => Plan.refRow(d, key, r)),
-        h('h4.sub', '🖼 Картинки'), Plan.refImages(d, key)),
-      h('section.card.next', h('div.row', h('b', 'Дальше:'),
-        qa.length ? [h('span', `вопросов уже ${qa.length}`), h('a', { href: `#/p/${d.id}/qa` }, '→ ❓ Вопросы')]
-          : [h('span.dim', 'Claude прочитает идею и референсы и задаст 15–20 вопросов.'), h('span.sp'),
-            Claude.btn({ label: '15–20 вопросов по идее', action: 'questions', key, params: { n: 18 } })])),
-    ];
-  },
 
   refAdd(d, key) {
     const inp = h('input.box.grow', { key: key + '|refadd', placeholder: 'ссылка на ролик (YouTube, TikTok, VK…) или путь к видео / папке на диске',
@@ -249,51 +211,6 @@ Object.assign(Plan, {
         onSet: p => p && Store.add(key, ['refs'], { id: uid('r'), kind: 'image', img: p, note: '' }) })));
   },
 
-  // ---------------- ❓ Вопросы и биты ----------------
-  qa(d, key, M) {
-    const qa = d.qa || [], answered = qa.filter(q => (q.a || '').trim() || q.skip).length;
-    const f = Local.get('qaf:' + d.id) || 'all';
-    const focus = h('input.box', { key: key + '|qfocus', placeholder: 'о чём ещё спросить (можно пусто)', style: { width: '240px' },
-      value: Local.get('qfocus:' + d.id) || '', oninput: e => Local.set('qfocus:' + d.id, e.target.value) });
-    const rounds = [...new Set(qa.map(q => q.round || 1))].sort((a, b) => a - b);
-    const shown = q => f === 'all' || !((q.a || '').trim() || q.skip);
-    const beats = d.beats || [], kept = beats.filter(b => b.keep !== false).length, ch = d.challenge;
-    return [
-      hint('qa', HINTS2.qa),
-      ideaBanner(d),
-      h('section.card',
-        h('div.card-head', h('h3', '❓ Вопросы Claude'),
-          h('span.counter', { class: qa.length && answered === qa.length ? 'ok' : '' }, `отвечено ${answered} из ${qa.length}`),
-          qa.length > 0 && h('div.seg', [['all', 'Все'], ['open', 'Без ответа']].map(([k, l]) =>
-            h('button', { class: f === k ? 'sel' : '', onclick: () => { Local.set('qaf:' + d.id, k); App.render(); } }, l))),
-          h('span.sp'), focus,
-          Claude.btn({ label: qa.length ? 'Ещё вопросы' : '15–20 вопросов', action: 'questions', key, params: () => ({ n: qa.length ? 10 : 18, focus: focus.value }),
-            title: qa.length ? 'Уточняющий раунд: Claude учтёт твои ответы и копнёт глубже' : 'Claude прочитает идею, контекст и референсы и спросит всё, что ему непонятно' })),
-        qa.length ? rounds.map(rn => {
-          const list = qa.filter(q => (q.round || 1) === rn && shown(q));
-          return list.length > 0 && h('div.qround',
-            rounds.length > 1 && h('div.sec', `Раунд ${rn}` + (list.some(q => q.from === 'challenge') ? ' · после челленджа' : '')),
-            list.map(q => Plan.qRow(d, key, q, qa.indexOf(q) + 1)));
-        }) : h('div.empty', 'Пока пусто. Нажми ✨ — Claude задаст 15–20 вопросов по идее. Или добавь свой вопрос ниже.'),
-        addLine('+ свой вопрос — Enter', q => Store.add(key, ['qa'], { id: uid('q'), q, a: '', why: '', group: '', round: Math.max(1, ...qa.map(x => x.round || 1)), by: 'me' }), key + '|addq')),
-      d.flow !== 'idea' && h('section.card',
-        h('div.card-head', h('h3', '🧱 Биты'),
-          h('span.counter', { class: kept >= M.keep[0] && kept <= M.keep[1] ? 'ok' : kept > M.keep[1] ? 'warn' : '' }, `оставлено ${kept} из ${beats.length} · цель ${M.keep[0]}–${M.keep[1]}`),
-          h('span.sp'),
-          Claude.btn({ label: beats.length ? 'Ещё биты' : 'Биты из ответов', action: 'beats', key, title: 'Claude разобьёт ролик на биты по идее и твоим ответам' }),
-          Claude.btn({ label: 'Челлендж', action: 'challenge', key, title: 'Claude-редактор ищет слабые места битов и задаёт новые вопросы, чтобы их закрыть' })),
-        ch && (ch.points || []).length > 0 && h('div.critique',
-          h('div.row', h('span.v', { class: { strong: 'good', ok: 'fix', weak: 'bad' }[ch.verdict] || '' }, { strong: '✅ держит', ok: '🔧 есть что усилить', weak: '⛔ пока не держит' }[ch.verdict] || 'челлендж'),
-            h('span.dim', ` · ${fmtDate(ch.at)}${ch.round ? ` · новые вопросы — в раунде ${ch.round}` : ''}`), h('span.sp'),
-            h('button.icon', { title: 'Скрыть разбор', onclick: () => Store.set(key, ['challenge'], null, true) }, '×')),
-          h('ul', ch.points.map(p => h('li', p)))),
-        h('div.beats-head', h('span'), h('span', '#'), h('span', '«Вопрос» — сетап'), h('span'), h('span', '«Ответ» — панчлайн'), h('span', 'Источник'), h('span', '✓'), h('span')),
-        beats.length ? h('div.beats', beats.map((b, i) => Plan.beatRow(d, key, b, i))) : h('div.empty', 'Битов пока нет. Ответь на вопросы и нажми ✨ Биты из ответов.'),
-        addLine('+ бит: вопрос | ответ — Enter', t => { const [q, ...a] = t.split('|'); Store.add(key, ['beats'], { id: uid('b'), q: q.trim(), a: a.join('|').trim(), src: '', keep: true, by: 'me' }); }, key + '|addbeat')),
-      h('p', h('a', { href: `#/p/${d.id}/title` }, 'Дальше → 🎯 Название'), h('span.dim', ' · потом 🎬 препродакшен')),
-    ];
-  },
-
   qRow(d, key, q, n) {
     const G = REF.qgroups[q.group], done = !!((q.a || '').trim() || q.skip);
     return h('div.qrow', { class: (done ? 'done ' : '') + (q.skip ? 'skip' : '') },
@@ -308,33 +225,6 @@ Object.assign(Plan, {
   },
 
   // ---------------- 🎬 Препродакшен ----------------
-  pre(d, key, M, sub) {
-    const els = d.elements || [];
-    if (sub) { const e = els.find(x => x.id === sub); if (e) return Plan.element(d, key, M, e); }
-    const focus = h('input.box', { key: key + '|pfocus', placeholder: 'чего не хватает? Claude учтёт', style: { width: '260px' },
-      value: Local.get('pfocus:' + d.id) || '', oninput: e => Local.set('pfocus:' + d.id, e.target.value) });
-    const live = els.filter(e => e.status !== 'drop' && !e.ws), ready = live.filter(e => e.status === 'ok').length;
-    const SS = Plan.scriptState ? Plan.scriptState(d) : {}, hasScript = SS.project && !SS.template;   // S11: препродакшен — по сценарию
-    return [
-      hint('pre', HINTS2.pre),
-      ideaBanner(d),
-      !d.service && !hasScript && h('section.card.s11note', h('b', '📝 Сначала сценарий'), h('span.dim', ' — сцены препродакшена строятся по нему: каждой сцене сценария — своя сцена, пропсы и персонажи — из «Картинки». '),
-        h('a.btn', { href: `#/p/${d.id}/script` }, '→ к сценарию'), h('span.dim.small', ' (можно и без него — тогда Claude накидает по идее и ответам)')),
-      h('section.card',
-        h('div.card-head', h('h3', '🎬 Препродакшен'),
-          h('span.counter', { class: live.length && ready === live.length ? 'ok' : '' }, `утверждено ${ready} из ${live.length}`),
-          h('span.row', { title: 'Как Claude рисует черновики сцен: бумажный коллаж или картонная 3D-диорама (stage3d)' }, 'сцены:',
-            h('div.seg', [['2d', '2D-аппликация'], ['3d', '3D-диорама']].map(([k, l]) =>
-              h('button', { class: (d.engine || '2d') === k ? 'sel' : '', onclick: () => Store.set(key, ['engine'], k, true) }, l)))),
-          h('span.sp'), focus,
-          Claude.btn({ label: hasScript ? (live.some(e => e.kind === 'scene') ? 'Накидать ещё по сценарию' : 'Накидать по сценарию') : live.length ? 'Накидать ещё' : 'Накидать элементы', action: 'elements', key, params: () => ({ focus: focus.value }),
-            title: hasScript ? 'Claude разложит сценарий: каждой сцене сценария — сцена препродакшена, персонажи, пропсы и звуки — из «Картинки» и текста' : 'Claude соберёт персонажей, пропсы, сцены (с их составом) и звуки по идее и твоим ответам' })),
-        !els.length && h('p.dim', 'Пусто. Нажми ✨ — Claude составит список по идее и твоим ответам. Или добавляй сам в разделах ниже.')),
-      REF.kinds.map(K => Plan.kindBox(d, key, K, focus)),
-      h('p', h('a', { href: `#/p/${d.id}/voice` }, 'Дальше → 🎙 Голос'), h('span.dim', ' — запись диктора (или черновой голос), потом 🎞 Монтаж собирает финал из сцен, голоса и звуков')),
-    ];
-  },
-
   kindBox(d, key, K, focus) {
     const all = (d.elements || []).filter(e => e.kind === K.key && !e.ws);   // ws — служебные сцены мастерской
     const list = [...all.filter(e => e.status !== 'drop'), ...all.filter(e => e.status === 'drop')];
@@ -366,7 +256,7 @@ Object.assign(Plan, {
     const r = elRender(e), s = elSound(e), K = KIND(e.kind), nfx = fxCount((e.fx || {}).main), nmix = elMix(e).length, nfin = (e.final || []).filter(f => (f.text || '').trim()).length;
     const busy = Claude.running(key, 'element:' + e.id) || Claude.running(key, 'sound:' + e.id);
     const pic = r ? r.img : e.kind === 'broll' && e.broll && e.broll.thumb ? e.broll.thumb : ((e.refs || []).find(x => x.img) || {}).img;
-    const open = () => go(`#/p/${d.id}/pre/${e.id}`);
+    const open = () => go(`#/v/${d.id}/pre/${e.id}`);
     return h('div.elcard', { class: e.status || 'new', title: 'Открыть', tabindex: 0, role: 'link', 'aria-label': `${K.one}: ${e.name || 'без названия'}, ${{ ok: 'утверждён', drop: 'не нужен' }[e.status] || 'предложен'}`,
       onclick: ev => { if (!ev.target.closest('audio,button,a')) open(); },
       onkeydown: ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target === ev.currentTarget) { ev.preventDefault(); open(); } } },
@@ -418,7 +308,7 @@ Object.assign(Plan, {
       cast.length ? h('div.castlist', cast.map(({ x, via }) => {
         const r = elRender(x), pic = elPic(x);
         return h('div.castitem', { class: x.status === 'ok' ? 'ok' : '' },
-          h('a', { href: `#/p/${d.id}/pre/${x.id}`, title: 'Открыть элемент' }, pic ? h('img', { src: '/' + pic, alt: '' }) : h('span.elph', KIND(x.kind).icon)),
+          h('a', { href: `#/v/${d.id}/pre/${x.id}`, title: 'Открыть элемент' }, pic ? h('img', { src: '/' + pic, alt: '' }) : h('span.elph', KIND(x.kind).icon)),
           h('div.grow', h('b', x.name), h('div.dim.small', (x.status === 'ok' ? '✓ утверждён' : r ? `черновик v${r.v}, не утверждён` : 'черновика нет — Claude нарисует по описанию')
             + (via === '@' ? ' · отмечен через @ в тексте' : ''))),
           via === 'uses' ? h('button.icon.del', { title: 'Убрать из сцены', onclick: () => Store.set(key, P, uses.filter(i => i !== x.id), true) }, '×')
@@ -433,9 +323,9 @@ Object.assign(Plan, {
   element(d, key, M, e) {
     const K = KIND(e.kind), P = ['elements', e.id];
     const same = (d.elements || []).filter(x => x.kind === e.kind), i = same.indexOf(e);
-    const nav = (x, label) => (x ? h('a.btn', { href: `#/p/${d.id}/pre/${x.id}`, title: x.name }, label) : null);
+    const nav = (x, label) => (x ? h('a.btn', { href: `#/v/${d.id}/pre/${x.id}`, title: x.name }, label) : null);
     return [
-      !d.service && h('div.row.elnav', h('a.btn', { href: `#/p/${d.id}/pre` }, '← Все элементы'), h('span.dim', `${K.icon} ${K.label} · ${i + 1} из ${same.length}`), h('span.sp'),
+      !d.service && h('div.row.elnav', h('a.btn', { href: `#/v/${d.id}/pre` }, '← Все элементы'), h('span.dim', `${K.icon} ${K.label} · ${i + 1} из ${same.length}`), h('span.sp'),
         nav(same[i - 1], '← ' + (same[i - 1] || {}).name), nav(same[i + 1], (same[i + 1] || {}).name + ' →')),
       h('div.eldetail', h('div.elleft',
         h('section.card.elinfo',
@@ -452,7 +342,7 @@ Object.assign(Plan, {
           Plan.elRefs(d, key, e),
           Plan.linksBar(d, e),
           h('div.row', { style: { marginTop: '10px' } }, e.by === 'claude' && h('span.dim.small', '🤖 предложил Claude'), h('span.sp'),
-            h('button.icon.del', { title: 'Удалить элемент', onclick: () => { if (confirm(`Удалить «${e.name}»?`)) { Store.del(key, ['elements'], e.id, false); go(`#/p/${d.id}/pre`); } } }, '🗑 удалить'))),
+            h('button.icon.del', { title: 'Удалить элемент', onclick: () => { if (confirm(`Удалить «${e.name}»?`)) { Store.del(key, ['elements'], e.id, false); go(`#/v/${d.id}/pre`); } } }, '🗑 удалить'))),
           e.kind !== 'sound' && e.kind !== 'broll' && Plan.assetBox(d, key, e)),
         h('div.elright', h('section.card.elwork', e.kind === 'sound' ? Plan.elSound(d, key, e) : e.kind === 'broll' ? Plan.elBroll(d, key, e) : Plan.elDraw(d, key, e)), Plan.finalBox(d, key, e))),
     ];
@@ -483,7 +373,7 @@ Object.assign(Plan, {
 
   // 🔗 what this element points to with @ and where it is pointed at from
   chips(d, list) {
-    return h('div.chips.mchips', list.map(x => h('a.mchip', { href: `#/p/${d.id}/pre/${x.id}`, title: KIND(x.kind).one + (x.status === 'ok' ? ' · утверждён' : '') },
+    return h('div.chips.mchips', list.map(x => h('a.mchip', { href: `#/v/${d.id}/pre/${x.id}`, title: KIND(x.kind).one + (x.status === 'ok' ? ' · утверждён' : '') },
       elPic(x) ? h('img', { src: '/' + elPic(x), alt: '' }) : h('span', KIND(x.kind).icon), x.name)));
   },
   linksBar(d, e) {
@@ -545,6 +435,7 @@ Object.assign(Plan, {
     const three = e.kind === 'scene' && d.engine === '3d', prop3 = isProp3(e), p3 = cur && cur.three3, pins3 = fx.pins3d || [];
     const has2d = prop3 && (e.renders || []).some(r => !r.three3);
     const rig = isRigChar(e), rc = cur && cur.rigchar, trl = cur && cur.source === 'trellis' && cur.meta, act = trl ? 'trellisfix' : rig ? 'charparts' : 'element';
+    const mk3 = rig || prop3, mk = e.make3d;                // S12.11: 3D персонажа и пропса — одной кнопкой «✨ Сделать 3D» (Claude выбирает способ, ▾ — сам)
     // a click on the picture: a pin for the next draft (red) or, once the element is approved, a wish «для финала» (green)
     const mode = Plan.pinMode[e.id] || (e.status === 'ok' ? 'final' : 'fix'), FIN = ['elements', e.id, 'final'];
     const img = cur && rc ? h('img', { src: '/' + cur.img, alt: '', title: 'Проверочные позы с костями — клик: крупно', onclick: () => UI.lightbox('/' + cur.img) })
@@ -562,60 +453,43 @@ Object.assign(Plan, {
     const ask = bare.length ? `У ${bare.length === 1 ? 'элемента' : 'элементов'} сцены ещё нет черновика: ${bare.join(', ')}. Claude нарисует ${bare.length === 1 ? 'его' : 'их'} прямо в сцене по описанию. Рисовать сцену сейчас?` : null;
     return [
       h('div.card-head', h('h3', '🎨 Черновик' + (three || (cur && cur.three) || prop3 ? ' · 3D' : '')),
-        e.kind === 'char' && h('div.seg.small', { title: 'Лист — рисунок персонажа; со скелетом — части на костях: позы, эмоции, костюмы, анимации (S4–S5)' },
-          [['', '🖼 лист'], ['rig', '🦴 со скелетом']].map(([k, l]) => h('button', { class: (e.form || '') === k ? 'sel' : '', disabled: running, onclick: () => Store.set(key, ['elements', e.id, 'form'], k, true) }, l))),
-        e.kind === 'prop' && h('div.seg.small', { title: '2D — рисунок-карточка; 3D — объёмный пропс' },
-          ['2d', '3d'].map(k => h('button', { class: dimOf(e) === k ? 'sel' : '', disabled: running || (e.kind === 'char' && k === '3d'),
-            title: e.kind === 'char' && k === '3d' ? 'Персонажи в 3D — этап S4 (скелеты)' : '',
-            onclick: () => { Store.set(key, ['elements', e.id, 'dim'], k, true); } }, k.toUpperCase()))),
-        prop3 && h('select.small', { title: 'Как Claude делает 3D-пропс', disabled: running, onchange: ev => Store.set(key, ['elements', e.id, 'how'], ev.target.value, true) },
-          [['auto', 'способ: сам выберет'], ['shapes', 'фигурами кодом'], ['model', 'из модели 📦'], ...(App.info.blender ? [['blender', 'через Blender']] : [])]
-            .map(([v, l]) => h('option', { value: v, selected: (e.how || 'auto') === v }, l))),
+        (e.kind === 'char' || e.kind === 'prop') && h('div.seg.small', { title: '2D — рисунок-карточка; 3D — объёмная версия для 3D-сцен (её делает «✨ Сделать 3D»)' },
+          ['2d', '3d'].map(k => h('button', { class: (mk3 ? '3d' : '2d') === k ? 'sel' : '', disabled: running,
+            onclick: () => Store.set(key, ['elements', e.id, e.kind === 'char' ? 'form' : 'dim'], e.kind === 'char' ? (k === '3d' ? 'rig' : '') : k, true) }, k.toUpperCase()))),
         rs.length > 1 && h('span.row', rs.map(r => h('button.small', { class: r === cur ? 'sel' : '', title: r.feedback ? 'правка: ' + r.feedback : 'первая версия',
           onclick: () => Store.set(key, ['elements', e.id, 'render'], r.id, true) }, 'v' + r.v))),
         cur && h('button.small', { title: `Убрать v${cur.v} в архив (не понравилось — сделать заново). Файлы уезжают в _archive, текущей станет прошлая версия`, onclick: () => renderArchive(key, e, cur) }, `🗑 v${cur.v}`),
         h('span.sp'),
-        e.kind === 'scene' && e.stage && e.stage.work && h('button.primary', { onclick: () => go(`#/p/${d.id}/pre/${e.id}/stage`), title: 'Редактор сцены: расстановка, камера и планы, ключи движения, звуки, маркеры, отмена, версии, клип, просьбы Claude' }, '🎬 Оформить сцену'),
+        e.kind === 'scene' && e.stage && e.stage.work && h('button.primary', { onclick: () => go(`#/v/${d.id}/pre/${e.id}/stage`), title: 'Редактор сцены: расстановка, камера и планы, ключи движения, звуки, маркеры, отмена, версии, клип, просьбы Claude' }, '🎬 Оформить сцену'),
         e.kind === 'scene' && !(e.stage && e.stage.work) && cur && cur.three && !cur.stage && Claude.btn({ label: 'Перевести в редактор', icon: '🎬', action: 'sceneconvert', key, scope: 'sceneconvert:' + e.id,
           params: { el: e.id, base: cur.id }, confirm: `Claude (Opus) переведёт «${e.name}» v${cur.v} в редактор сцены: код предметов отдельно, расстановка и движение — данными. Картинка не должна измениться — он сам сравнит кадры «было / стало». 5–10 минут.`,
           title: 'Перевести сцену в формат редактора (🎬 Оформить сцену)' }),
         cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         (p3 || (rc && cur.model3d)) && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
-        (rc || p3) && h('button', { onclick: () => wsOpen({ src: 'el:' + e.id, key }), title: 'Мастерская: скелет, позы, анимации (клипы), предметы в руках — в служебной сцене редактора' }, '🛠 Мастерская'),
         trl && cur.meta.stage === 'draft' && h('button.primary', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'trellis', undefined, { mode: 'final', base: cur.id }),
           title: 'Та же фигура (те же сиды), но 1536³, текстура 2048 и полная сетка — 3–8 минут' }, '⬆ Довести'),
         trl && h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, cur, 'retex'), title: 'Форма та же — новая раскраска: по другой картинке или новым сидом' }, '🎨 Перекрасить'),
-        rc && cur.fn !== 'hog' && !cur.model3d && h('button.primary', { onclick: () => Plan.viewSkel(d, e, cur), title: 'Двигать суставы мышью, проверять позами; сохраняется новой версией без Claude' }, '🦴 Редактор скелета'),
-        ((rig && e.kind === 'char') || e.kind === 'prop') && h('span.row.mk3d', { title: e.kind === 'prop' ? '3D-пропс из модели по картинке: локально или сервисом' : 'Как сделать 3D-героя со скелетом' },
-          e.kind === 'char' && Claude.btn({ label: 'Blender', icon: '🧊', action: 'charparts', key, scope, params: { el: e.id, make: 'blender' }, title: 'Claude (Opus) соберёт детальную модель в Blender кодом по референсам и поставит скелет — 15–40 минут' }),
-          h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, null), title: 'TRELLIS.2 / Pixal3D на твоей видеокарте, бесплатно: черновик за 1–3 минуты, потом «довести», «перекрасить», пины. Ставится в ⚙ Настройках' }, '🖥 TRELLIS'),
-          h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'meshy'), title: 'Meshy: модель с текстурой прямо по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Meshy'),
-          h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'tripo'), title: 'Tripo: модель с текстурой по первому референсу + их авто-скелет (ключ — в ⚙ Настройках)' }, '✨ Tripo'),
-          Claude.running(key, 'charmodel:' + e.id) && h('span.dim.small', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.scope === 'charmodel:' + e.id && j.status === 'running') || {}).summary || 'делаю…')),
-        !cur && rig && e.make !== 'blender' && Claude.btn({ label: '🦴 Собрать персонажа', icon: '', action: 'charparts', key, scope, params: { el: e.id },
-          title: e.make === 'blender' ? 'Claude (Opus) соберёт 3D-модель в Blender со скелетом-арматурой, снимет поворотный стол и позы — 15–40 минут' : 'Claude (Opus) нарисует персонажа частями, предложит скелет, пять проверочных поз и лица — 10–20 минут' }),
+        mk3 && !(e.from && e.from.scene) && Plan.make3dBtn(key, e, scope, !!cur),
+        Claude.running(key, 'charmodel:' + e.id) && h('span.dim.small', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.scope === 'charmodel:' + e.id && j.status === 'running') || {}).summary || 'делаю…'),
         !cur && e.from && e.from.scene && h('div.s11from', h('span', '🎬 Сделан в сцене «' + (((d.elements || []).find(x => x.id === e.from.scene) || {}).name || e.from.scene) + '» — живёт в её коде'),
-          h('a.btn', { href: `#/p/${d.id}/pre/${e.from.scene}/stage` }, 'открыть сцену'),
+          h('a.btn', { href: `#/v/${d.id}/pre/${e.from.scene}/stage` }, 'открыть сцену'),
           Claude.btn({ label: 'Сделать отдельным ассетом', icon: '📦', action: 'element', key, scope, params: { el: e.id, extract: true },
             title: 'Claude (Opus) вынесет предмет из кода сцены в отдельный 3D-пропс: его можно ставить в другие сцены и положить в библиотеку (после ✓). Вид не меняется. 5–15 минут.' })),
-        !cur && !rig && !(e.from && e.from.scene) && Claude.btn({ label: prop3 ? (has2d ? 'Сделать в 3D' : 'Сделать 3D-пропс') : 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
-          title: prop3 ? 'Claude (Opus) соберёт объёмный пропс (фигурами, из модели или в Blender), снимет четыре ракурса, сам посмотрит и поправит. 5–15 минут.'
-            : e.kind === 'scene' && (d.engine || '2d') === '3d' ? 'Claude соберёт 3D-сцену и сразу перенесёт её в редактор (предметы, расстановка, камера — данными), сравнит кадры «было / стало». 10–20 минут.'
+        !cur && !mk3 && !(e.from && e.from.scene) && Claude.btn({ label: 'Нарисовать черновик', action: 'element', key, scope, params: { el: e.id }, confirm: ask,
+          title: e.kind === 'scene' && (d.engine || '2d') === '3d' ? 'Claude соберёт 3D-сцену и сразу перенесёт её в редактор (предметы, расстановка, камера — данными), сравнит кадры «было / стало». 10–20 минут.'
             : 'Claude нарисует элемент нашим тулкитом по описанию и референсам, сам посмотрит и поправит. 3–10 минут.' })),
-      running && rig && h('p.dim', 'Claude собирает персонажа: рисует части, ставит кости, проверяет пятью позами и лицами — обычно 10–20 минут.'),
-      running && !rig && h('p.dim', prop3 ? 'Claude собирает 3D-пропс: пишет код (или модель в Blender), снимает четыре ракурса, смотрит и правит — обычно 5–15 минут.'
+      running && mk3 && h('p.dim', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.key === key && j.scope === scope && j.status === 'running') || {}).summary || 'Claude делает 3D-версию…'),
+      running && !mk3 && h('p.dim', prop3 ? 'Claude собирает 3D-пропс: пишет код (или модель в Blender), снимает четыре ракурса, смотрит и правит — обычно 5–15 минут.'
         : e.kind === 'scene' && (d.engine || '2d') === '3d' ? '🎬 ' + ((Object.values(Claude.jobs).find(j => j.scope === scope && j.status === 'running') || {}).summary || 'Claude собирает сцену') + ' — потом она сама откроется кнопкой «🎬 Оформить сцену», переносить не нужно.'
         : 'Claude рисует: пишет код, рендерит, смотрит на картинку и правит — обычно 3–10 минут. Можно заниматься другими элементами.'),
       Claude.running(key, 'sceneconvert:' + e.id) && h('p.dim', h('span.spin'), ' 🎬 Claude переводит сцену в редактор и сравнивает кадры «было / стало» — 5–10 минут…'),
       e.stage && e.stage.work && Plan.stageInfo(d, e),
       Claude.running(key, 'layout3d:' + e.id) && h('p.dim', h('span.spin'), ' ✋ снимаю новую расстановку — полминуты…'),
-      !cur && !running && rig && h('p.dim', (e.renders || []).some(r => !r.rigchar)
-          ? 'Со скелетом персонажа ещё нет. Claude возьмёт твой утверждённый лист за образец, разрежет его на части и предложит скелет (кот — хвост, уши, лапы); потом ты подвинешь суставы в редакторе скелета.'
-          : 'Claude нарисует персонажа частями и предложит скелет; суставы потом подвинешь в редакторе скелета, поправить можно и словами — «в целом».'),
-      !cur && !running && !rig && h('p.dim', prop3 ? (has2d ? '3D-версии ещё нет. Claude сделает её по 2D-черновику: та же форма, цвета и детали, но объёмно — его можно будет крутить и ставить в сцены.'
-          : 'Пропс будет объёмным: Claude соберёт его фигурами, из модели 📦 или в Blender. Его можно будет покрутить и поставить пины прямо на модель.')
-        : three ? 'Сцена будет 3D-диорамой (stage3d, как в «Не жми эту кнопку»). Переключатель 2D / 3D — на странице препродакшена.'
+      !cur && !running && mk3 && h('p.dim', '3D-версии ещё нет. «✨ Сделать 3D» — Claude выберет способ из того, что у вас есть (фигурами кодом, из найденной модели, бумажная карточка из частей, Blender, TRELLIS) и напишет почему; «▾» — выбрать самому. '
+          + ((e.renders || []).some(r => !r.rigchar && !r.three3) ? 'Образец — 2D-черновик и референсы.' : 'Образец — референсы слева.')),
+      mk && !running && cur && h('p.dim.small', '3D: ' + (mk.why || 'способ выбран вручную')),
+      !cur && !running && !mk3 && h('p.dim', three ? 'Сцена будет 3D-диорамой (stage3d, как в «Не жми эту кнопку»). Переключатель 2D / 3D — на странице препродакшена.'
         : 'Добавь референсы слева (необязательно) и нажми ✨ — получишь черновик, который правится пинами, как в ревью.'),
       cur && !p3 && !rc && h('div.seg.pinmode', { title: 'Что ставит клик по картинке' },
         [['fix', '✏️ правка черновика'], ['final', '🎬 для финала']].map(([k, l]) => h('button', { class: mode === k ? 'sel' : '', onclick: () => { Plan.pinMode[e.id] = k; App.render(); } }, l))),
@@ -625,7 +499,7 @@ Object.assign(Plan, {
         line(key, [...FX, 'pins3d', p.id, 'text'], { ph: 'что здесь не так / как надо', cls: 'box' }),
         h('button.icon.del', { title: 'Убрать пин', onclick: () => Store.del(key, [...FX, 'pins3d'], p.id) }, '×'))))
         : h('p.dim', 'Нажми «🧊 Покрутить · 📍 пины» (или на картинку): крути модель мышью и кликай по ней — каждый клик ставит пин с номером, текст правки пишешь рядом.')),
-      cur && rc && h('p.dim.small', 'Правки скелета словами — «в целом» ниже («добавь хвост из 3 костей», «уши гнутся»), суставы — в редакторе скелета.'),
+      cur && rc && h('p.dim.small', 'Правки словами — «в целом» ниже («уши длиннее», «хвост гнётся»). Анимации, которые персонаж умеет, Claude ставит в сцены сам.'),
       cur && !p3 && !rc && (pins.length ? h('ol.pinlist', pins.map((p, i) => h('li', h('span.pnum', i + 1),
         line(key, [...FX, 'pins', p.id, 'text'], { ph: 'что здесь не так / как надо', cls: 'box' }),
         h('button.icon.del', { title: 'Убрать пин', onclick: () => Store.del(key, [...FX, 'pins'], p.id) }, '×'))))
@@ -641,7 +515,8 @@ Object.assign(Plan, {
           : h('span.dim.small', 'правок нет'),
         h('span.sp'),
         e.status !== 'ok' && h('button.primary', { onclick: () => Store.set(key, ['elements', e.id, 'status'], 'ok', true) }, '✓ Утвердить'),
-        Claude.btn({ label: '', icon: '🔄', action: act, key, scope, params: { el: e.id }, cls: 'mini', confirm: ask, title: 'Нарисовать с нуля ещё вариант' })),
+        mk3 ? Claude.btn({ label: '', icon: '🔄', action: 'make3d', key, scope, params: { el: e.id }, cls: 'mini', title: 'Сделать 3D заново: Claude снова выберет способ' })
+          : Claude.btn({ label: '', icon: '🔄', action: act, key, scope, params: { el: e.id }, cls: 'mini', confirm: ask, title: 'Нарисовать с нуля ещё вариант' })),
       cur && cur.feedback && h('p.dim.clamp', cur.by === 'layout' || cur.by === 'skeleton' ? `v${cur.v} — ${cur.feedback}` : `✏️ v${cur.v} — правка: ${cur.feedback}`),
       cur && cur.summary && h('p.dim.clamp', { title: 'Клик — целиком', onclick: ev => ev.currentTarget.classList.toggle('open') }, cur.summary),
       cur && cur.note && h('p.clamp.elnote', '💬 ' + cur.note),
@@ -706,17 +581,23 @@ Object.assign(Plan, {
       h('div.row', h('span.dim.small', 'Лист из четырёх ракурсов — в карточке; клик по картинке открывает этот просмотр.'), h('span.sp'),
         h('a.btn', { href: src.replace('&pin=1', ''), target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => removeEventListener('message', onMsg) });
   },
-  // 🦴 редактор скелета (stands/skel.html): суставы мышью, позы, «💾 Сохранить» -> POST /api/char/rig -> новая версия (задача charrig)
-  viewSkel(d, e, r) {
-    const key = 'plan:' + d.id;
-    const src = `/render/skel.html?char=${encodeURIComponent('/rscene/' + r.dir + '/prefab.js')}&key=${encodeURIComponent(key)}&el=${e.id}&base=${r.id}`;
-    const onMsg = ev => {
-      if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'skel-saved') return;
-      if (ev.data.job) Claude.jobs[ev.data.job.id] = ev.data.job;
-      close(); App.render(); UI.toast('🦴 Скелет сохраняется — новая версия появится через полминуты');
+  // ✨ Сделать 3D (S12.11): Claude выбирает способ (server/make3d_api.py); ▾ — список способов, недоступные — серые с причиной, Meshy / Tripo — только с ключом
+  make3dBtn(key, e, scope, again) {
+    const go3 = method => Claude.run({ action: 'make3d', key, scope, params: { el: e.id, ...(method ? { method } : {}) } });
+    const menu = async ev => {
+      const b = ev.currentTarget.getBoundingClientRect();
+      let W = [];
+      try { W = (await api('GET', `/api/make3d/ways?key=${encodeURIComponent(key)}&el=${e.id}`)).ways; } catch (er) { return UI.toast(er.message, 'err'); }
+      const m = h('div.mk3menu', { style: { left: Math.max(8, Math.min(b.left, innerWidth - 348)) + 'px', top: b.bottom + 4 + 'px' } },
+        h('div.mk3h', 'Способ'), W.map(w => h('button', { disabled: !w.ok, title: w.ok ? w.desc : w.why, onclick: () => { close(); go3(w.key); } },
+          h('b', w.label), h('small', w.ok ? w.desc : w.why))));
+      const close = () => { m.remove(); removeEventListener('pointerdown', out, true); };
+      const out = x => { if (!m.contains(x.target)) close(); };
+      document.body.append(m); setTimeout(() => addEventListener('pointerdown', out, true));
     };
-    addEventListener('message', onMsg);
-    const close = UI.modal(`🦴 ${e.name} · v${r.v}`, h('div.view3d', h('iframe', { src, title: 'Редактор скелета' })), { wide: true, onClose: () => removeEventListener('message', onMsg) });
+    const run = Claude.running(key, scope);
+    return h('span.mk3', h('button' + (again ? '' : '.primary'), { disabled: !!run, onclick: () => go3(), title: 'Claude выберет способ из того, что у вас есть, и сделает 3D-версию' }, again ? '✨ Сделать 3D заново' : '✨ Сделать 3D'),
+      h('button.mk3more', { disabled: !!run, onclick: menu, title: 'Выбрать способ самому' }, '▾'));
   },
   viewModel(title, url) {
     const src = `/tpl/stand3d.html?model=${encodeURIComponent(url)}&view=1`;

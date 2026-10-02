@@ -57,7 +57,7 @@ const AgentPanel = {
     return order.filter(u => (MT.multi || []).includes(u.id)).map(u => ({ n: order.indexOf(u) + 1, el: u.scene, name: ((I.scenes || []).find(s => s.el === u.scene) || {}).name || u.scene, at: u.at || 0, len: u.len || 0 }));
   },
   ctx() {
-    const r = App.route, c = { stage: (Plan.stageLabel && Plan.stageLabel(r.tab)) || r.tab || '' };
+    const r = App.route, c = { stage: ({ pre: 'Препродакшен', brief: 'Бриф', voice: 'Озвучка', pack: 'Упаковка' }[r.tab]) || (r.page === 'v' ? 'Монтаж' : r.tab || '') };
     const f = document.querySelector('.stage-editor iframe');
     try { if (f && f.contentWindow.agentCtx) { Object.assign(c, f.contentWindow.agentCtx(), { stage: 'редактор сцены' }); return c; } } catch {}
     if (r.tab === 'montage' && window.MT) c.t = MT.t;

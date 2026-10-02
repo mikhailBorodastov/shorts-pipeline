@@ -43,7 +43,7 @@ export function initTimeline(ED) {
       if (!show(o)) continue;
       const kind = kindOf(d, o.id), open = T.open.has(o.id);
       out.push({ kind: 'thing', id: o.id, tkind: kind, label: o.name, open });
-      if (ED.isChar && ED.isChar(o.id)) {
+      if (ED.animUI && ED.isChar && ED.isChar(o.id)) {
         const popen = T.open.has('pose:' + o.id);
         out.push({ kind: 'clips', id: o.id, tkind: kind, label: '🎞 клипы' }); out.push({ kind: 'poses', id: o.id, tkind: kind, label: '🦴 поза', open: popen });
         if (popen) for (const ch of poseChannels(o)) out.push({ kind: 'posech', id: o.id, tkind: kind, ch, label: '  ' + ch });   // Dope Sheet: каналы позы

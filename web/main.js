@@ -43,14 +43,13 @@ const App = {
     this.route = route();
     const r = this.route;
     Shell.remember(r);                                 // «Редактор» в боковой панели — последнее открытое видео
-    if (r.page === 'p' && r.tab === 'montage') { go('#/v/' + r.id); return; }   // S12.3: монтаж — это окно видео
-    if (r.page === 'p' && r.tab === 'pre' && App.plans.some(p => p.id === r.id)) { go(`#/v/${r.id}/pre` + (r.sub ? '/' + r.sub : '') + (r.sub2 ? '/' + r.sub2 : '')); return; }   // S12.6: препродакшен — в окне видео (служебные видео мастерской — по-старому)
+    if (r.page === 'p') { go(this.oldRoute(r)); return; }   // S12.11: старые вкладки видео (#/p/<id>/<этап>) — окно видео и его панели
     if (r.page !== 'v') Workspace.leave();
     document.body.classList.toggle('ws-mode', r.page === 'v');
-    const need = { p: ['plan:' + r.id], v: ['plan:' + r.id] }[r.page] || [];
+    const need = r.page === 'v' ? ['plan:' + r.id] : [];
     try { await Promise.all(need.map(k => Store.load(k))); }
     catch (e) {
-      if ((r.page === 'p' || r.page === 'v') && !Store.get('plan:' + r.id)) { UI.toast('Такого штурма нет — возможно, его удалили', 'err'); go('#/'); return; }
+      if (r.page === 'v' && !Store.get('plan:' + r.id)) { UI.toast('Такого видео нет — возможно, его убрали в архив', 'err'); go('#/'); return; }
       UI.toast(e.message, 'err');
     }
     this.render({ top: true });
@@ -59,10 +58,20 @@ const App = {
     AgentPanel.follow(r);
   },
 
+  // #/p/<id>/<этап> из старых ссылок, уведомлений и заметок -> окно видео: этап -> панель
+  oldRoute(r) {
+    if (!App.plans.some(p => p.id === r.id)) return '#/lib';          // служебное видео (мастерская) — их больше нет в интерфейсе
+    const tab = { idea: 'brief', qa: 'brief', title: 'brief', ideas: 'brief', beats: 'brief', images: 'brief', structure: 'brief',
+      voice: 'voice', pack: 'pack', results: 'pack', pre: 'pre', scenes: 'pre' }[r.tab] || '';
+    if (r.tab === 'script') setTimeout(() => { const d = Store.get('plan:' + r.id); if (d && window.ScriptWin) ScriptWin.open(d); }, 600);
+    if (r.tab === 'thumbs') return '#/thumbs/' + r.id;
+    return `#/v/${r.id}` + (tab ? '/' + tab : '') + (tab === 'pre' && r.sub ? '/' + r.sub + (r.sub2 ? '/' + r.sub2 : '') : '');
+  },
+
   banner(msg) { const b = $('#banner'); b.textContent = msg; b.classList.toggle('show', !!msg); },
 
   render(opts = {}) {
-    if (this.route.page === 'p' && !document.hidden) { const d = Store.get('plan:' + this.route.id); Unread.seen(this.route.id, this.route.tab || defTab(d && d.flow)); }
+    if (this.route.page === 'v' && !document.hidden) Unread.seen(this.route.id, this.route.tab || 'montage');
     const a = document.activeElement, fk = a && a.dataset ? a.dataset.key : null;
     const range = fk && typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd] : null;
     const main = $('#main'), top = main.scrollTop;
@@ -102,13 +111,8 @@ const App = {
       document.title = d ? `${d.name} — Claude Studio` : 'Claude Studio';
       return d ? Workspace.page(d) : wait;
     }
-    if (r.page === 'p') {
-      const d = Store.get('plan:' + r.id);
-      document.title = d ? `${d.name} — Claude Studio` : 'Claude Studio';
-      return d ? Plan.view(d, r.tab || defTab(d.flow), r.sub) : wait;
-    }
     document.title = 'Claude Studio';
-    if (r.page === 'lib') return r.id === 'char' && r.tab ? CharSheet.view(r.tab) : r.id === 'item' && r.tab && r.sub ? LibItem.view(r.tab, r.sub) : Pages.lib();
+    if (r.page === 'lib') return r.id === 'item' && r.tab && r.sub ? LibItem.view(r.tab, r.sub) : Pages.lib();
     if (r.page === 'style') return Pages.style();
     if (r.page === 'newchan') return Pages.newChannel();
     if (r.page === 'settings') return Pages.settings();
@@ -124,7 +128,7 @@ const App = {
 const StageEditor = {
   el: null, frame: null,
   follow(r) {
-    const want = (r.page === 'p' || r.page === 'v') && r.tab === 'pre' && r.sub && r.sub2 === 'stage' ? `${r.id}/${r.sub}` : null;
+    const want = r.page === 'v' && r.tab === 'pre' && r.sub && r.sub2 === 'stage' ? `${r.id}/${r.sub}` : null;
     if (want === this.el) return;
     this.close();
     if (!want) return;
@@ -154,9 +158,6 @@ const StageEditor = {
     document.body.append(this.frame);
   },
 };
-addEventListener('message', ev => {                  // 🛠 «Мастерская предмета» из меню объекта в редакторе сцены
-  if (ev.origin === location.origin && ev.data && ev.data.type === 'editor-ws') wsOpen({ src: ev.data.src, key: ev.data.key });
-});
 addEventListener('message', ev => {
   if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'editor-close') return;
   const r = App.route;
@@ -171,8 +172,7 @@ addEventListener('message', ev => {
     Store.load('plan:' + r.id, true).then(() => App.render()).catch(() => {});
     return;
   }
-  if (ev.data.ws) { const w = ev.data.ws; go(w.lib && w.service ? `#/lib/item/${w.lib.id}` : `#/p/${r.id}/pre/${w.asset}`); return; }   // 🛠 мастерская (S10)
-  go(`#/${r.page === 'v' ? 'v' : 'p'}/${r.id}/pre/${r.sub}`);
+  go(`#/v/${r.id}/pre/${r.sub}`);
   Store.load('plan:' + r.id).then(() => App.render()).catch(() => {});
 });
 

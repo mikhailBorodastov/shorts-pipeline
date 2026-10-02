@@ -212,7 +212,7 @@ Object.assign(Pages, {
       try { await Store.flushAll(); const r = await api('POST', '/api/channel/hero', { channel: C.id }); Claude.jobs[r.job.id] = r.job; UI.toast('Готовлю видео «Герой канала»…');
         const wait = async () => { const s = await api('GET', '/api/job?id=' + r.job.id).catch(() => null); const j = s && (s.job || s);
           if (j && j.status === 'running') return setTimeout(wait, 1000);
-          if (j && j.status === 'done') { await App.refreshState(); go(`#/p/${j.result.video}/pre`); } else UI.toast((j && j.error) || 'не вышло', 'err'); };
+          if (j && j.status === 'done') { await App.refreshState(); go(`#/v/${j.result.video}/pre`); } else UI.toast((j && j.error) || 'не вышло', 'err'); };
         wait(); } catch (e) { UI.toast(e.message, 'err'); }
     };
     return [h('section.card', h('div.card-head', h('h3', '🦸 Главный герой канала'), H.video && h('span.dim.small', 'видео героя есть')),

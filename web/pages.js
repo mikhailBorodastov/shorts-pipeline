@@ -14,15 +14,6 @@ const Pages = {
     catch (e) { UI.toast(e.message, 'err'); }
   },
 
-  async newPlan(mode) {
-    try {
-      const r = await api('POST', '/api/new', { mode, name: `Новое ${mode === 'long' ? 'длинное видео' : 'видео'}`, channel: (App.info.channel || {}).id });
-      await App.refreshState();
-      App.focusName = true;                           // rename right away (see App.render)
-      go(`#/p/${r.id}/idea`);
-    } catch (e) { UI.toast(e.message, 'err'); }
-  },
-
   // ---------------- 📚 библиотека канала ----------------
   async loadLib() {
     LIB.busy = true;

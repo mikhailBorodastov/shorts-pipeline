@@ -318,7 +318,7 @@ def anims(A, typ, cid=None):
         except (OSError, ValueError):
             continue
         pv = os.path.join(d, f[:-5] + ".png")
-        out.append({k: a.get(k) for k in ("id", "name", "dur", "loop", "proc", "by", "prompt")} | {
+        out.append({k: a.get(k) for k in ("id", "name", "dur", "loop", "proc", "by", "prompt", "when")} | {
             "preview": f"/api/lib/file/{c['id']}/anims/{typ}/{f[:-5]}.png" if os.path.isfile(pv) else "", "channel": c["id"]})
     return sorted(out, key=lambda x: (x.get("by") != "base", x.get("name") or ""))
 
@@ -326,7 +326,7 @@ def anims(A, typ, cid=None):
 def handle_get(A, h, p, q):
     if p == "/api/anims":                                   # клипы типа скелета; video=<id> — канал этого видео
         vid = (q.get("video") or [""])[0]
-        cid = P.index()["videos"].get(vid, {}).get("channel") if vid else None
+        cid = P.index()["videos"].get(vid, {}).get("channel") if vid else (q.get("channel") or [None])[0]
         h._json({"items": anims(A, (q.get("type") or ["hog"])[0], cid)}); return True
     if p == "/api/char":
         h._json(sheet_info(A, (q.get("slug") or [""])[0])); return True

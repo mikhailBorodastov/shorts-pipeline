@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 22
+API_VERSION = 23
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -81,6 +81,7 @@ import videos_api  # noqa: E402  S12: страница «Видео» (карт�
 import render_api  # noqa: E402  S12.8: экспорт, очередь рендеров, готовые ролики
 import thumbs_api  # noqa: E402  S12.9: обложки — доски и генерация картинок
 import memory_api  # noqa: E402  S12.10: память — правила из правок автора
+import make3d_api  # noqa: E402  S12.11: «✨ Сделать 3D» — Claude выбирает способ
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -141,6 +142,10 @@ def agapi():
 
 def stgapi():
     return _fresh(settings_api, "stg")
+
+
+def mk3d():
+    return _fresh(make3d_api, "make3d")
 
 
 def m3d():
@@ -928,6 +933,8 @@ def _run_job(job):
             chnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("voicesplit", "voicetts"):          # 🎙 голос ролика (S11): нарезка записи / черновой голос
             vcapi().run_job(sys.modules[__name__], job)
+        elif job.kind == "make3d":                             # ✨ Сделать 3D (S12.11): Claude выбирает способ -> element / charparts / charmodel
+            mk3d().run(sys.modules[__name__], job)
         elif job.kind == "brollfetch":                         # 🎞 B-roll элемента (S12.6): кусок видео -> files/<id>/broll_<el>.mp4
             vdapi().run_broll(sys.modules[__name__], job)
         elif job.kind == "mediaadd":                           # 🎞 видео кадрами для экранов (S10.3)
@@ -1361,6 +1368,8 @@ def handle_get(h):
     if p.startswith("/api/thumbs/") and thapi().handle_get(sys.modules[__name__], h, p, q):
         return True
     if p.startswith("/api/memory") and mmapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
+    if p.startswith("/api/make3d/") and mk3d().handle_get(sys.modules[__name__], h, p, q):
         return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True

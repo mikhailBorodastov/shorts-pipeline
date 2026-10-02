@@ -75,7 +75,7 @@ const Videos = {
         h('div.vc-foot',
           h('span.pill', { class: st.cls }, h('i'), st.label), h('span.vc-time', relTime(p.updated)), h('span.sp'),
           h('button.icon', { title: 'Открыть папку видео', onclick: stop(() => api('POST', '/api/videos/open', { id: p.id }).catch(e => UI.toast(e.message, 'err'))) }, Icon('folder', 15)),
-          h('button.icon', { title: 'Препродакшен', onclick: stop(() => go(`#/p/${p.id}/pre`)) }, Icon('users', 15)),
+          h('button.icon', { title: 'Препродакшен', onclick: stop(() => go(`#/v/${p.id}/pre`)) }, Icon('users', 15)),
           h('button.icon.del', { title: 'Удалить (в архив)', onclick: stop(() => this.remove(p)) }, Icon('trash', 15)))));
   },
   async remove(p) {

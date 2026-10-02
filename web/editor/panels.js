@@ -225,7 +225,7 @@ export function initPanels(ED) {
       for (const x of ED.info.props3d || []) hs.append(new Option(`${lab}: ${x.name}`, x.ref));
       if (cur && ![...hs.options].some(op => op.value === cur)) hs.append(new Option(`${lab}: ${cur}`, cur));
       hs.value = cur || '';
-      hs.title = 'Предмет в лапе с этого момента (ключ hold). Как держит — хват персонажа: 🛠 Мастерская → ✋ Предметы';
+      hs.title = 'Предмет в лапе с этого момента (ключ hold). Как держит — хват персонажа (grips.json); поправить — попросите Claude';
       hs.onchange = async () => {
         const ref = hs.value || null;
         if (ref && ED.loadProp && !ED.lib[ref] && !(await ED.loadProp(ref))) return ED.msg('Предмет не загрузился: ' + ref, 'err');

@@ -32,9 +32,7 @@ const LibItem = {
     return h('div.libitem',
       back,
       h('div.phead', h('h1', (KIND_ICON[{ characters: 'char', props: 'prop', sounds: 'sound' }[kind]] || '📦') + ' ' + C.name), h('span.dim', `lib:${id}@${C.latest} — основная`),
-        h('span.sp'), kind !== 'sounds' && kind !== 'media' && h('button.primary', { onclick: () => LibItem.edit(), title: 'Все инструменты препродакшена на рабочей копии этой версии: нарисовать заново, правки пинами, 🖥 TRELLIS, 🦴 собрать / починить скелет, эмоции, ассеты. Потом «📚 В библиотеку» — новая версия.' }, '✏️ Править'),
-        (kind === 'characters' || is3d) && h('button', { onclick: () => wsOpen({ src: `lib:${id}@${LI.v}` }), title: 'Мастерская: скелет, позы, анимации (клипы), предметы в руках — в служебной сцене редактора' }, '🛠 Мастерская'),
-        kind === 'characters' && h('a.btn', { href: '#/lib/char/' + slug }, '🦴 Лист персонажа')),
+        h('span.sp'), LibItem.skills(C)),
       h('div.li-main',
         h('div.li-view', LibItem.viewer(kind, ver, is3d)),
         h('div.li-side',
@@ -42,7 +40,7 @@ const LibItem = {
           LibItem.meta(C),
           is3d ? LibItem.fixBox(C, ver, running) : h('p.dim.small', kind === 'sounds' ? 'Звук правится в препродакшене видео (слои, кусок) и публикуется новой версией.'
             : kind === 'media' ? 'Видео кадрами для экранов: в сцене — ключ ch.screen у пропса с экраном. Новый кусок — «🎞 + видео по ссылке…» в редакторе.'
-            : 'Это 2D-предмет (рисунок кодом): «✏️ Править» — пины, «Поправить», нарисовать заново, сделать объёмным (🖥 TRELLIS); потом «📚 В библиотеку».'),
+            : 'Это 2D-предмет (рисунок кодом). Править его — в препродакшене видео: возьмите в видео («📚 из библиотеки»), поправьте и опубликуйте новой версией. Объёмный — «✨ Сделать 3D» там же.'),
           LibItem.dupBox(C, ver, is3d),
           LibItem.usageBox(C),
           LibItem.archiveBox(C, ver))));
@@ -86,13 +84,20 @@ const LibItem = {
     try { LI.card = await api('POST', '/api/lib/meta', Object.assign({ id: LI.id }, body)); LIB.items = null; UI.toast(msg); App.render(); } catch (e) { UI.toast(e.message, 'err'); }
   },
 
-  // ✏️ править: рабочая копия версии в служебном видео канала -> полная карточка препродакшена (ws_api.lib_element)
-  async edit() {
-    try {
-      UI.toast('Открываю рабочую копию…');
-      const r = await api('POST', '/api/ws/workcopy', { id: LI.id, v: LI.v, channel: LibItem.chan() });
-      go(`#/p/${r.video}/pre/${r.el}`);
-    } catch (e) { UI.toast(e.message, 'err'); }
+  // 🎞 Умеет (S12.11): клипы скелета персонажа — их Claude ставит в сцены сам (scene brief); «когда» — подсказка ему
+  skills(C) {
+    if (!/^characters\//.test(LI.id || '')) return null;
+    const ver = (C.versions || []).find(x => x.v === LI.v) || {}, typ = ver.skeleton || C.skeleton || (/hog|ёж|ezh/i.test(LI.id + (C.name || '')) ? 'hog' : '');
+    if (!typ || typ === '?') return null;
+    if (!LI.skills || LI.skills.typ !== typ) {
+      LI.skills = { typ, list: null };
+      api('GET', `/api/anims?type=${encodeURIComponent(typ)}&channel=${LibItem.chan()}`).then(j => { if (LI.skills.typ === typ) { LI.skills.list = j.items; App.render(); } }).catch(() => { LI.skills.list = []; });
+    }
+    const L = LI.skills.list;
+    return h('details.li-skills', h('summary.btn', `Умеет${L ? ' · ' + L.length : ''}`),
+      h('div.li-skills-pop', h('p.dim.small', 'Движения, которые Claude ставит в сцены сам — по тексту и «Для финала». Нужно новое — попросите в чате видео.'),
+        !L ? h('p.dim', 'загружаю…') : !L.length ? h('p.dim', 'Пока ни одного.') : h('ul', L.map(x => h('li', h('b', x.name || x.id), h('span.dim.small', ` · ${x.dur} с${x.loop ? ' · петля' : ''}`),
+          (x.when || x.prompt) && h('div.dim.small', x.when || x.prompt))))));
   },
 
   // ✏️ правка: пины на модели + «в целом» -> Claude (Opus) делает новую версию, превью, она становится основной
@@ -144,7 +149,7 @@ const LibItem = {
   usageBox(C) {
     const U = LI.usage || [];
     return h('section.card', h('div.card-head', h('h3', 'Где стоит'), h('span.dim.small', U.length ? `сцен: ${U.length}` : 'пока нигде')),
-      U.length ? h('ul.li-usage', U.map(u => h('li', h('a', { href: `#/p/${u.video}/pre/${u.el}/stage` }, `«${u.videoName}» → ${u.scene}`), ` · v${u.v}`, h('span.dim.small', ' · ' + u.objects.slice(0, 4).join(', ')))))
+      U.length ? h('ul.li-usage', U.map(u => h('li', h('a', { href: `#/v/${u.video}/pre/${u.el}/stage` }, `«${u.videoName}» → ${u.scene}`), ` · v${u.v}`, h('span.dim.small', ' · ' + u.objects.slice(0, 4).join(', ')))))
         : h('p.dim.small', 'В сцены его ставят «＋ добавить» в редакторе или агент.'));
   },
 

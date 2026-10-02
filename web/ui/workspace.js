@@ -25,7 +25,7 @@ const Workspace = {
       this.head(d, key),
       h('div.ws-main',
         h('aside.ws-left', this.left(d, M, I)),
-        App.route.tab === 'pre' ? h('section.ws-center', Plan.preWs(d, key, App.route.sub)) : h('section.ws-center',
+        App.route.tab === 'pre' ? h('section.ws-center', Plan.preWs(d, key, App.route.sub)) : Panels.has(App.route.tab) ? h('section.ws-center', Panels.view(d, key, App.route.tab)) : h('section.ws-center',
           h('div.ws-stage', h('div.mt-prevslot.ws-slot'), this.overlay(d, M, I)),
           this.transport(d, M),
           h('div.ws-tl',
@@ -43,7 +43,7 @@ const Workspace = {
       h('label.ws-model', { title: 'Модель Claude для этого окна: Opus 5.5 — сборка и сложное, Sonnet 5.5 — быстрые правки' }, Icon('spark', 14),
         sel([{ value: 'opus', label: 'Opus 5.5' }, { value: 'sonnet', label: 'Sonnet 5.5' }], model, v => { AgentPanel.model = v; Local.set('agent.model', v); App.render(); })),
       h('button.icon', { title: 'История: запуски Claude (что сделал, откатить), Ctrl+Z — откатить последнее', onclick: () => { AgentPanel.tab = 'history'; AgentPanel.toggle(true); } }, Icon('clock', 17)),
-      h('button.icon', { title: 'Бриф: идея, контекст, вопросы', onclick: () => go(`#/p/${d.id}/idea`) }, Icon('book', 17)),
+      h('button.icon', { class: App.route.tab === 'brief' ? 'on' : '', title: 'Бриф: идея, контекст, референсы, ответы на вопросы', onclick: () => go(`#/v/${d.id}/brief`) }, Icon('book', 17)),
       h('button.icon', { title: 'Открыть папку видео', onclick: () => api('POST', '/api/videos/open', { id: d.id }).catch(e => UI.toast(e.message, 'err')) }, Icon('folder', 17)),
       h('button.primary.ws-export', { disabled: !d.project, title: d.project ? 'Экспорт: имя, .srt, главы — в out/ всё для YouTube' : 'Сначала проект ролика', onclick: () => ExportDlg.open(d) },
         Renders.of(d.id) ? h('span.spin') : Icon('download', 15), Renders.of(d.id) ? 'Рендер…' : 'Экспорт'));
@@ -74,7 +74,7 @@ const Workspace = {
     const id = d.id, has = !!d.project, scr = has ? Plan.scriptState(d) : {}, words = has ? Montage.words(d) : [];
     const els = (d.elements || []).filter(e => e.status !== 'drop'), ok = els.filter(e => e.status === 'ok').length;
     const agent = (text, mode = 'chat', model = 'opus') => { AgentPanel.toggle(true); AgentPanel.say(text, { mode, model }); };
-    const nav = tab => () => go(`#/p/${id}/${tab}`);
+    const nav = tab => () => go(`#/v/${id}/${tab}`);
     const scriptDone = has && scr.template === false;
     const steps = [
       { label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : has ? 'Написать' : 'Начать', primary: !scriptDone,

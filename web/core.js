@@ -1,6 +1,6 @@
 // Claude Studio — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
 'use strict';
-const API = 22;                     // must match ideas_api.API_VERSION
+const API = 23;                     // must match ideas_api.API_VERSION
 const REF = {};                     // web/ref.json, loaded at boot
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -227,26 +227,26 @@ const Claude = {
 };
 // finished Claude jobs: a dot on the plan (sidebar, card, tab) until you look at it + a browser notification when the tab is not in view
 const Unread = {
-  TAB: { ideas: 'ideas', beats: 'beats', q7: 'title', meanings: 'title', titles: 'title', strengthen: 'title', images: 'images',
-    thumbs: 'thumbs', critique: 'thumbs', render: 'thumbs', structure: 'structure', produce: 'prod',
-    questions: 'qa', challenge: 'qa', elements: 'pre', element: 'pre', sound: 'pre', sndfetch: 'pre', assets: 'pre', assetfetch: 'pre', layout3d: 'pre', refparse: 'idea', montagebuild: 'montage' },
-  tabOf(kind, flow) { return flow === 'idea' && kind === 'beats' ? 'qa' : this.TAB[kind] || (flow === 'idea' ? 'idea' : 'ideas'); },
+  // задача -> панель окна видео (#/v/<id>/<tab>; '' — монтаж)
+  TAB: { questions: 'brief', refparse: 'brief', elements: 'pre', element: 'pre', make3d: 'pre', charmodel: 'pre', charparts: 'pre', trellisfix: 'pre', sound: 'pre', sndfetch: 'pre',
+    assets: 'pre', assetfetch: 'pre', layout3d: 'pre', brollfetch: 'pre', voicesplit: 'voice', voicetts: 'voice', packtext: 'pack', montagebuild: 'montage' },
+  tabOf(kind) { return this.TAB[kind] || 'montage'; },
   get() { try { return JSON.parse(Local.get('unread') || '{}'); } catch { return {}; } },
   put(u) { Local.set('unread', JSON.stringify(u)); },
   has(id, tab) { const u = this.get()[id]; return !!(u && (tab ? u[tab] : Object.keys(u).length)); },
   ask() { try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch {} },
   done(j) {
     if (!j.key || !j.key.startsWith('plan:') || j.kind === 'ytfresh') return;
-    const id = j.key.slice(5), plan = (App.plans || []).find(p => p.id === id), flow = plan ? plan.flow : 'storm';
-    const tab = this.tabOf(j.kind, flow), r = App.route;
-    const looking = !document.hidden && r.page === 'p' && r.id === id && (r.tab || defTab(flow)) === tab;
+    const id = j.key.slice(5), plan = (App.plans || []).find(p => p.id === id);
+    const tab = this.tabOf(j.kind), r = App.route;
+    const looking = !document.hidden && r.page === 'v' && r.id === id && (r.tab || 'montage') === tab;
     if (!looking) { const u = this.get(); (u[id] = u[id] || {})[tab] = Date.now(); this.put(u); }
     const long = j.kind === 'render' || j.kind === 'element' || j.kind === 'produce' || (j.elapsed || 0) > 25;
     if ((document.hidden || !looking) && long && 'Notification' in window && Notification.permission === 'granted') {
       try {
         const n = new Notification(j.status === 'error' ? '⚠ Claude: не получилось' : j.kind === 'render' || j.kind === 'element' ? '🎨 Отрисовка готова' : '✨ Claude закончил',
           { body: (plan ? `«${plan.name}» — ` : '') + (j.status === 'error' ? j.error : j.summary || ''), tag: j.id });
-        n.onclick = () => { window.focus(); go(`#/p/${id}/${tab}`); n.close(); };
+        n.onclick = () => { window.focus(); go(`#/v/${id}` + (tab === 'montage' ? '' : '/' + tab)); n.close(); };
       } catch {}
     }
   },
@@ -633,5 +633,4 @@ function route() {
   const p = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   return { page: p[0] || 'home', id: p[1] || '', tab: p[2] || '', sub: p[3] || '', sub2: p[4] || '' };
 }
-const defTab = flow => (flow === 'idea' ? 'idea' : 'ideas');       // first tab of a plan: «Идея» in the new path, «Идеи» in the brainstorm
 const go = hash => { location.hash = hash; };

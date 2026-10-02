@@ -36,48 +36,6 @@
    "thumbTab": "Превью"
   }
  },
- "tabs": [
-  {
-   "key": "ideas",
-   "label": "Идеи",
-   "icon": "💡"
-  },
-  {
-   "key": "beats",
-   "label": "Биты",
-   "icon": "🧱"
-  },
-  {
-   "key": "title",
-   "label": "Название",
-   "icon": "🎯"
-  },
-  {
-   "key": "images",
-   "label": "Образы",
-   "icon": "🖼"
-  },
-  {
-   "key": "thumbs",
-   "label": "Превью",
-   "icon": "🏆"
-  },
-  {
-   "key": "structure",
-   "label": "Структура",
-   "icon": "📐"
-  },
-  {
-   "key": "prod",
-   "label": "В работу",
-   "icon": "🚀"
-  },
-  {
-   "key": "results",
-   "label": "Итоги",
-   "icon": "📈"
-  }
- ],
  "q7": [
   {
    "key": "about",
@@ -711,62 +669,6 @@
    "hint": "Рифма с началом и мостик к следующему видео"
   }
  ],
- "stages": [
-  {
-   "key": "storm",
-   "label": "Штурм идей",
-   "short": 0.5,
-   "long": 1
-  },
-  {
-   "key": "beats",
-   "label": "Биты и факты",
-   "short": 0.5,
-   "long": 2
-  },
-  {
-   "key": "title",
-   "label": "Название и превью",
-   "short": 0.5,
-   "long": 1.5
-  },
-  {
-   "key": "script",
-   "label": "Сценарий и правки",
-   "short": 1.5,
-   "long": 4
-  },
-  {
-   "key": "voice",
-   "label": "Озвучка",
-   "short": 0.5,
-   "long": 1
-  },
-  {
-   "key": "anim",
-   "label": "Анимация",
-   "short": 3,
-   "long": 12
-  },
-  {
-   "key": "fix",
-   "label": "Правки ролика",
-   "short": 2,
-   "long": 4
-  },
-  {
-   "key": "pack",
-   "label": "Упаковка и метаданные",
-   "short": 0.5,
-   "long": 1
-  },
-  {
-   "key": "pub",
-   "label": "Публикация",
-   "short": 0.25,
-   "long": 0.5
-  }
- ],
  "retroQ": [
   {
    "key": "glad",
@@ -816,28 +718,6 @@
    "icon": "🔍"
   }
  ],
- "views": [
-  {
-   "key": "h1",
-   "label": "1 час"
-  },
-  {
-   "key": "d1",
-   "label": "Сутки"
-  },
-  {
-   "key": "d7",
-   "label": "7 дней"
-  },
-  {
-   "key": "d14",
-   "label": "14 дней"
-  },
-  {
-   "key": "d28",
-   "label": "28 дней"
-  }
- ],
  "viewsExtra": {
   "short": [
    {
@@ -884,12 +764,6 @@
    }
   ]
  },
- "checkpoints": [
-  "1",
-  "3",
-  "5",
-  "10"
- ],
  "statsQ": [
   "Какие видео зашли зрителям?",
   "Какие не зашли?",

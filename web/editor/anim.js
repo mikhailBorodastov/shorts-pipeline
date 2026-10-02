@@ -4,6 +4,7 @@ import { find } from './keys.js';
 import { newId } from './ops.js';
 
 export function initAnim(ED) {
+  ED.animUI = false;                                           // S12.11 (В2): правки анимаций в редакторе нет — клипы ставит Claude (он знает, что умеет персонаж); проигрывание осталось
   const $ = id => document.getElementById(id);
   const cardOf = id => { const rec = ED.S && ED.S.objects.get(id); let c = null; if (rec) rec.holder.traverse(x => { if (!c && x.char) c = x; }); return c; };
   ED.isChar = id => !!cardOf(id);
@@ -23,6 +24,7 @@ export function initAnim(ED) {
 
   // ---- Tab: клип на курсоре
   ED.clipMenu = async () => {
+    if (!ED.animUI) { ED.msg('Анимации ставит Claude: напишите в чат, что персонаж делает и когда'); return; }
     const id = [...ED.sel].find(x => ED.isChar(x));
     if (!id) { ED.msg('Выбери персонажа — Tab покажет его движения'); return; }
     const o = find(ED.doc, id), type = typeOf(id), card = cardOf(id);
@@ -134,7 +136,7 @@ export function initAnim(ED) {
   }
   function handles() {
     const out = [];
-    if (ED.view === 'camera') return out;
+    if (ED.view === 'camera' || !ED.animUI) return out;
     for (const id of ED.sel) {
       const c = cardOf(id); if (!c || !c.lastJoints || !c.cardInfo) continue;
       const J = c.lastJoints, bones = (c.char.rig === 'param' || c.char.skeleton === 'hog') ? ['armL', 'armR']

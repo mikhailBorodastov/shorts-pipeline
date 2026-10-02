@@ -518,6 +518,34 @@ def prefab_file(A, key, ref):
     return P.resolve(f"render/{_pid(key)}/{m.group(1)}/v{m.group(2)}/prefab.js") if m else None
 
 
+def skills_brief(A, key, d):
+    """S12.11 для агента: что умеет каждый персонаж сцены — клипы его скелета (library/anims/<тип>) с подсказкой «когда»; уже стоящие клипы."""
+    cid = P.index()["videos"].get(_pid(key), {}).get("channel")
+    out, seen = [], {}
+    for o in d.get("objects") or []:
+        f = prefab_file(A, key, (o.get("src") or {}).get("prefab"))
+        if not f or not os.path.isfile(f):
+            continue
+        m = re.search(r"skeleton:\s*'([a-z0-9-]+)'", open(f, encoding="utf-8").read())
+        if not m:
+            continue
+        typ = m.group(1)
+        if typ not in seen:
+            try:
+                seen[typ] = A.chapi().anims(A, typ, cid)
+            except Exception:
+                seen[typ] = []
+        have = ", ".join(f"{c.get('anim')}@{c.get('t')}" for c in o.get("clips") or [])
+        out.append(f"  {o.get('name')} ({o['id']}) · скелет {typ}" + (f" · уже стоят: {have}" if have else ""))
+    for typ, L in seen.items():
+        out.append(f"  клипы {typ}: " + ("; ".join(f"{a['id']} «{a.get('name')}» {a.get('dur')} с{' петля' if a.get('loop') else ''}"
+                                                  + (f" — когда: {a.get('when') or a.get('prompt')}" if (a.get('when') or a.get('prompt')) else "") for a in L) or "нет"))
+    if not out:
+        return "Персонажи и что умеют: —"
+    return ("Персонажи и что умеют (S12.11 — анимации ставишь ты: clips[] объекта {id, t, dur, anim, speed, loop}; ставь там, где их требует текст, действие или «Для финала»;"
+            " нужного движения нет — опиши автору, какое добавить):\n" + "\n".join(out))
+
+
 def channels_brief(A, key, d):
     """S10.3 для агента: живые части предметов сцены (каналы префаба) и видео для экранов."""
     out = []
@@ -1217,6 +1245,7 @@ def cli(A, argv):
         print("Комментарии автора:", "; ".join(f"[{c.get('mode', 'note')}] {names.get(c.get('target'), c.get('target') or 'сцена')} t={c.get('t')}: {c.get('text')} (id {c.get('id')})" for c in cm) or "—")
         print("Последние правки:", "; ".join(f"{'автор' if h_.get('by') == 'author' else 'Claude'}: {h_.get('desc')}" for h_ in history(A, key, el, 12)) or "—")
         print(channels_brief(A, key, d))
+        print(skills_brief(A, key, d))
         print(finals_brief(A, key, el))
         return True
     if cmd == "frame":                         # S7: кадр сцены в момент t (или несколько через запятую) -> пути PNG
