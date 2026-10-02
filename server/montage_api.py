@@ -582,6 +582,11 @@ def auto_layout(A, vid):
 
 
 def handle_get(A, h, p, q):
+    if p == "/api/montage/mix":                              # S11: звук предпросмотра — сведённый микс проекта (build/mix.wav: голос, звуки сцен, sfx, музыка)
+        f = os.path.join(vdir((q.get("video") or [""])[0]) or "", "build", "mix.wav")
+        if not os.path.isfile(f):
+            h.send_error(404); return True
+        A._send_file(h, f); return True
     if p == "/api/montage/video":                            # S11: готовый ролик (out/*.mp4) — смотреть прямо на монтаже
         pd = vdir((q.get("video") or [""])[0])
         outs = [x for x in sorted(glob.glob(os.path.join(pd or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")]
@@ -606,6 +611,18 @@ def handle_post(A, h, p, body):
                 "why": (body.get("why") or "").strip(), "status": "open", "created": now_ms(), "desc": (body.get("desc") or "")[:300]}
         A.apply_ops("plan:" + body["video"], [{"op": "add", "path": ["fixes"], "item": item}])
         h._json({"ok": True, "fix": item}); return True
+    if p == "/api/montage/audio":                            # S11: пересвести звук для предпросмотра (build.sh audio: звуки сцен + audio.py, секунды)
+        vid = body["video"]
+        pd = vdir(vid)
+        if not pd or not has_project(vid):
+            raise ValueError("нет проекта ролика")
+        t0 = time.time()
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        r = subprocess.run([_bash(), "build.sh", "audio"], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0 or not os.path.isfile(os.path.join(pd, "build", "mix.wav")):
+            raise ValueError("звук не свёлся: " + (r.stdout + r.stderr)[-400:])
+        h._json({"ok": True, "ms": int((time.time() - t0) * 1000)}); return True
     if p == "/api/montage/auto":                             # S11: ⚡ разложить по сценарию — сохраняет монтаж и файлы предпросмотра
         M, rep = auto_layout(A, body["video"])
         A.apply_ops("plan:" + body["video"], [{"op": "set", "path": ["montage"], "value": M}])

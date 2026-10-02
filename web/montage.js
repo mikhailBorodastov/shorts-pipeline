@@ -74,10 +74,26 @@ const Montage = {
       await Store.flush(key);
       const r = await api('POST', '/api/montage/gen', { video: d.id });
       const w = (r.report || {}).warn || [];
-      this.status(w.length ? '⚠ ' + w.join('; ') : 'предпросмотр обновлён');
+      this.status(w.length ? '⚠ ' + w.join('; ') : 'предпросмотр обновлён — свожу звук…');
       MontagePreview.reload(MT.t);
+      await this.mix(d, true);
+      if (!w.length) this.status('предпросмотр и звук обновлены');
     } catch (e) { this.status('⚠ ' + e.message); }
     MT.genBusy = false;
+  },
+  // 🔊 звук предпросмотра (S11): сведённый микс проекта играет вместе с кадрами; после правок — пересводится (build.sh audio, секунды)
+  async mix(d, force) {
+    if (MT.mixBusy) return MT.mixBusy;
+    if (!force && MT.mixFor === d.id && MT.audio) return;
+    MT.mixBusy = (async () => {
+      try { await api('POST', '/api/montage/audio', { video: d.id }); MT.mixRev = Date.now(); }
+      catch (e) { this.status('🔇 ' + e.message); }
+      if (!MT.audio) { MT.audio = new Audio(); MT.audio.preload = 'auto'; }
+      MT.audio.src = `/api/montage/mix?video=${encodeURIComponent(d.id)}&r=${MT.mixRev || 0}`;
+      MT.mixFor = d.id;
+      if (MT.playing) { MT.audio.currentTime = MT.t; MT.audio.play().catch(() => {}); }
+    })();
+    await MT.mixBusy; MT.mixBusy = null;
   },
   status(s) { MT.statusTxt = s; const e = $('.mt-status'); if (e) e.textContent = s; },
 
@@ -173,7 +189,7 @@ const Montage = {
     const I = MT.info[d.id], at = +MT.t.toFixed(2);
     const firstSrc = (I.sources || [])[0];
     return h('div.row.mt-toolbar',
-      h('button', { onclick: () => MontagePreview.play(!MT.playing), title: 'Играть / пауза (предпросмотр, без звука)' }, MT.playing ? '❚❚' : '▶'),
+      h('button', { onclick: () => MontagePreview.play(!MT.playing), title: 'Играть / пауза — со звуком (микс проекта: голос, звуки сцен, sfx, музыка; после правок пересводится сам)' }, MT.playing ? '❚❚' : '▶'),
       h('span.mt-time', MT.t.toFixed(2) + ' с'),
       h('span.sp'),
       h('button', { onclick: () => { const sc = (I.scenes || [])[0]; if (!sc) return UI.toast('Нет сцен в редакторе — оформи сцену на этапе «Сцены»', 'err');
@@ -385,15 +401,23 @@ const MontagePreview = {
   },
   close() { if (this.host) this.host.remove(); this.host = this.frame = this.id = this.url = null; },
   post(m) { try { this.frame && this.frame.contentWindow.postMessage(m, '*'); } catch (e) {} },
-  seek(t) { this.post({ seek: t }); },
-  play(on) { this.post({ play: on }); MT.playing = on; const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d))); },
+  seek(t) { this.post({ seek: t }); if (MT.audio) { try { MT.audio.currentTime = t; } catch (e) {} } },
+  async play(on) {
+    this.post({ play: on }); MT.playing = on;
+    if (on && MT.d) { if (MT.mixFor !== MT.d.id || !MT.audio) await Montage.mix(MT.d, false); if (MT.audio && MT.playing) { MT.audio.currentTime = MT.t; MT.audio.play().catch(() => {}); } }
+    else if (MT.audio) MT.audio.pause();
+    const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d)));
+  },
   reload(t) { if (this.frame && this.url) { this.frame.src = 'about:blank'; setTimeout(() => { if (this.frame) this.frame.src = this.url + '#t=' + (+t || 0).toFixed(2) + '&r=' + Date.now(); }, 30); } },
 };
 addEventListener('message', ev => {
   const m = ev.data || {};
   if (!MontagePreview.frame || ev.source !== MontagePreview.frame.contentWindow || typeof m.studioT !== 'number') return;
   MT.t = +m.studioT.toFixed(2);
-  if (MT.playing !== !!m.playing) { MT.playing = !!m.playing; const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d))); }
+  if (MT.playing !== !!m.playing) { MT.playing = !!m.playing; if (MT.audio && !MT.playing) MT.audio.pause(); const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d))); }
+  if (MT.audio && MT.playing && !MT.audio.paused && Math.abs(MT.audio.currentTime - MT.t) > 0.25) MT.audio.currentTime = MT.t;   // кадры и звук не разъезжаются
+  if (MT.playing && MT.d && (!MT.audio || MT.mixFor !== MT.d.id)) Montage.mix(MT.d, false);                    // ▶ нажали в самом предпросмотре
+  else if (MT.playing && MT.audio && MT.audio.paused && !MT.mixBusy) { MT.audio.currentTime = MT.t; MT.audio.play().catch(() => {}); }
   Montage.playhead();
 });
 (function follow() {                                    // окно предпросмотра держится над своим местом, даже когда страница сдвигается без перерисовки
