@@ -91,11 +91,13 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       //   RENDER_GPU=0      software raster (slower, fallback)       RENDER_FMT=png   lossless PNG frames (2.5x slower)
       //   RENDER_RANGE=a:b  only frames a..b-1 (benchmarks)           RENDER_RECYCLE=N fresh browser every N frames (default 900)
       await closeB(browser);
-      const fps = +(a1 || 30), workers = +(a2 || 4);
+      const fps = +(a1 || 30); let workers = +(a2 || 4);
       const fmt = process.env.RENDER_FMT === 'png' ? 'png' : 'jpg';   // JPEG q0.95: PNG encoding was the bottleneck (27 vs 68 fps)
       const dir = 'build/frames';
-      const probeB = await launch('probe'), probe = await openPage(probeB);
-      const total = await probe.evaluate(() => window.TOTAL); await closeB(probeB);
+      const probeB = await launch(0), probe = await openPage(probeB);   // первый работник: страница уже загружена — не грузим её второй раз
+      const total = await probe.evaluate(() => window.TOTAL);
+      if (!process.env.WORKERS && !process.env.RENDER_WORKERS_FORCE && await probe.evaluate(() => typeof X3 !== 'undefined' && !!X3.R))
+        workers = Math.min(workers, 4);                   // 3D-сцены (WebGL): видеокарта одна — 4 окна быстрее 6 (замер: 1044 кадра 31 с против 48 с)
       const N = Math.ceil(total * fps);
       const [r0, r1] = (process.env.RENDER_RANGE || `0:${N}`).split(':').map(Number);
       if (!process.env.RENDER_RANGE) { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -104,10 +106,11 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       const CH = 60, RECYCLE = +(process.env.RENDER_RECYCLE || 900), TIMEOUT = 30000;
       let nextChunk = r0, done = 0; const t0 = Date.now(), todo = r1 - r0;
       const grabF = (page, t) => page.evaluate((t, fmt) => { renderFrame(t); return document.getElementById('c').toDataURL(fmt === 'jpg' ? 'image/jpeg' : 'image/png', 0.95); }, t, fmt);
-      const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('frame timeout')), ms))]);
+      const withTimeout = (p, ms) => { let tm; return Promise.race([p, new Promise((_, rej) => { tm = setTimeout(() => rej(new Error('frame timeout')), ms); })]).finally(() => clearTimeout(tm)); };   // сторож кадра снимается — иначе процесс ждал ещё 30 с после последнего кадра
       await Promise.all(Array.from({ length: workers }, async (_, w) => {
         await new Promise(r => setTimeout(r, w * 400));   // stagger browser starts
-        let br = await launch(w), page = await openPage(br), since = 0;
+        let br, page, since = 0;
+        if (w === 0) { br = probeB; page = probe; } else { br = await launch(w); page = await openPage(br); }
         const fresh = async () => { await closeB(br); br = await launch(w); page = await openPage(br); since = 0; };
         while (true) {
           const c0 = nextChunk; if (c0 >= r1) break; nextChunk += CH;

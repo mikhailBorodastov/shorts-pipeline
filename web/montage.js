@@ -157,11 +157,17 @@ const Montage = {
           Claude.btn({ label: 'Собрать', icon: '🔨', action: 'montagebuild', key, scope: 'montage', params: { video: d.id }, noClaude: true,
             title: 'Кадры, звук и mp4 (build.sh) — 1–3 минуты', onResult: () => { this.load(d, true); } }))),
       d.project && ReviewFix.bar(d, key),
-      out && h('details.card.mt-out', { open: !!MT.outOpen, ontoggle: e => { MT.outOpen = e.target.open; } }, h('summary', h('b', '🎬 Готовый ролик'), h('span.dim.small', ' · ' + out)),
-        MT.outOpen && h('video', { controls: true, preload: 'metadata', src: `/api/montage/video?video=${encodeURIComponent(d.id)}&r=${MT.vidRev || 0}`, style: { maxHeight: '70vh', display: 'block', margin: '8px auto' } })),
+
       h('div.mt-layout',
         h('div.mt-left', this.toolbar(d, key, M), h('div.mt-tl', this.timeline(d, M)), h('div.mt-props', this.props(d, M))),
-        h('div.mt-prevslot', h('span.dim.small', 'предпросмотр'))),
+        h('div.mt-right',
+          h('div.seg.mt-prevtabs', [['live', '👁 Предпросмотр'], ['out', '🎬 Готовый ролик']].map(([k, l]) => h('button', { class: (MT.prevMode || 'live') === k ? 'sel' : '', disabled: k === 'out' && !out,
+            title: k === 'out' ? (out ? 'Собранный mp4: ' + out : 'Ролик ещё не собран — «🔨 Собрать»') : 'Живой предпросмотр монтажа со звуком — правки сразу',
+            onclick: () => { MT.prevMode = k; if (k === 'out') MontagePreview.play(false); App.render(); } }, l))),
+          MT.prevMode === 'out' && out
+            ? h('div.mt-outslot', h('video', { controls: true, preload: 'metadata', key: 'mtout|' + (MT.vidRev || 0), src: `/api/montage/video?video=${encodeURIComponent(d.id)}&r=${MT.vidRev || 0}` }),
+                h('div.dim.small', out))
+            : h('div.mt-prevslot', h('span.dim.small', 'предпросмотр')))),
     ];
   },
   redraw() {
@@ -498,9 +504,9 @@ setInterval(async () => {                                // новый mp4 (кн
     if (!r.mtime) return;
     if (MT.outSeen && MT.outSeen[vid] && r.mtime > MT.outSeen[vid]) {
       if (Claude.running('plan:' + vid, 'montage') || MT.outPending !== r.mtime) { MT.outPending = r.mtime; return; }   // файл ещё пишется — ждём, пока время перестанет меняться
-      MT.vidRev = r.mtime; MT.outOpen = true;
+      MT.vidRev = r.mtime; MT.prevMode = 'out'; MontagePreview.play(false);
       const I = MT.info[vid]; if (I) I.out = [r.file];
-      UI.toast('🎬 Ролик собран — плеер ниже'); App.render();
+      UI.toast('🎬 Ролик собран — справа «Готовый ролик»'); App.render();
     }
     (MT.outSeen = MT.outSeen || {})[vid] = r.mtime;
     if (!MT.vidRev) MT.vidRev = r.mtime;
