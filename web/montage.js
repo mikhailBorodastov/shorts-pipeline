@@ -63,6 +63,7 @@ const Montage = {
     M.len = this.autoLen(d, M);
     Store.set(key, ['montage'], M, false);
     this.redraw();
+    if (MT.playing) MTA.play(d, MT.t); else MTA.warm(d);   // звук — сразу по новому монтажу (живое сведение, файл не нужен)
     clearTimeout(MT.genTimer);
     MT.genTimer = setTimeout(() => this.regen(), 700);
   },
@@ -74,26 +75,10 @@ const Montage = {
       await Store.flush(key);
       const r = await api('POST', '/api/montage/gen', { video: d.id });
       const w = (r.report || {}).warn || [];
-      this.status(w.length ? '⚠ ' + w.join('; ') : 'предпросмотр обновлён — свожу звук…');
+      this.status(w.length ? '⚠ ' + w.join('; ') : 'предпросмотр обновлён');
       MontagePreview.reload(MT.t);
-      await this.mix(d, true);
-      if (!w.length) this.status('предпросмотр и звук обновлены');
     } catch (e) { this.status('⚠ ' + e.message); }
     MT.genBusy = false;
-  },
-  // 🔊 звук предпросмотра (S11): сведённый микс проекта играет вместе с кадрами; после правок — пересводится (build.sh audio, секунды)
-  async mix(d, force) {
-    if (MT.mixBusy) return MT.mixBusy;
-    if (!force && MT.mixFor === d.id && MT.audio) return;
-    MT.mixBusy = (async () => {
-      try { await api('POST', '/api/montage/audio', { video: d.id }); MT.mixRev = Date.now(); }
-      catch (e) { this.status('🔇 ' + e.message); }
-      if (!MT.audio) { MT.audio = new Audio(); MT.audio.preload = 'auto'; }
-      MT.audio.src = `/api/montage/mix?video=${encodeURIComponent(d.id)}&r=${MT.mixRev || 0}`;
-      MT.mixFor = d.id;
-      if (MT.playing) { MT.audio.currentTime = MT.t; MT.audio.play().catch(() => {}); }
-    })();
-    await MT.mixBusy; MT.mixBusy = null;
   },
   status(s) { MT.statusTxt = s; const e = $('.mt-status'); if (e) e.textContent = s; },
 
@@ -139,6 +124,7 @@ const Montage = {
     }
     MT.d = Store.get('plan:' + vid); MT.key = 'plan:' + vid;
     App.render();
+    await MTA.load(MT.d, true);                         // звуки сцены могли поменяться
     await this.regen();
     UI.toast('🎞 Сцена обновлена — предпросмотр пересобран' + (changed ? ` (длина ${was} → ${now} с, подогнал под голос)` : '') + '. mp4 — «🔨 Собрать»');
   },
@@ -153,6 +139,7 @@ const Montage = {
           h('span.dim.small', 'или заведи проект и монтируй сам — ниже'))),
       Plan.startProduction(d, key)];
     this.load(d);
+    MTA.warm(d);                                          // звуки — заранее в память, ▶ сразу со звуком
     const I = MT.info[d.id];
     if (!I) return h('p.dim', h('span.spin'), ' читаю монтаж…');
     if (I.error) return h('div.badline', '⚠ ' + I.error);
@@ -373,6 +360,77 @@ const Montage = {
 };
 
 // предпросмотр — плеер кадров проекта (src/index.html?preview) в своём окне поверх страницы: перерисовка страницы его не перезагружает
+// 🔊 живой звук монтажа (S11): страница сама сводит голос, звуки сцен, sfx и музыку (Web Audio) по текущему монтажу — правка слышна сразу.
+// Источники и звуки сцен — /api/montage/audiomap; те же правила, что у audio.py: пик к моменту (align peak), библиотека — к пику 0.9, срезы lib:id|с|длина,
+// у звуков — затухание после пика, у музыки — from / dur / fadeIn / fadeOut. Готовый mp4 сводит build.sh как раньше.
+const MTA = {
+  ctx: null, map: null, vid: null, bufs: {}, info: {}, nodes: [], on: false, t0: 0, c0: 0,
+  async load(d, force) {
+    if (!force && this.vid === d.id && this.map) return this.map;
+    this.vid = d.id;
+    try { this.map = await api('GET', '/api/montage/audiomap?video=' + encodeURIComponent(d.id)); } catch (e) { this.map = { srcs: {}, scenes: {}, voice: [] }; }
+    return this.map;
+  },
+  ac() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); return this.ctx; },
+  buf(url) {
+    if (!this.bufs[url]) this.bufs[url] = fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(a => this.ac().decodeAudioData(a)).then(b => {
+      let mx = 0, at = 0;
+      for (let c = 0; c < b.numberOfChannels; c++) { const x = b.getChannelData(c); for (let i = 0; i < x.length; i += 4) { const v = Math.abs(x[i]); if (v > mx) { mx = v; at = i; } } }
+      this.info[url] = { peak: at / b.sampleRate, norm: mx > 0 ? 0.9 / mx : 1 };
+      return b;
+    }).catch(() => null);
+    return this.bufs[url];
+  },
+  cues(d) {
+    const M = Montage.M(d), map = this.map || { srcs: {}, scenes: {}, voice: [] }, out = [];
+    const lay = (src, t, gain, extra) => { for (const L of map.srcs[src] || []) out.push(Object.assign({ url: L.url, t: t + (L.at || 0), gain: gain * (L.gain == null ? 1 : L.gain), lib: L.lib, peak: L.peak, off: L.off || 0, dur: L.len || null }, extra)); };
+    if ((M.voice || {}).on) for (const v of map.voice || []) out.push({ url: v.url, t: v.at, gain: 1, off: 0, dur: null, voice: true });
+    for (const u of M.units || []) {
+      const P = Montage.pairs(d, u), a = u.at || 0, b = a + (u.len || 0);
+      for (const s of map.scenes[u.scene] || []) { const tv = Montage.s2v(P, s.t); if (tv >= a - 0.05 && tv < b) lay(s.src, tv, s.gain, { align: s.align, sfx: true, cut: b }); }
+    }
+    for (const x of M.sfx || []) lay(x.src, x.at || 0, x.gain == null ? 1 : x.gain, { align: x.align || '', sfx: true });
+    for (const x of M.music || []) lay(x.src, x.at || 0, x.gain == null ? 1 : x.gain, { off: x.from || 0, dur: x.dur || null, fadeIn: x.fadeIn || 0, fadeOut: x.fadeOut || 0, music: true });
+    return out;
+  },
+  warm(d) { this.load(d).then(() => { for (const c of this.cues(d)) this.buf(c.url); }); },
+  now() { return this.on ? this.t0 + (this.ctx.currentTime - this.c0) : MT.t; },
+  stop() { for (const n of this.nodes) { try { n.stop(); } catch (e) {} } this.nodes = []; this.on = false; },
+  async play(d, t) {
+    const my = (this.playId = (this.playId || 0) + 1);
+    this.stop();
+    const ctx = this.ac(); if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (e) {} }
+    await this.load(d);
+    const C = this.cues(d);
+    await Promise.all(C.map(c => this.buf(c.url)));      // обычно уже в кэше (warm); первый раз — подождать декод
+    if (my !== this.playId || !MT.playing) return;
+    t = MT.t != null ? MT.t : t;                          // за время загрузки кадры могли уйти вперёд
+    const c0 = ctx.currentTime + 0.04;
+    this.t0 = t; this.c0 = c0; this.on = true;
+    for (const c of C) {
+      const b = await this.bufs[c.url]; if (!b) continue;
+      const inf = this.info[c.url] || {};
+      let start = c.t;
+      if (c.align === 'peak') start -= (c.peak != null && c.off === 0 ? c.peak : inf.peak - c.off) || 0;
+      const avail = Math.max(0, b.duration - c.off);
+      const len = Math.min(c.dur || avail, avail, c.cut != null ? Math.max(0, c.cut + 0.6 - start) : 1e9);
+      const end = start + len;
+      if (end <= t || len <= 0.01) continue;
+      const skip = Math.max(0, t - start), when = c0 + Math.max(0, start - t);
+      const src = ctx.createBufferSource(); src.buffer = b;
+      const g = ctx.createGain(), base = c.gain * (c.lib ? inf.norm || 1 : 1);
+      const at = s => c0 + (s - t);                        // время ролика -> время звука
+      g.gain.setValueAtTime(base, when);
+      if (c.fadeIn && skip < c.fadeIn) { g.gain.setValueAtTime(base * (skip / c.fadeIn), when); g.gain.linearRampToValueAtTime(base, at(start + c.fadeIn)); }
+      const fo = c.music ? c.fadeOut : c.sfx ? Math.min(1.2, Math.max(0.12, (end - Math.max(start, start + (inf.peak || 0) - c.off)) * 0.5)) : 0;
+      if (fo > 0 && end - fo > t) { g.gain.setValueAtTime(base, at(end - fo)); g.gain.linearRampToValueAtTime(0.0001, at(end)); }
+      src.connect(g).connect(ctx.destination);
+      src.start(when, c.off + skip, Math.max(0.01, len - skip));
+      this.nodes.push(src);
+    }
+  },
+};
+
 const MontagePreview = {
   host: null, frame: null, id: null, url: null,
   follow(r) {
@@ -401,11 +459,10 @@ const MontagePreview = {
   },
   close() { if (this.host) this.host.remove(); this.host = this.frame = this.id = this.url = null; },
   post(m) { try { this.frame && this.frame.contentWindow.postMessage(m, '*'); } catch (e) {} },
-  seek(t) { this.post({ seek: t }); if (MT.audio) { try { MT.audio.currentTime = t; } catch (e) {} } },
-  async play(on) {
+  seek(t) { this.post({ seek: t }); if (MT.playing && MT.d) MTA.play(MT.d, t); },
+  play(on) {
     this.post({ play: on }); MT.playing = on;
-    if (on && MT.d) { if (MT.mixFor !== MT.d.id || !MT.audio) await Montage.mix(MT.d, false); if (MT.audio && MT.playing) { MT.audio.currentTime = MT.t; MT.audio.play().catch(() => {}); } }
-    else if (MT.audio) MT.audio.pause();
+    if (on && MT.d) MTA.play(MT.d, MT.t); else MTA.stop();
     const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d)));
   },
   reload(t) { if (this.frame && this.url) { this.frame.src = 'about:blank'; setTimeout(() => { if (this.frame) this.frame.src = this.url + '#t=' + (+t || 0).toFixed(2) + '&r=' + Date.now(); }, 30); } },
@@ -414,10 +471,11 @@ addEventListener('message', ev => {
   const m = ev.data || {};
   if (!MontagePreview.frame || ev.source !== MontagePreview.frame.contentWindow || typeof m.studioT !== 'number') return;
   MT.t = +m.studioT.toFixed(2);
-  if (MT.playing !== !!m.playing) { MT.playing = !!m.playing; if (MT.audio && !MT.playing) MT.audio.pause(); const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d))); }
-  if (MT.audio && MT.playing && !MT.audio.paused && Math.abs(MT.audio.currentTime - MT.t) > 0.25) MT.audio.currentTime = MT.t;   // кадры и звук не разъезжаются
-  if (MT.playing && MT.d && (!MT.audio || MT.mixFor !== MT.d.id)) Montage.mix(MT.d, false);                    // ▶ нажали в самом предпросмотре
-  else if (MT.playing && MT.audio && MT.audio.paused && !MT.mixBusy) { MT.audio.currentTime = MT.t; MT.audio.play().catch(() => {}); }
+  if (MT.playing !== !!m.playing) {                    // ▶ / ❚❚ нажали в самом предпросмотре
+    MT.playing = !!m.playing;
+    if (MT.playing && MT.d) MTA.play(MT.d, MT.t); else MTA.stop();
+    const tb = $('.mt-toolbar'); if (tb && MT.d) tb.replaceWith(Montage.toolbar(MT.d, MT.key, Montage.M(MT.d)));
+  } else if (MT.playing && MTA.on && Math.abs(MTA.now() - MT.t) > 0.3 && MT.d) MTA.play(MT.d, MT.t);   // кадры и звук не разъезжаются
   Montage.playhead();
 });
 (function follow() {                                    // окно предпросмотра держится над своим местом, даже когда страница сдвигается без перерисовки

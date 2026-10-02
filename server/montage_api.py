@@ -79,6 +79,7 @@ def default(A, vid, doc):
 
 
 _LIBIDX = {}
+_LIBPEAK = {}
 
 
 def lib_sounds():
@@ -88,6 +89,7 @@ def lib_sounds():
     if _LIBIDX.get("m") != m:
         items = json.load(open(p, encoding="utf-8")).get("sounds", []) if m else []
         _LIBIDX.update(m=m, list=[[s["id"], s.get("dur"), s.get("name", "")] for s in items])
+        _LIBPEAK.clear(); _LIBPEAK.update({s["id"]: s.get("peak_t") for s in items})
     return _LIBIDX["list"]
 
 
@@ -511,6 +513,65 @@ def run_job(A, job):
     return False
 
 
+# ---------------------------------------------------------------- S11: живой звук монтажа — страница сводит сама (Web Audio), правки слышны сразу
+def _src_urls(A, vid, src, plan, scene_el=None):
+    """src звука -> [{url, at, gain, lib, peak}] — те же источники, что у генератора (_sound_files), но адресами для страницы, без копирования."""
+    if src.startswith("el:"):
+        e = A._by_id(plan.get("elements"), src[3:])
+        return [{"url": "/" + m["s"]["file"], "at": float(m.get("at") or 0), "gain": float(m.get("gain") or 1)} for m in (A.pr().el_mix(e) if e else []) if m.get("s", {}).get("file")]
+    m = re.match(r"lib:sounds/([a-z0-9-]+)@(\d+)$", src)
+    if m:
+        d = os.path.join(_lib_dir(A, vid), "sounds", m.group(1), "v" + m.group(2))
+        try:
+            fs = sorted(x for x in os.listdir(d) if x.lower().endswith((".wav", ".mp3", ".ogg", ".flac")))
+        except OSError:
+            fs = []
+        return [{"url": f"/api/lib/file/video:{vid}/sounds/{m.group(1)}/v{m.group(2)}/{f}", "at": 0.0, "gain": 1.0} for f in fs]
+    if src.startswith("file:"):
+        f = src[5:]
+        if scene_el:                                            # звук сцены — от её work/
+            return [{"url": f"/rscene/{vid}/{scene_el}/work/{f}", "at": 0.0, "gain": 1.0}]
+        return [{"url": f"/api/montage/file?video={vid}&p={f}", "at": 0.0, "gain": 1.0}]
+    m = re.match(r"lib:([^|]+)(?:\|([\d.]+)\|([\d.]+))?$", src)
+    if m:                                                       # библиотека пайплайна: нормируется к пику 0.9, пик — из index.json
+        _ = lib_sounds()
+        peak = _LIBPEAK.get(m.group(1))
+        return [{"url": f"/sfxlib/{m.group(1)}.wav", "at": 0.0, "gain": 1.0, "lib": True, "peak": peak,
+                 **({"off": float(m.group(2)), "len": float(m.group(3))} if m.group(2) else {})}]
+    return []
+
+
+def audiomap(A, vid):
+    """Всё, что нужно странице, чтобы играть звук монтажа живьём: источники (адреса и слои), звуки сцен (во времени сцены), голос по секциям."""
+    plan = A.load("plan:" + vid)
+    M = plan.get("montage") or {}
+    srcs, scenes_ = {}, {}
+    want = {x.get("src") for x in (M.get("sfx") or []) + (M.get("music") or []) if x.get("src")}
+    for s in scenes(A, vid, plan):
+        doc = _scene_doc(A, vid, s["el"]) or {}
+        lst = []
+        for x in doc.get("sounds") or []:
+            sr = x.get("src") or ""
+            key = f"{s['el']}|{sr}" if sr.startswith("file:") else sr
+            if key not in srcs:
+                srcs[key] = _src_urls(A, vid, sr, plan, s["el"] if sr.startswith("file:") else None)
+            lst.append({"t": float(x.get("t") or 0), "src": key, "gain": float(x.get("gain") if x.get("gain") is not None else 1), "align": x.get("align") or ""})
+        scenes_[s["el"]] = lst
+    for sr in want:
+        if sr not in srcs:
+            srcs[sr] = _src_urls(A, vid, sr, plan)
+    vo = voice(vid) or {}
+    pd = vdir(vid) or ""
+    vsec = []
+    if not vo.get("studio"):
+        for x in vo.get("sections") or []:
+            f = x.get("file")
+            if f and not x.get("silent"):
+                rel = os.path.relpath(f, pd).replace("\\", "/") if os.path.isabs(f) else f
+                vsec.append({"at": x["start"], "url": f"/api/montage/file?video={vid}&p={rel}"})
+    return {"srcs": srcs, "scenes": scenes_, "voice": vsec}
+
+
 # ---------------------------------------------------------------- S11: раскладка по сценарию (без Claude)
 def _tnorm(s):
     s = re.sub(r"^[\s\d:.,–—-]+", "", s or "")                  # «0:04–0:07.15 — ДВОЙНОЙ КЛИК» -> «ДВОЙНОЙ КЛИК»
@@ -582,6 +643,15 @@ def auto_layout(A, vid):
 
 
 def handle_get(A, h, p, q):
+    if p == "/api/montage/audiomap":                         # S11: живой звук монтажа
+        h._json(audiomap(A, (q.get("video") or [""])[0])); return True
+    if p == "/api/montage/file":                             # файл проекта ролика (голос по секциям, звуки монтажа file:) — только внутри папки видео
+        pd = vdir((q.get("video") or [""])[0]) or ""
+        rel = os.path.normpath((q.get("p") or [""])[0]).replace("\\", "/")
+        f = os.path.join(pd, rel)
+        if not pd or rel.startswith("..") or os.path.isabs(rel) or not os.path.isfile(f):
+            h.send_error(404); return True
+        A._send_file(h, f); return True
     if p == "/api/montage/mix":                              # S11: звук предпросмотра — сведённый микс проекта (build/mix.wav: голос, звуки сцен, sfx, музыка)
         f = os.path.join(vdir((q.get("video") or [""])[0]) or "", "build", "mix.wav")
         if not os.path.isfile(f):
