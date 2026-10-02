@@ -343,6 +343,13 @@ Object.assign(Plan, {
     const castOk = cast.filter(e => e.status === 'ok').length;
     return h('section.card',
       h('div.card-head', h('h3', K.icon + ' ' + K.label), h('span.counter', { class: live && ok === live ? 'ok' : '' }, `${ok}/${live}`), h('span.dim', K.hint), h('span.sp'),
+        live > ok && h('button.mini', { title: `Утвердить ✓ все предложенные в «${K.label}» (вычеркнутые ✗ не трогает). Отменить — по одному в карточке`, onclick: () => {
+          const todo = all.filter(e => e.status !== 'drop' && e.status !== 'ok');
+          const noDraft = K.key === 'sound' ? todo.filter(e => !elSound(e)).length : todo.filter(e => !elRender(e)).length;
+          if (!confirm(`Утвердить ${todo.length} ${plural(todo.length, 'элемент', 'элемента', 'элементов')} в «${K.label}»?` + (noDraft ? `\n\nБез ${K.key === 'sound' ? 'выбранного звука' : 'черновика'}: ${noDraft} — утвердятся по описанию.` : ''))) return;
+          todo.forEach((e, i) => Store.set(key, ['elements', e.id, 'status'], 'ok', i === todo.length - 1));
+          UI.toast(`✓ Утверждено: ${todo.length}`);
+        } }, `✓ Утвердить все (${live - ok})`),
         (K.key === 'char' || K.key === 'prop') && h('button.mini', { onclick: () => libImport(d, key, K), title: `Взять готов${K.key === 'char' ? 'ого персонажа' : 'ый пропс'} из библиотеки канала: копия версии станет утверждённым элементом этого видео` }, '📚 Из библиотеки'),
         Claude.btn({ label: 'Ещё', action: 'elements', key, scope: 'elements:' + K.key, params: () => ({ kind: K.key, focus: focus.value }), cls: 'mini',
           title: `Claude предложит ещё: ${K.label.toLowerCase()} (учтёт поле «чего не хватает?»)` })),
