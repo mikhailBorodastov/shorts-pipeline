@@ -1,0 +1,93 @@
+/* Claude Studio — S12 оболочка и база дизайн-системы (docs/studio/stage12-redesign.md §1–2). Подключается после app.css и переопределяет его. */
+/* Inter (OFL, ui/fonts/OFL.txt; @fontsource-variable/inter) — переменный 100–900, кириллица + латиница */
+@font-face { font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900; src: url("fonts/inter-cyrillic.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900; src: url("fonts/inter-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Inter"; font-style: normal; font-display: swap; font-weight: 100 900; src: url("fonts/inter-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+
+/* ---------- кнопки: белая таблетка — главное действие, остальное — тёмное и спокойное ---------- */
+button, .btn { background: var(--panel2); border-color: var(--line); border-radius: var(--r-pill); padding: 5px 12px; transition: background .12s, border-color .12s, color .12s; }
+button:hover, .btn:hover { background: var(--panel3); border-color: var(--line-strong); }
+button.primary, .btn.primary { background: var(--primary-bg); color: var(--primary-fg); border-color: transparent; font-weight: 600; }
+button.primary:hover, .btn.primary:hover { background: #fff; }
+button.ghost { background: transparent; border-color: transparent; color: var(--dim); }
+button.ghost:hover { background: var(--panel2); color: var(--text); }
+button.sel { background: var(--panel3); color: #fff; border-color: var(--line-strong); }
+button.icon { border-radius: var(--r-sm); }
+button.danger { background: transparent; border-color: rgba(255, 90, 95, .45); color: #ff9a9d; }
+button.danger:hover { background: rgba(255, 90, 95, .12); }
+/* кнопки Claude: без градиентов — фиолетовая нить как сигнал «это делает Claude» */
+button.claude { background: rgba(180, 140, 255, .09); border-color: rgba(180, 140, 255, .42); color: #e4d8ff; font-weight: 600; }
+button.claude:hover { background: rgba(180, 140, 255, .17); }
+button.claude.run { background: var(--panel2); border-style: dashed; color: var(--dim); font-weight: 500; }
+.seg { border-radius: var(--r-pill); background: var(--field); padding: 2px; gap: 2px; border-color: var(--line); }
+.seg button { border-radius: var(--r-pill); padding: 3px 11px; color: var(--dim); }
+.seg button.sel { background: var(--panel3); color: #fff; }
+kbd { font: 500 11px/1 var(--mono); color: var(--dim); background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; }
+.ico { flex: none; display: block; }
+
+/* поля, карточки, модалки, тост */
+input.box, textarea.box, select.box, textarea.big { border-radius: var(--r); }
+textarea:focus, input:focus, select:focus { border-color: var(--line-strong); box-shadow: 0 0 0 3px rgba(255, 255, 255, .04); }
+.card { background: var(--panel); border-color: var(--line); border-radius: var(--r-lg); }
+.modal { background: rgba(0, 0, 0, .66); backdrop-filter: blur(3px); }
+.modal .box { background: var(--panel); border-color: var(--line); border-radius: 18px; box-shadow: 0 24px 80px rgba(0, 0, 0, .55); }
+#toast { border-radius: var(--r-pill); background: var(--primary-bg); color: var(--primary-fg); font-weight: 600; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+#toast.err { background: var(--red); color: #fff; }
+.warn { background: rgba(255, 90, 95, .1); border-color: rgba(255, 90, 95, .5); color: #ffd0d2; }
+.tabs { background: var(--bg); }
+.tabs a.on, .tabs a:hover { background: var(--panel); }
+
+/* ---------- боковая панель ---------- */
+body { grid-template-columns: 232px minmax(0, 1fr); }
+body.side-mini { grid-template-columns: 60px minmax(0, 1fr); }
+#side { background: var(--bg-raise); border-right: 1px solid var(--line); padding: 12px 10px; gap: 10px; }
+.side-top { display: flex; align-items: center; gap: 4px; min-height: 30px; }
+.side-top .logo { flex: 1; min-width: 0; padding: 2px 4px; }
+.side-fold { color: var(--text-mute); }
+.side-chan select { width: 100%; border-radius: var(--r); padding: 7px 9px; }
+.side-search { width: 100%; justify-content: flex-start; gap: 8px; background: var(--field); border-color: var(--line); border-radius: var(--r); color: var(--text-mute); padding: 7px 9px; }
+.side-search:hover { background: var(--panel); color: var(--dim); }
+.side-search .lbl:first-of-type { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-search kbd { flex: none; }
+.side-nav { display: flex; flex-direction: column; gap: 1px; }
+.side-nav .nav { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-sm); color: var(--dim); text-decoration: none; font-weight: 500; }
+.side-nav .nav:hover { background: var(--panel); color: var(--text); }
+.side-nav .nav.on { background: var(--panel2); color: #fff; }
+.side-nav .nav.off { opacity: .45; cursor: default; }
+.side-nav .nav .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-nav .cnt { flex: none !important; font-size: 11px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
+.side-nav .live { width: 7px; height: 7px; border-radius: 50%; background: var(--agent); box-shadow: 0 0 0 3px rgba(180, 140, 255, .18); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+.side-sec { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-mute); margin: 8px 10px -4px; font-weight: 600; }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.side-status { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--text-mute); padding: 0 10px; }
+/* свёрнутая панель — только иконки */
+body.side-mini #side { padding: 12px 8px; align-items: stretch; }
+body.side-mini #side .lbl, body.side-mini .side-chan, body.side-mini .side-top .logo { display: none; }
+body.side-mini .side-top { justify-content: center; }
+body.side-mini .side-search, body.side-mini .side-nav .nav { justify-content: center; padding: 8px 0; }
+body.side-mini .side-nav .live { position: absolute; margin: -14px 0 0 16px; }
+
+/* ---------- страница: заголовок и пустое состояние ---------- */
+.page-head { display: flex; align-items: center; gap: 10px; margin: 6px 0 18px; }
+.page-head h1 { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 70px 20px; border: 1px dashed var(--line); border-radius: var(--r-lg); color: var(--dim); }
+.empty-state .es-ico { width: 52px; height: 52px; border-radius: 50%; background: var(--panel2); display: grid; place-items: center; color: var(--text); margin-bottom: 6px; }
+.empty-state b { color: var(--text); font-size: 15px; }
+.empty-state p { max-width: 460px; margin: 0; }
+
+/* ---------- Ctrl K ---------- */
+.pal { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.pal-box { width: min(620px, 92vw); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px; box-shadow: 0 30px 90px rgba(0, 0, 0, .6); overflow: hidden; display: flex; flex-direction: column; max-height: 70vh; }
+.pal-in { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); color: var(--dim); }
+.pal-in input.pal-q { flex: 1; font-size: 15px; border: 0; background: transparent; padding: 4px 0; box-shadow: none; }
+.pal-list { overflow: auto; padding: 6px; }
+.pal-g { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-mute); padding: 8px 10px 4px; font-weight: 600; }
+.pal-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; color: var(--text); }
+.pal-row .ico { color: var(--dim); }
+.pal-row.on { background: var(--panel3); }
+.pal-row.on .ico { color: var(--text); }
+.pal-empty { padding: 22px; text-align: center; color: var(--text-mute); }
+.pal-foot { display: flex; gap: 16px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--text-mute); }
+.pal-foot kbd { margin-right: 3px; }

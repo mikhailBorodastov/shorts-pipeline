@@ -1294,7 +1294,11 @@ def backups_dir(vid):
 
 
 def web_mtime():
-    return max((os.path.getmtime(os.path.join(WEB, f)) for f in os.listdir(WEB)), default=0)
+    fs = [os.path.join(WEB, f) for f in os.listdir(WEB)]
+    ui = os.path.join(WEB, "ui")                       # S12: оболочка и дизайн-система — web/ui/
+    if os.path.isdir(ui):
+        fs += [os.path.join(ui, f) for f in os.listdir(ui)]
+    return max((os.path.getmtime(f) for f in fs), default=0)
 
 
 def handle_get(h):

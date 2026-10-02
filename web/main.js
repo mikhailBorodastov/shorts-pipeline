@@ -36,12 +36,13 @@ const App = {
     return this.shownSig() !== this.shown;            // compare with what is on screen now
   },
   shownSig() {
-    return this.route.page === 'home' ? JSON.stringify(this.plans) : this.plans.map(p => [p.id, p.name, p.status, p.mode].join('|')).join(',');
+    return this.route.page === 'home' || this.route.page === 'videos' ? JSON.stringify(this.plans) : this.plans.map(p => [p.id, p.name, p.status, p.mode].join('|')).join(',');
   },
 
   async navigate() {
     this.route = route();
     const r = this.route;
+    Shell.remember(r);                                 // «Редактор» в боковой панели — последнее открытое видео
     const need = { p: ['plan:' + r.id] }[r.page] || [];
     try { await Promise.all(need.map(k => Store.load(k))); }
     catch (e) {
@@ -65,7 +66,7 @@ const App = {
     let page;
     try { page = this.page(); } catch (e) { console.error(e); page = h('div.card.empty', '⚠ Ошибка отрисовки: ' + e.message); }
     $('#view').replaceChildren(page);
-    $('#side').replaceChildren(...[Pages.side()].flat(Infinity).filter(x => x instanceof Node));
+    $('#side').replaceChildren(...[Shell.side()].flat(Infinity).filter(x => x instanceof Node));   // S12: новая боковая панель (ui/shell.js)
     this.shown = this.shownSig();
     main.scrollTop = opts.top ? 0 : top;
     if (fk) {
@@ -100,6 +101,8 @@ const App = {
     if (r.page === 'newchan') return Pages.newChannel();
     if (r.page === 'settings') return Pages.settings();
     if (r.page === 'help') return Pages.help();
+    const soon = Shell.page(r);                        // S12: Память, Обложки, Рендеры — разделы следующих частей
+    if (soon) return soon;
     return Pages.home();
   },
 };

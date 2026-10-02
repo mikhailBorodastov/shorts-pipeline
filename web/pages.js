@@ -1,4 +1,4 @@
-// Claude Studio — экраны вне одного видео: боковая панель (канал, видео), проект-канал (видео + библиотека), библиотека, ⚙ стиль, справочник.
+// Claude Studio — экраны вне одного видео: проект-канал (видео + библиотека), библиотека, ⚙ стиль, справочник. Боковая панель — ui/shell.js (S12).
 'use strict';
 
 const STAGES = [['idea', '💡', 'Идея'], ['qa', '❓', 'Вопросы'], ['title', '🎯', 'Название'], ['script', '📝', 'Сценарий'], ['pre', '🎬', 'Препродакшен'],
@@ -9,26 +9,6 @@ const LIB = { items: null, q: '', kind: '', cand: null, busy: false };
 const KIND_ICON = { char: '🧑', prop: '📦', sound: '🔊' };
 
 const Pages = {
-  side() {
-    const r = App.route, C = App.info.channel || {}, cs = App.info.channels || [];
-    const nav = (href, icon, label, on) => h('a', { href, class: on ? 'on' : '' }, icon, ' ', label);
-    const recent = App.plans.filter(p => p.status !== 'archived').slice(0, 12);
-    return [
-      h('a.logo', { href: '#/' }, h('span.l1', 'Claude'), h('span.l2', 'Studio')),
-      cs.length > 0 && h('label.chan', { title: 'Канал (проект): у каждого свой стиль, библиотека и видео' },
-        sel([...cs.map(c => ({ value: c.id, label: `${c.icon || '📺'} ${c.name}` })), { value: '__new', label: '+ новый канал…' }], C.id, v => v === '__new' ? go('#/newchan') : Pages.useChannel(v), { class: 'box', 'aria-label': 'Канал' })),
-      h('div.newbtns',
-        h('button.new.short', { onclick: () => Pages.newPlan('short'), title: 'Идея → вопросы → название → препродакшен → сцены → сценарий → … → упаковка' }, '⚡ + шортс'),
-        h('button.new.long', { onclick: () => Pages.newPlan('long'), title: 'Длинное видео на 8–15 минут' }, '🎬 + длинное видео')),
-      h('nav', nav('#/', '🏠', 'Проект', r.page === 'home'), nav('#/lib', '📚', 'Библиотека', r.page === 'lib'), nav('#/style', '🎨', 'Стиль канала', r.page === 'style'), nav('#/settings', '⚙', 'Настройки', r.page === 'settings')),
-      recent.length > 0 && h('div', h('div.sec', 'Видео'), recent.map(p => h('a.rp', { class: r.page === 'p' && r.id === p.id ? 'on' : '', href: `#/p/${p.id}/${p.stage || 'idea'}`, title: p.name },
-        (REF.modes[p.mode] || {}).icon + ' ' + p.name, dot(Unread.has(p.id))))),
-      h('div.foot', h('span#saved', 'всё сохранено'), !App.info.claude && h('span.warn-small', 'Claude Code не найден — кнопки ✨ выключены'),
-        App.info.legacy ? h('span.warn-small', 'Переезд ещё не сделан: данные в _ideas') : h('span', 'Канал: ' + (C.name || '—')),
-        h('a', { href: '#/help', class: 'dim' }, '📖 справочник')),
-    ];
-  },
-
   async useChannel(id) {
     try { await api('POST', '/api/studio/use', { channel: id }); LIB.items = null; Pages._style = undefined; if (window.CH) CH.files = null; await App.refreshState(); go('#/'); App.render(); }
     catch (e) { UI.toast(e.message, 'err'); }
@@ -51,7 +31,8 @@ const Pages = {
     return h('div.project',
       h('div.phead', h('h1', `${C.icon || '📺'} ${C.name || 'Claude Studio'}`), h('span.sp'),
         h('a.btn', { href: '#/style', title: 'Стиль канала: стайл-гайд, по которому пишутся сценарии и рисуется всё' }, '⚙ стиль'),
-        h('button.primary', { onclick: () => Pages.newPlan('short') }, '+ видео')),
+        h('button', { onclick: () => Pages.newPlan('long'), title: 'Длинное видео 16:9 на 8–15 минут' }, Icon('wide', 15), 'Длинное'),
+        h('button.primary', { onclick: () => Pages.newPlan('short') }, Icon('plus', 15), 'Новое видео')),
       C.about && h('p.dim', C.about),
       h('div.cols',
         h('section.card.videos',
