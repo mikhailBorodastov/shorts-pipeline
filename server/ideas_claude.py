@@ -1732,8 +1732,8 @@ def apply(action, docs, params, res):
         by = {}
         for o in ops:
             by[o["item"]["kind"]] = by.get(o["item"]["kind"], 0) + 1
-        many = {"scene": "сцены", "char": "персонажи", "prop": "пропсы", "sound": "звуки"}
-        return [(key, ops)], "Claude: " + (", ".join(f"{many[k]} +{n}" for k, n in by.items()) or "новых элементов нет")
+        many = {"scene": "сцены", "char": "персонажи", "prop": "пропсы", "sound": "звуки", "vfx": "эффекты", "broll": "B-roll"}
+        return [(key, ops)], "Claude: " + (", ".join(f"{many.get(k, k)} +{n}" for k, n in by.items()) or "новых элементов нет")
 
     if action == "animteach":
         wd, typ = params["_wd"], params["_type"]
