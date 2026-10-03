@@ -152,6 +152,8 @@ const sceneCastOf = (d, e) => {
   const els = d.elements || [], out = [];
   for (const id of e.uses || []) { const x = els.find(y => y.id === id); if (x && x.status !== 'drop' && !out.some(o => o.x === x)) out.push({ x, via: 'uses' }); }
   for (const x of elMentions(d, e)) if ((x.kind === 'char' || x.kind === 'prop') && x.status !== 'drop' && !out.some(o => o.x === x)) out.push({ x, via: '@' });
+  for (const { x: o } of [...out]) for (const v of els.filter(y => y.status !== 'drop' && (y.from3d || {}).el === o.id && (y.from3d || {}).mode === 'vary'))   // вариации — вместе с оригиналом (preprod.cast_of)
+    if (!out.some(z => z.x === v)) out.push({ x: v, via: 'variant', of: o });
   return out;
 };
 const elPic = x => { const r = elRender(x); return r ? r.img : ((x.refs || []).find(f => f.img) || {}).img; };
@@ -311,7 +313,7 @@ Object.assign(Plan, {
         return h('div.castitem', { class: x.status === 'ok' ? 'ok' : '' },
           h('a', { href: `#/v/${d.id}/pre/${x.id}`, title: 'Открыть элемент' }, pic ? h('img', { src: '/' + pic, alt: '' }) : h('span.elph', KIND(x.kind).icon)),
           h('div.grow', h('b', x.name), h('div.dim.small', (x.status === 'ok' ? '✓ утверждён' : r ? `черновик v${r.v}, не утверждён` : 'черновика нет — Claude нарисует по описанию')
-            + (via === '@' ? ' · отмечен через @ в тексте' : ''))),
+            + (via === '@' ? ' · отмечен через @ в тексте' : via === 'variant' ? ' · вариация, в сцене вместе с оригиналом' : ''))),
           via === 'uses' ? h('button.icon.del', { title: 'Убрать из сцены', onclick: () => Store.set(key, P, uses.filter(i => i !== x.id), true) }, '×')
             : h('span.dim.small', { title: 'Чтобы убрать — удали @-ссылку из текста сцены' }, '@'));
       })) : h('p.dim.small', pool.length ? 'Пока никого — добавь из списка или отметь через @ в описании.' : 'Сначала заведи персонажей и пропсы в препродакшене.'),

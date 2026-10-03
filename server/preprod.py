@@ -147,7 +147,24 @@ def cast_of(scene, d, idx=None):
         if e.get("kind") in ("char", "prop") and e.get("status") != "drop" and e["id"] not in seen:
             seen.add(e["id"])
             out.append((e, "@"))
+    for e, _ in list(out):                                  # S12.13: вариации пропса («⋯ Сделать вариации») — в сцене вместе с оригиналом, без ручной привязки
+        for x in variants_of(e, d):
+            if x["id"] not in seen:
+                seen.add(x["id"])
+                out.append((x, "variant"))
     return out
+
+
+def variants_of(e, d):
+    """Вариации пропса e (from3d.mode == 'vary', from3d.el == e.id), не вычеркнутые."""
+    return [x for x in d.get("elements") or [] if x.get("status") != "drop" and (x.get("from3d") or {}).get("el") == e.get("id")
+            and (x.get("from3d") or {}).get("mode") == "vary"]
+
+
+def variant_src(x, d):
+    """Оригинал вариации x (или None)."""
+    f = x.get("from3d") or {}
+    return next((e for e in d.get("elements") or [] if e["id"] == f.get("el")), None) if f.get("mode") == "vary" else None
 
 
 def used_in(e, d, idx=None):
@@ -205,7 +222,7 @@ def pre_md(d, where=None, folders=None):
             if kind == "scene":
                 cast = cast_of(e, d, idx)
                 if cast:
-                    L.append("  - в сцене: " + ", ".join(f"@[{x.get('name', '')}]" + (" (отмечен через @)" if via == "@" else "") for x, via in cast))
+                    L.append("  - в сцене: " + ", ".join(f"@[{x.get('name', '')}]" + (" (отмечен через @)" if via == "@" else " (вариация)" if via == "variant" else "") for x, via in cast))
             else:
                 sc = used_in(e, d, idx)
                 if sc:
@@ -478,7 +495,7 @@ def element_readme(e, rec, d, folders, idx):
     if kind == "scene" and rec.get("cast"):
         L += ["## Что в сцене", "Собери сцену из этих элементов (их код и ТЗ — в их папках; бери последнюю утверждённую версию оттуда, а не копию из кода сцены):", "",
               "| кто / что | тип | как попал | папка |", "|---|---|---|---|"]
-        L += [f"| {c['name']} | {ONE.get(c['kind'], '')} | {'«Что в сцене»' if c['via'] == 'uses' else '@ в тексте сцены'} | [{rel(c['folder'].rstrip('/'))}/]({rel(c['folder'].rstrip('/'))}/) |" for c in rec["cast"]]
+        L += [f"| {c['name']} | {ONE.get(c['kind'], '')} | {'«Что в сцене»' if c['via'] == 'uses' else 'вариация пропса из сцены' if c['via'] == 'variant' else '@ в тексте сцены'} | [{rel(c['folder'].rstrip('/'))}/]({rel(c['folder'].rstrip('/'))}/) |" for c in rec["cast"]]
         L.append("")
     if rec.get("used_in"):
         L += ["## Стоит в сценах", ", ".join(f"[{s['name']}]({rel(folders[s['id']])}/)" for s in rec["used_in"] if folders.get(s["id"])), ""]

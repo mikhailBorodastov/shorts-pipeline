@@ -1373,6 +1373,9 @@ def element_spec(docs, params, sysp, genre):
         rs = x.get("renders") or []
         r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1] if rs else None)
         line = f"- {KINDS.get(x.get('kind'), '')} @[{x.get('name', '')}] — {x.get('desc') or 'без описания'}" + (" (утверждён автором)" if x.get("status") == "ok" else "")             + (" (автор отметил через @ в тексте сцены)" if via == "@" else "")
+        if via == "variant":
+            src = preprod.variant_src(x, plan)
+            line += f" — ВАРИАЦИЯ пропса @[{(src or {}).get('name', '')}]: та же вещь в другой версии. Где таких предметов несколько (дома, машины, деревья), ставь разные вариации вперемешку с оригиналом, а не одну копию много раз"
         if r:
             line += (f"\n  черновик {_fwd(P.resolve(r['img']))}, код {_fwd(os.path.join(P.resolve('render/' + r['dir']), 'element.js'))}"
                      + (f", функция {r['fn']}" if r.get("fn") else ""))

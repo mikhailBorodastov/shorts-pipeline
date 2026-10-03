@@ -207,6 +207,7 @@ def stapi():
 def capi():
     """ideas_claude, reloaded when its file changes."""
     global _claude_mtime
+    pr()                                                   # препродакшен — свежий раньше промптов (состав сцен, вариации)
     m = os.path.getmtime(ideas_claude.__file__)
     if m != _claude_mtime:
         try:

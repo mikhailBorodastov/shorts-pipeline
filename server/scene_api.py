@@ -518,6 +518,22 @@ def prefab_file(A, key, ref):
     return P.resolve(f"render/{_pid(key)}/{m.group(1)}/v{m.group(2)}/prefab.js") if m else None
 
 
+def variants_brief(A, key):
+    """S12.13 для агента: у каких 3D-пропсов видео есть вариации — где одинаковых предметов несколько, ставь разные версии (src.prefab)."""
+    plan = A.load(key)
+    L = []
+    for e in plan.get("elements") or []:
+        vs = A.pr().variants_of(e, plan)
+        if e.get("kind") != "prop" or not vs:
+            continue
+        def ref(x):
+            rs = [r for r in x.get("renders") or [] if r.get("three3")]
+            r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1] if rs else None)
+            return f"el:{x['id']}@v{r['v']}" if r else "(черновика ещё нет)"
+        L.append(f"  «{e.get('name')}» {ref(e)} → " + "; ".join(f"«{x.get('name')}» {ref(x)}" for x in vs))
+    return ("Вариации пропсов (одна вещь в разных версиях — где таких предметов несколько, ставь разные вперемешку, а не копии одного):\n" + "\n".join(L)) if L else "Вариации пропсов: —"
+
+
 def skills_brief(A, key, d):
     """S12.11 для агента: что умеет каждый персонаж сцены — клипы его скелета (library/anims/<тип>) с подсказкой «когда»; уже стоящие клипы."""
     cid = P.index()["videos"].get(_pid(key), {}).get("channel")
@@ -597,8 +613,9 @@ def props3d_choices(A, key, plan):
         if (x.get("lib") or {}).get("id") and lib_has(x["lib"]["id"]):        # копия библиотечного пропса — в списке и так есть lib: (одна ссылка — один хват)
             continue
         r = next((y for y in rs if y.get("id") == x.get("render")), rs[-1])
+        src = A.pr().variant_src(x, plan)
         out.append({"ref": f"el:{x['id']}@v{r['v']}", "name": x.get("name", ""), "img": "/" + r["img"] if r.get("img") else "",
-                    "from": "видео" + (" ✓" if x.get("status") == "ok" else ""), "h": r.get("h")})
+                    "from": ("вариация «" + src.get("name", "") + "» · " if src else "") + "видео" + (" ✓" if x.get("status") == "ok" else ""), "h": r.get("h")})
     ch = P.index()["videos"].get(pid, {}).get("channel")
     try:
         c = A.stapi().channel_dir(ch)
@@ -1246,6 +1263,7 @@ def cli(A, argv):
         print("Последние правки:", "; ".join(f"{'автор' if h_.get('by') == 'author' else 'Claude'}: {h_.get('desc')}" for h_ in history(A, key, el, 12)) or "—")
         print(channels_brief(A, key, d))
         print(skills_brief(A, key, d))
+        print(variants_brief(A, key))
         print(finals_brief(A, key, el))
         return True
     if cmd == "frame":                         # S7: кадр сцены в момент t (или несколько через запятую) -> пути PNG
