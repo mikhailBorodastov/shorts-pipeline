@@ -52,7 +52,26 @@ def extra(A, d):
     scenes = len(mt.get("units") or []) or len(els) or (_script_scenes(vdir) if vdir else 0)
     outs = _outs(vdir) if vdir else []
     return {"scenes": scenes, "len": mt.get("len") or 0, "ready": bool(outs), "outs": len(outs),
-            "cover": bool(vdir and _cover_src(A, d, vdir))}
+            "cover": bool(vdir and _cover_src(A, d, vdir)), "step": _step(A, d, vdir, mt)}
+
+
+def _step(A, d, vdir, mt):
+    """Этап по факту, как пайплайн окна видео (S12.13), а не «последний открытый»: бриф → сценарий → препродакшен → монтаж → упаковка."""
+    if d.get("stage") == "brief":
+        return "brief"
+    if not vdir or not os.path.isfile(os.path.join(vdir, "script.md")):
+        return "script"
+    try:
+        if A.mnapi().script_state(d["id"]).get("template"):
+            return "script"
+    except Exception:
+        pass
+    live = [e for e in d.get("elements") or [] if e.get("status") != "drop"]
+    if not live or any(e.get("status") != "ok" for e in live):
+        return "pre"
+    if not (mt.get("units") or []):
+        return "montage"
+    return "pack"
 
 
 def _thumb_file(vdir):

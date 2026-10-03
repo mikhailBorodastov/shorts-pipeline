@@ -19,9 +19,11 @@ const Videos = {
   // стадия производства для таблетки карточки
   stage(p, x) {
     if (p.stage === 'brief') return { label: 'Бриф', cls: 'amber', title: 'Бриф не закончен — клик по карточке: вопросы Claude' };
+    const STEP = { script: 'Сценарий', pre: 'Препродакшен', montage: 'Монтаж', pack: 'Упаковка' };   // этап по факту (videos_api._step)
     if (p.status === 'out') return { label: 'Вышло', cls: 'ok' };
     if (x && x.ready) return { label: 'Готово', cls: 'ok' };
     if (p.status === 'draft') return { label: 'Черновик', cls: '' };
+    if (x && STEP[x.step]) return { label: STEP[x.step], cls: 'info' };
     const st = STAGE_OF[p.stage] || STAGE_OF.idea;
     return { label: st.label, cls: 'info' };
   },
