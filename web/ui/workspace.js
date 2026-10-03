@@ -74,6 +74,7 @@ const Workspace = {
 
   steps(d, M, I) {
     const id = d.id, has = !!d.project, scr = has ? Plan.scriptState(d) : {}, words = has ? Montage.words(d) : [];
+    const vo = has ? (MT.info[d.id] || {}).voice : null, mute = !!(vo && (vo.sections || []).length && !words.length && vo.sections.every(s => s.silent));   // ролик без диктора: тайминги по таймкодам сцен
     const els = (d.elements || []).filter(e => e.status !== 'drop'), ok = els.filter(e => e.status === 'ok').length;
     const agent = (text, mode = 'chat', model = 'opus') => { AgentPanel.toggle(true); AgentPanel.say(text, { mode, model }); };
     const nav = tab => () => go(`#/v/${id}/${tab}`);
@@ -82,8 +83,9 @@ const Workspace = {
       { icon: 'pencil', label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : 'Написать', primary: !scriptDone,
         btn: scriptDone ? () => ScriptWin.open(d) : () => this.writeScript(d),
         title: scriptDone ? 'Раскадровка: текст сцен, правки, фактчек' : d.brief ? 'Claude: ресерч и сценарий по брифу (проект ролика создастся сам)' : 'Сначала бриф и вопросы Claude — потом сценарий' },
-      { icon: 'mic', label: 'Озвучка', sub: words.length ? '' : 'черновой голос или своя запись', st: words.length ? 'done' : '', act: words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone },
-      { icon: 'clock', label: 'Тайминги', sub: words.length ? `${words.length} слов` : '', st: words.length ? 'done' : '', act: words.length ? 'Повторить' : 'Запустить', btn: nav('voice'), off: !scriptDone,
+      { icon: 'mic', label: 'Озвучка', sub: mute ? 'без диктора — по сценарию' : words.length ? '' : 'черновой голос или своя запись', st: words.length || mute ? 'done' : '', act: mute ? 'Открыть' : words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone,
+        title: mute ? 'В сценарии нет закадрового текста — голос не нужен. Реплики героев — звериная речь в панели «Озвучка»' : '' },
+      { icon: 'clock', label: 'Тайминги', sub: words.length ? `${words.length} слов` : mute ? `по таймкодам · ${vo.sections.length} сцен` : '', st: words.length || mute ? 'done' : '', act: words.length || mute ? 'Повторить' : 'Запустить', btn: nav('voice'), off: !scriptDone,
         title: 'Слова голоса по времени: из них субтитры и привязка сцен к словам' },
       { icon: 'users', label: 'Препродакшен', sub: els.length ? `${ok} из ${els.length} утверждено` : '', st: els.length && ok === els.length ? 'done' : els.length ? 'part' : '', act: App.route.tab === 'pre' ? 'Открыт' : 'Открыть',
         btn: () => go(`#/v/${id}/pre`), off: App.route.tab === 'pre' && !App.route.sub },

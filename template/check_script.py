@@ -73,6 +73,12 @@ def main(path="script.md"):
     sys.stdout.reconfigure(encoding="utf-8")
     _, sections = parse_script(path)
     voiced = [s for s in sections if s.get("text")]
+    if not voiced:                             # сюжетный ролик без диктора: мысли и реплики — субтитрами / звериной речью, голоса нет
+        total = sum(s.get("silence") or 0 for s in sections)
+        print(f"{path}: ролик БЕЗ ДИКТОРА — сцен {len(sections)}, по таймкодам {total:.1f} с. Нормы речи (темп, фразы, «Но», числа) не проверяются.")
+        print(("✅" if 20 <= total <= 900 else "❌") + f" длина по таймкодам: {total:.1f} с")
+        print("\nВручную: хук в первые 3 с картинкой, смена кадра каждые 5–10 с, субтитры-мысли читаются за время сцены (≈ 12–15 знаков/с), без тишины перед финалом.")
+        return 0 if 20 <= total <= 900 else 1
     text = " ".join(s["text"] for s in voiced)
     sents = sentences(text)
     lens = [len(s.split()) for s in sents]
