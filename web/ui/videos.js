@@ -149,13 +149,25 @@ const NewVideo = {
   resume(d) {
     this.openFor(d); this.edit = false; this.step = 2; this.draw();
   },
-  refresh() { if (this.el && !this.min && this.step === 2) this.draw(); },            // App.render: пришли вопросы Claude / ответы сохранились
+  // App.render (каждое сохранение, раз в ~2 с): перерисовать только если поменялось видимое — вопросы, число отвеченных, работа Claude
+  refresh() {
+    if (!this.el || this.min || this.step !== 2) return;
+    const key = 'plan:' + this.id, d = Store.get(key) || {}, qa = d.qa || [];
+    const sig = [qa.map(q => q.id + (q.skip ? '-' : '') + ((q.a || '').trim() ? '+' : '')).join(','), !!Claude.running(key, 'questions'), d.name].join('|');
+    if (sig === this.sig) return;
+    this.draw();
+  },
 
   secs(v) { const m = /^\s*(\d+)(?::(\d{1,2}))?\s*$/.exec(v || ''); return m ? (m[2] != null ? +m[1] * 60 + +m[2] : +m[1] * 60) : 0; },
 
   draw() {
+    const old = this.el.querySelector('.nv-body'), top = old ? old.scrollTop : 0, same = this.drawnStep === this.step;
     const box = this.step === 1 ? this.step1() : this.step2();
     this.el.replaceChildren(box);
+    if (same) { const nb = this.el.querySelector('.nv-body'); if (nb) nb.scrollTop = top; }     // перерисовка не прыгает наверх
+    this.drawnStep = this.step;
+    if (this.step === 2) { const key = 'plan:' + this.id, d = Store.get(key) || {}, qa = d.qa || [];
+      this.sig = [qa.map(q => q.id + (q.skip ? '-' : '') + ((q.a || '').trim() ? '+' : '')).join(','), !!Claude.running(key, 'questions'), d.name].join('|'); }
     requestAnimationFrame(() => this.el && this.el.querySelectorAll('textarea.auto').forEach(autosize));
   },
 
