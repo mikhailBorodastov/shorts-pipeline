@@ -113,7 +113,7 @@ def fast_state(A, vid):
     mn = A.mnapi()
     out = mn.fast_out(pd) if pd else ""
     fresh = bool(out) and os.path.getmtime(out) >= mn.fast_src_mtime(pd) - 1
-    job = next((j.info() for j in A.JOBS.values() if j.kind == "montagebuild" and j.key == "plan:" + vid and j.status in ("running", "queued")), None)
+    job = next((j.info() for j in A.JOBS.values() if j.kind in ("fastmontage", "montagebuild") and j.key == "plan:" + vid and j.status in ("running", "queued")), None)
     agent = A.agapi().SESS.get(vid)
     busy = bool(agent and agent.busy and agent.alive())
     return {"segments": [], "fps": 30, "stale": [] if fresh else ["all"], "playback": bool(out), "playbackFresh": fresh, "fast": True,
@@ -242,7 +242,7 @@ def handle_post(A, h, p, body):
         try:
             if A.load("plan:" + vid).get("fast"):                 # быстрый монтаж: пересобрать ролик целиком (build.sh)
                 ag = A.agapi().SESS.get(vid)
-                if ag and ag.busy and ag.alive():
+                if (ag and ag.busy and ag.alive()) or any(j.kind == "fastmontage" and j.key == "plan:" + vid and j.status in ("running", "queued") for j in A.JOBS.values()):
                     raise RuntimeError("Claude ещё пишет ролик — соберу, когда закончит")
                 if not A.mnapi().fast_out(P.video(vid) or "") and not body.get("force"):   # первый раз ролик собирает сам Claude (montage build)
                     raise RuntimeError("ролика ещё нет — его соберёт Claude")

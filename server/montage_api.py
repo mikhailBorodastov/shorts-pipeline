@@ -254,29 +254,16 @@ def fast_src_mtime(pd):
 
 
 def fast_start(A, vid, wish=""):
-    """«Сделать монтаж» быстро (как до Studio): флаг fast, тулкит бумаги в проект, агент в режиме fast пишет ролик кодом."""
-    key = "plan:" + vid
-    plan = A.load(key)
-    pd = vdir(vid)
-    if not pd or not has_project(vid):
+    """«Сделать монтаж» быстро: задача fastmontage (server/fast_api.py) — план, сцены параллельно, сводка агентом в панели."""
+    if not vdir(vid) or not has_project(vid):
         raise ValueError("у видео ещё нет проекта ролика — сначала сценарий («Начать»)")
-    A.apply_ops(key, [{"op": "set", "path": ["fast"], "value": True}, {"op": "set", "path": ["locations"], "value": False}])
-    src = os.path.join(pd, "src")
-    pj = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "stands", "paper.js")
-    if pj and os.path.isfile(pj) and not os.path.isfile(os.path.join(src, "paper.js")):
-        shutil.copy2(pj, os.path.join(src, "paper.js"))
-    ih = os.path.join(src, "index.html")
+    par = 4
     try:
-        html = open(ih, encoding="utf-8").read()
-        if "paper.js" not in html and '<script src="scenes.js"></script>' in html:
-            open(ih, "w", encoding="utf-8").write(html.replace('<script src="scenes.js"></script>', '<script src="paper.js"></script>\n<script src="scenes.js"></script>'))
-    except OSError:
+        par = max(2, min(5, int(A.max_jobs()) + 1))
+    except Exception:
         pass
-    text = ("⚡ Быстрый монтаж: сделай ролик по сценарию кодом, как до Studio (режим fast). Препродакшен не обязателен — бери из него то, что есть, остальное рисуй сам; "
-            "в конце занеси в препродакшен то, что вышло (персонажи, предметы, места)." + (" Пожелания автора: " + wish.strip() if (wish or "").strip() else ""))
-    s = A.agapi().get_session(A, vid, A.VISUAL_MODEL, "fast")
-    s.say(text, None)
-    return {"ok": True, "run": s.run}
+    j = A.start_job("fastmontage", "plan:" + vid, "fastmontage", {"wish": wish or "", "par": par})
+    return {"ok": True, "job": j.info()}
 
 
 def fast_done(A, vid):
@@ -596,6 +583,8 @@ def build(A, job):
     pd = vdir(vid)
     job.summary = "собираю: звук…"
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    if A.load("plan:" + vid).get("fast"):
+        env["FPS"] = "30"                                    # быстрый монтаж: черновая сборка 30 к/с (вдвое меньше кадров); финал — «Экспорт»
     proc = subprocess.Popen([_bash(), "build.sh"], cwd=pd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True, encoding="utf-8", errors="replace",
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     job.proc = proc
