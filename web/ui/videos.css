@@ -65,3 +65,11 @@
 .nv-qa { display: flex; flex-direction: column; }
 .nv-qa .qrow { padding: 8px 4px; }
 @media (max-width: 720px) { .nv-row { flex-direction: column; } }
+
+/* S12.13: свёрнутый поп-ап «Новое видео» */
+#nv-dock { position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 940; display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 10px 30px rgba(0,0,0,.5); color: var(--text); }
+#nv-dock small { color: var(--text-mute); }
+#nv-dock:hover { border-color: var(--text-mute); }
+.pill.warn { color: #ffd479; }
+.pill.warn i { background: #ffd479; }

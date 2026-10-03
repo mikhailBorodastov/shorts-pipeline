@@ -18,6 +18,7 @@ const fmtLen = s => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).pad
 const Videos = {
   // стадия производства для таблетки карточки
   stage(p, x) {
+    if (p.stage === 'brief') return { label: 'Бриф не закончен', cls: 'warn' };
     if (p.status === 'out') return { label: 'Вышло', cls: 'ok' };
     if (x && x.ready) return { label: 'Готово', cls: 'ok' };
     if (p.status === 'draft') return { label: 'Черновик', cls: '' };
@@ -65,7 +66,8 @@ const Videos = {
     const src = x && x.cover ? `/api/videos/cover?id=${p.id}&v=${p.updated}` : '';
     const stop = fn => e => { e.preventDefault(); e.stopPropagation(); fn(); };
     const noimg = () => h('div.vc-noimg', Icon(p.mode === 'long' ? 'wide' : 'tall', 26));
-    return h('a.vcard', { href, title: p.chosen || p.name },
+    const resume = p.stage === 'brief' ? e => { e.preventDefault(); Store.load('plan:' + p.id).then(() => NewVideo.resume(Store.get('plan:' + p.id))).catch(er => UI.toast(er.message, 'err')); } : null;
+    return h('a.vcard', { href, title: p.chosen || p.name, onclick: resume },
       h('div.vc-cover', src ? [h('img.bg', { src, alt: '' }), h('img.fg', { src, alt: '', loading: 'lazy', onerror: e => e.target.parentNode.replaceChildren(noimg()) })] : noimg(),
         x && x.len ? h('span.vc-len', fmtLen(x.len)) : null,
         h('span.vc-mode', p.mode === 'long' ? '16:9' : '9:16'), dot(Unread.has(p.id))),
@@ -89,12 +91,16 @@ const Videos = {
 const NewVideo = {
   el: null, step: 1, id: null, f: null, voice: null, err: '', sending: false, edit: false,
 
-  open() {
+  open(force) {
+    if (this.el && !force) { this.restore(); return; }                  // свёрнутое окно — развернуть, а не открыть второе
+    if (this.el) { this.el.remove(); this.el = null; document.removeEventListener('keydown', this.esc); }
     this.step = 1; this.id = null; this.err = ''; this.voice = null; this.sending = false; this.edit = false;
     const ck = 'channel:' + (App.info.channel || {}).id;
     if (!Store.get(ck)) Store.load(ck).then(() => this.el && this.step === 1 && this.draw()).catch(() => {});   // подачи и визуалы канала
     const LK = Styles.looks(), eng = ((App.info.channel || {}).defaults || {}).engine || '3d';
     this.f = { name: '', mode: 'short', delivery: (Styles.deliveries()[0] || {}).key || 'auto', look: (LK.find(x => (x.engine || '2d') === eng) || LK[0] || {}).key || 'paper', len: '1:00', topic: '', script: '', direction: '', refs: '' };
+    try { const kept = JSON.parse(Local.get('nv-draft') || 'null'); if (kept && kept.name !== undefined) Object.assign(this.f, kept); } catch {}   // S12.13: недописанный бриф — с того же места
+    this.min = false; this.dock();
     this.el = h('div.nv', { onmousedown: e => { if (e.target === this.el) this.close(); } });
     document.body.append(this.el);
     this.esc = e => { if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('.mention')) this.close(); };
@@ -104,7 +110,7 @@ const NewVideo = {
   },
   // S12.13: то же окно для видео, у которого ещё нет брифа (заведено до поп-апа): бриф из идеи и контекста видео -> вопросы -> «Написать сценарий»
   openFor(d) {
-    this.open();
+    this.open(true);
     const b = d.brief || {}, mm = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     this.id = d.id; this.edit = true;
     Object.assign(this.f, { name: d.name || '', mode: d.mode === 'long' ? 'long' : 'short', len: b.len ? mm(b.len) : d.mode === 'long' ? '10:00' : '1:00',
@@ -116,11 +122,34 @@ const NewVideo = {
   },
   close() {
     if (!this.el) return;
-    if (this.id && this.step === 2 && !this.edit) UI.toast('Видео сохранено черновиком — вопросы ждут в нём');
-    this.el.remove(); this.el = null; document.removeEventListener('keydown', this.esc);
+    if (!this.id && this.step === 1 && (this.f.name || this.f.topic || this.f.script || this.f.direction)) { Local.set('nv-draft', JSON.stringify(this.f)); UI.toast('Бриф сохранён — «Новое видео» продолжит с него'); }
+    if (this.id && this.step === 2 && !this.edit) UI.toast('Видео сохранено — продолжить вопросы: клик по нему в списке');
+    this.el.remove(); this.el = null; this.min = false; this.dock(); document.removeEventListener('keydown', this.esc);
     if (this.id) App.refreshState().then(() => App.render());
   },
-  refresh() { if (this.el && this.step === 2) this.draw(); },            // App.render: пришли вопросы Claude / ответы сохранились
+  // «Свернуть»: окно прячется в плашку в углу (можно ходить по Studio), клик по плашке — обратно на то же место
+  minimize() {
+    if (!this.el) return;
+    if (!this.id) Local.set('nv-draft', JSON.stringify(this.f));
+    this.min = true; this.el.hidden = true; document.removeEventListener('keydown', this.esc); this.dock();
+  },
+  restore() {
+    if (!this.el) return;
+    this.min = false; this.el.hidden = false; document.addEventListener('keydown', this.esc); this.dock(); this.draw();
+  },
+  dock() {
+    let b = document.getElementById('nv-dock');
+    if (!this.min) { if (b) b.remove(); return; }
+    const name = (this.f && this.f.name) || 'Новое видео';
+    const lbl = this.step === 2 ? 'вопросы Claude' : 'бриф';
+    const n = h('button#nv-dock', { title: 'Продолжить создание видео', onclick: () => this.restore() }, Icon('plus', 14), h('span', h('b', name), h('small', ' · ' + lbl)), Icon('chevr', 14));
+    if (b) b.replaceWith(n); else document.body.append(n);
+  },
+  // продолжить незаконченное видео (закрыли на вопросах): поп-ап сразу на шаге 2
+  resume(d) {
+    this.openFor(d); this.edit = false; this.step = 2; this.draw();
+  },
+  refresh() { if (this.el && !this.min && this.step === 2) this.draw(); },            // App.render: пришли вопросы Claude / ответы сохранились
 
   secs(v) { const m = /^\s*(\d+)(?::(\d{1,2}))?\s*$/.exec(v || ''); return m ? (m[2] != null ? +m[1] * 60 + +m[2] : +m[1] * 60) : 0; },
 
@@ -147,7 +176,8 @@ const NewVideo = {
       this.voice && h('button.icon', { title: 'Убрать', onclick: e => { e.preventDefault(); this.voice = null; this.draw(); } }, Icon('x', 14)));
     return h('div.nv-box',
       h('div.nv-head', h('h3', this.edit ? 'Бриф видео' : 'Новое видео'), h('span.nv-steps', h('b', '1'), ' Бриф', h('span.dim', ' → '), h('span.dim', '2 Вопросы Claude')), h('span.sp'),
-        h('button.icon', { onclick: () => this.close(), title: 'Закрыть (Esc)' }, Icon('x', 16))),
+        h('button.icon', { onclick: () => this.minimize(), title: 'Свернуть — вернуться можно плашкой внизу' }, '–'),
+        h('button.icon', { onclick: () => this.close(), title: 'Закрыть (Esc) — бриф запомнится' }, Icon('x', 16))),
       h('div.nv-body',
         this.field('Название', null, this.inp('name', { placeholder: 'например: Почему PS2 тянула всё на 32 МБ' })),
         h('div.nv-row',
@@ -181,6 +211,8 @@ const NewVideo = {
       const key = () => 'plan:' + this.id;
       if (!this.id) {
         this.id = (await api('POST', '/api/videos/create', b)).id;
+        Local.set('nv-draft', '');
+        await Store.load(key()); Store.set(key(), ['stage'], 'brief', false);    // клик в списке вернёт на вопросы, пока не нажато «Создать»
         if (this.voice) await api('POST', `/api/videos/voice?id=${this.id}&name=${encodeURIComponent(this.voice.name)}`, undefined, this.voice);
         await Store.load(key());
         await App.refreshState();
@@ -207,7 +239,8 @@ const NewVideo = {
     const run = Claude.running(key, 'questions');
     return h('div.nv-box.wide',
       h('div.nv-head', h('h3', d.name || 'Новое видео'), h('span.nv-steps', h('span.dim', '1 Бриф → '), h('b', '2'), ' Вопросы Claude'), h('span.sp'),
-        h('button.icon', { onclick: () => this.close(), title: 'Закрыть — видео останется черновиком' }, Icon('x', 16))),
+        h('button.icon', { onclick: () => this.minimize(), title: 'Свернуть — вернуться можно плашкой внизу' }, '–'),
+        h('button.icon', { onclick: () => this.close(), title: 'Закрыть — продолжить можно кликом по видео в списке' }, Icon('x', 16))),
       h('div.nv-body',
         h('div.row', h('span.counter', { class: qa.length && answered === qa.length ? 'ok' : '' }, qa.length ? `отвечено ${answered} из ${qa.length}` : ''),
           h('span.sp'),

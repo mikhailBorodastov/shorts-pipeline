@@ -101,6 +101,7 @@ const Workspace = {
 
   // «Написать сценарий»: нет брифа (видео заведено до поп-апа) — поп-ап «Бриф → вопросы»; нет проекта — проект, потом сразу Claude (S12.13)
   writeScript(d) {
+    if (d.stage === 'brief') return NewVideo.resume(d);                  // бриф не закончен — вопросы Claude
     if (!d.brief) return NewVideo.openFor(d);
     const say = () => { AgentPanel.toggle(true); AgentPanel.say('📝 Напиши сценарий по этому видео: сначала ресерч темы (источники → research.md), потом сценарий по брифу, ответам на вопросы и препродакшену. Потом montage check и montage tts.', { mode: 'script', model: 'opus' }); };
     if (d.project) return say();
