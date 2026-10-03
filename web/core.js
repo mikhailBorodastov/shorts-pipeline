@@ -166,12 +166,22 @@ const Sync = {
   },
   async tick() {
     try {
-      const r = await api('GET', '/api/revs');
+      const vid = (App.route.page === 'v' || App.route.page === 'p') && App.route.id;
+      const r = await api('GET', '/api/revs' + (vid ? '?v=' + encodeURIComponent(vid) : ''));
       if (!this.ok) { this.ok = true; App.banner(''); }
       if (this.web == null) this.web = r.web;
       else if (r.web !== this.web && !Store.busy()) { await Store.flushAll(); location.reload(); return; }
       if (r.api !== API) App.banner('⚠ Локальный скрипт Studio старой версии. Закрой его окно и запусти «Claude Studio.bat» заново.');
       await Claude.update(r.jobs);
+      if (vid && r.proj != null) {                      // файлы проекта поменялись (Claude, tts, своя запись) — окно перечитывает голос, тайминги, сценарий без F5
+        const k = 'proj:' + vid;
+        if (this[k] != null && this[k] !== r.proj) {
+          const d = Store.get('plan:' + vid);
+          if (d && window.Montage) { delete MT.info[vid]; Montage.load(d, true); }
+          if (window.Plan) { if (Plan.scriptSt) delete Plan.scriptSt[vid]; if (Plan.voiceSt && Plan.voiceSt[vid]) Plan.voiceLoad(d, true); }
+        }
+        this[k] = r.proj;
+      }
       const changed = await Store.sync(r.docs);
       const plans = await App.plansChanged(r.docs);
       if (changed || plans) App.render();

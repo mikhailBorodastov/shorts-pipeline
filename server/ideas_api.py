@@ -1382,7 +1382,13 @@ def handle_get(h):
                            for d in plans(ch["id"] if ch else None) if not d.get("service")]}); return True   # служебное (🛠 Мастерская) — не в списке роликов
     if p == "/api/revs":
         jobs = [j.info() for j in JOBS.values() if j.status == "running" or time.time() - j.finished < 90]
-        h._json({"docs": all_revs(), "jobs": jobs, "web": web_mtime(), "api": API_VERSION}); return True
+        out = {"docs": all_revs(), "jobs": jobs, "web": web_mtime(), "api": API_VERSION}
+        vid = q.get("v", [""])[0]
+        if vid:                                           # открытое видео: файлы проекта, которые меняют Claude и скрипты (голос, тайминги, сценарий, сцены)
+            vd = P.video(vid) or ""
+            out["proj"] = max([os.path.getmtime(f) for f in (os.path.join(vd, "src", "vo_timing.js"), os.path.join(vd, "script.md"), os.path.join(vd, "src", "scenes.js"),
+                                                              os.path.join(vd, "build", "vo", "source.json")) if os.path.isfile(f)] or [0])
+        h._json(out); return True
     if p == "/api/doc":
         try:
             h._json(load(q.get("key", [""])[0]))
