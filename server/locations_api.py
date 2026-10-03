@@ -252,10 +252,33 @@ def locations_brief(A, vid):
     return out
 
 
+def convert_video(A, vid):
+    """Перевести видео на схему S13: сцены препродакшена (элементы и папки) и монтаж — в _archive/s13/<видео>/, флаг locations.
+    Дальше — «Накидать» локации по сценарию и их черновики; монтаж — заново из локаций."""
+    key = "plan:" + vid
+    plan = A.load(key)
+    arch = os.path.join(P.ARCHIVE, "s13", vid + "-" + str(int(__import__("time").time())))
+    os.makedirs(arch, exist_ok=True)
+    scenes = [e for e in plan.get("elements") or [] if e.get("kind") == "scene"]
+    json.dump({"elements": scenes, "montage": plan.get("montage"), "mscenes": plan.get("mscenes")}, open(os.path.join(arch, "video_parts.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    for e in scenes:
+        d = os.path.join(P.render(vid), e["id"])
+        if os.path.isdir(d):
+            shutil.move(d, os.path.join(arch, e["id"]))
+    for m in plan.get("mscenes") or []:
+        d = mdir(A, vid, m["id"])
+        if os.path.isdir(d):
+            shutil.move(d, os.path.join(arch, m["id"]))
+    ops = [{"op": "del", "path": ["elements"], "id": e["id"]} for e in scenes]
+    ops += [{"op": "set", "path": ["montage"], "value": None}, {"op": "set", "path": ["mscenes"], "value": []}, {"op": "set", "path": ["locations"], "value": True}]
+    A.apply_ops(key, ops)
+    return {"archived": len(scenes), "to": arch}
+
+
 # ---------------------------------------------------------------- CLI: studio.py mscene …
 def cli(A, argv):
     """mscene list VID | mscene new VID LOC_EL "имя" ['<JSON оверлея>'] [--sec "заголовок сцены сценария"] | mscene show VID SID | mscene compose VID SID
-    | mscene rm VID SID | mscene locations VID — бриф локаций и сцен | mscene to-location VID EL — сцену редактора сделать локацией (без времени, ракурсы из камеры)
+    | mscene rm VID SID | mscene locations VID — бриф локаций и сцен | mscene convert VID — перевести видео на локации (сцены и монтаж в _archive) | mscene to-location VID EL — сцену редактора сделать локацией (без времени, ракурсы из камеры)
     Правки сцены монтажа — обычные scene ops VID SID '<ops>' (они меняют оверлей и пересобирают сцену); кадр — scene frame VID SID t."""
     if not argv:
         print(cli.__doc__); return True
@@ -280,6 +303,8 @@ def cli(A, argv):
         loc["rev"] = doc.get("rev", 0) + 1
         A.scapi().save_scene(A, "plan:" + vid, el, loc)
         print(f"локация: объектов {len(loc.get('objects') or [])}, ракурсов {len(loc.get('shots') or [])}"); return True
+    if cmd == "convert":                                   # видео -> схема S13 (старые сцены и монтаж — в архив)
+        print(convert_video(A, a[0])); return True
     if cmd == "rm":
         remove_scene(A, a[0], a[1]); print("в архиве"); return True
     print(cli.__doc__); return True

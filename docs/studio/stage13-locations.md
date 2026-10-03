@@ -81,3 +81,18 @@ Claude **спрашивает** «во всех N сценах или тольк
 - **Персонажи в локации.** Решено: только в сценах. Фоновые «жители» (бабки на лавочке) — если понадобятся, это пропс-карточка с фоновой жизнью в локации.
 - **Старые видео** работают по-старому: элементы `kind: scene` и редактор сцены остаются для них; новые видео (3D) — только локации.
 - **Ручные правки сцены** невозможны из интерфейса (так задумано); аварийный путь — CLI `montage scene ops` / Claude.
+
+## 6. Как сделано (13.1–13.6)
+Отличия от плана: отдельного `kind: location` нет — локация = элемент `kind: scene` в видео с флагом `video.json → locations: true` (новые 3D-видео ставят его сами;
+`mscene convert <видео>` переводит старое). CLI — `studio.py mscene …`, а не `location …` / `montage scene …`; правки сцен — обычные `scene ops` (по id сцены монтажа).
+- **Данные.** Локация — `preprod/<el>/work/scene.json` без времени: `shots[]` (именованные ракурсы {id, name, pos, target, fov}), фоновая жизнь — петли объектов.
+  Сцена монтажа `ms<hex>` — `video.json → mscenes[]` {id, name, location, sec} + файл `preprod/<ms>/overlay.json` (источник правды: `len`, `camera.keys`
+  {t, shot, dolly, dpos, dtarget}, `objects` (персонажи с клипами), `lights`, `sounds`, `markers`, `patch` {id объекта локации: pos|rot|scale|hide}).
+  `locations_api.compose(loc, ov)` собирает `preprod/<ms>/work/scene.json` + `prefabs.js` — их читает движок как обычную сцену.
+- **Код.** `server/locations_api.py` (compose, recompose, new_scene, on_location_change, convert_video, бриф `locations_brief`, CLI `mscene list|new|show|compose|rm|locations|convert|to-location`);
+  `scene_api.py` — `ms…` в `work_dir`, `save_scene` пересобирает сцену или (для локации) все её сцены; черновик локации после перевода в редактор теряет время (`strip_time`, ключи камеры → ракурсы).
+- **Клипы.** `server/clips_api.py`: сегменты по началам юнитов, ключ = sha1(сцена + prefabs + глобальное монтажа + слова на отрезке (+ прошлая сцена при переходе)),
+  `RENDER_RANGE=a:b RENDER_OUT=… node render.js frames 30 4` → `build/clips/<ключ>.mp4`, склейка `playback.mp4`; `/api/clips/state|playback|render`, задача `clips` (локальная, без очереди Claude).
+  Окно видео играет `playback.mp4` (`MontagePreview.openClips`), устаревшее перерендеривает само; экспорт (`render_api`) — склейка клипов + `mix.wav`, без рендера кадров.
+- **Правки.** Двойной клик по сцене на локациях не открывает редактор; агент в режимах montage/chat/build получает блок S13 и спрашивает «во всех сценах на локации / только в этой» кнопками `[[выбор: …]]`.
+- **Ограничения.** Клипы — 30 fps; кадры перехода между сценами входят в клип входящей сцены (её ключ зависит от прошлой); старые видео (без флага) работают по-старому.
