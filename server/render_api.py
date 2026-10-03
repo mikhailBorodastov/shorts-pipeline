@@ -115,6 +115,26 @@ def _work(A):
 
 def _render(A, it):
     vdir, vid = P.video(it["vid"]), it["vid"]
+    if A.load("plan:" + vid).get("locations"):           # S13.4: видео на локациях — склейка готовых клипов сцен (перерендер только устаревших) + звук
+        it["phase"] = "клипы сцен"
+        job = A.Job("clips", "plan:" + vid, "clips-export", {})
+        job.meta = {}
+        import threading
+        th = threading.Thread(target=lambda: setattr(job, "result", A.clapi().render(A, job, export=True)), daemon=True)
+        th.start()
+        while th.is_alive():
+            th.join(1.0)
+            it["phase"] = job.summary or "клипы сцен"
+            m = job.meta or {}
+            if m.get("total"):
+                it["done"], it["total"] = m.get("done", 0), m.get("total")
+            if it.get("cancel"):
+                job.cancelled = True
+        if not job.result:
+            raise RuntimeError(job.summary or "клипы не собрались")
+        it["phase"] = "файлы для YouTube"
+        it["out"] = finish(A, it)
+        return
     mn = A.mnapi()
     if mn.studio_owned(vdir) and (A.load("plan:" + vid).get("montage") or {}).get("units"):
         it["phase"] = "файлы проекта"

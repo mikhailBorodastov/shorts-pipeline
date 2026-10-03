@@ -328,7 +328,7 @@ const Workspace = {
     WS.raf = requestAnimationFrame(tick);
     this.redrawTransport();
   },
-  pause() { WS.playing = MT.playing = false; cancelAnimationFrame(WS.raf); MTA.stop(); this.redrawTransport(); },
+  pause() { WS.playing = MT.playing = false; cancelAnimationFrame(WS.raf); MTA.stop(); MontagePreview.post({ seek: MT.t }); this.redrawTransport(); },
   seek(t) {
     const len = Montage.M(MT.d || {}).len || 0;
     MT.t = +Math.max(0, Math.min(len || 1e9, t)).toFixed(3);

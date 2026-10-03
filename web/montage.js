@@ -141,6 +141,7 @@ const Montage = {
     if (typeof Workspace !== 'undefined' && App.route.page === 'v') Workspace.onRedraw();   // S12: окно видео — список сцен, свойства
   },
 
+  staleUnit(d, u) { return !!(d.locations && MT.clips && (MT.clips.stale || []).includes(u.id)); },
   timeline(d, M) {
     const Z = MT.zoom, len = Math.max(M.len || 0, this.autoLen(d, M)) + 2, width = MT_LABEL + len * Z;
     const X = t => MT_LABEL + t * Z;
@@ -158,7 +159,7 @@ const Montage = {
     const byAt = [...(M.units || [])].sort((a, b) => (a.at || 0) - (b.at || 0));
     for (const u of M.units || []) {
       const sc = (I.scenes || []).find(s => s.el === u.scene) || {}, P = this.pairs(d, u);
-      const b = bar('units', u, u.at || 0, u.len || 0, (byAt.indexOf(u) + 1) + '  ' + (sc.name || u.scene), 'unit');
+      const b = bar('units', u, u.at || 0, u.len || 0, (byAt.indexOf(u) + 1) + '  ' + (sc.name || u.scene), 'unit' + (this.staleUnit(d, u) ? ' stale' : ''));   // S13.4: клип устарел — штриховка
       b.title = (sc.name || u.scene) + ' — двойной клик: открыть сцену в этом моменте (после правки ролик пересоберётся сам)';
       b.ondblclick = ev => { ev.stopPropagation(); Montage.openAt(d, +this.xToT(ev).toFixed(2)); };
       sceneRow.append(b);
@@ -454,6 +455,7 @@ const MontagePreview = {
     if (!want) return;
     this.id = want;
     const vid = want.split('|')[0], clean = want.endsWith('|v');
+    if (d.locations && clean) return this.openClips(vid);      // S13.4: видео на локациях — плейбек готовых клипов сцен
     this.host = h('div.mt-preview', { class: clean ? 'clean' : '' }, h('p.dim.small', h('span.spin'), ' запускаю предпросмотр…'));
     document.body.append(this.host);
     api('POST', '/api/studio/project', { id: vid, page: 'preview' }).then(r => {
@@ -471,15 +473,58 @@ const MontagePreview = {
     const r = slot.getBoundingClientRect();
     Object.assign(this.host.style, { display: 'block', left: r.left + 'px', top: Math.max(r.top, 8) + 'px', width: r.width + 'px', height: r.height + 'px' });
   },
-  close() { if (this.host) this.host.remove(); this.host = this.frame = this.id = this.url = null; },
-  post(m) { try { this.frame && this.frame.contentWindow.postMessage(m, '*'); } catch (e) {} },
+  close() { if (this.host) this.host.remove(); clearInterval(this.cpoll); this.host = this.frame = this.id = this.url = this.video = null; this.clips = null; },
+  post(m) {
+    if (this.video) return this.videoPost(m);
+    try { this.frame && this.frame.contentWindow.postMessage(m, '*'); } catch (e) {}
+  },
+  // ---- S13.4: плейбек клипов (видео без звука; звук — Web Audio окна, как раньше)
+  openClips(vid) {
+    this.video = h('video', { muted: true, playsinline: true, preload: 'auto' });
+    this.video.muted = true;
+    this.badge = h('div.clip-badge', { hidden: true });
+    this.empty = h('div.clip-empty', h('span.spin'), ' собираю клипы сцен…');
+    this.host = h('div.mt-preview.clean.clips', this.video, this.empty, this.badge);
+    document.body.append(this.host);
+    this.cvid = vid; this.stamp = null; this.kick = 0;
+    const poll = async () => {
+      if (document.hidden || !this.video || this.cvid !== vid) return;
+      let st; try { st = await api('GET', '/api/clips/state?video=' + vid); } catch { return; }
+      this.clips = st; MT.clips = st;
+      if (st.playback && st.stamp !== this.stamp) {               // новая склейка — подменить источник на том же месте
+        this.stamp = st.stamp; const t = MT.t, was = !this.video.paused;
+        this.video.src = `/api/clips/playback?video=${encodeURIComponent(vid)}&s=${st.stamp}`;
+        this.video.addEventListener('loadedmetadata', () => { try { this.video.currentTime = t; if (was) this.video.play().catch(() => {}); } catch {} }, { once: true });
+        this.empty.hidden = true;
+      }
+      if (!st.playback) this.empty.hidden = false;
+      const n = (st.stale || []).length;
+      this.badge.hidden = !(st.job || n);
+      this.badge.textContent = st.job ? '⟳ ' + (st.job.summary || 'обновляю клипы') : n ? `⟳ ждут обновления: ${n}` : '';
+      if (n && !st.job && Date.now() - this.kick > 8000) { this.kick = Date.now(); api('POST', '/api/clips/render', { video: vid }).catch(() => {}); }   // устарело — в рендер сами
+      if (window.Montage && Montage.redraw) Montage.redraw();
+    };
+    poll(); this.cpoll = setInterval(poll, 3000);
+    this.place();
+  },
+  videoPost(m) {
+    const v = this.video; if (!v || m.seek == null || !v.src) return;
+    const t = m.seek;
+    try {
+      v.playbackRate = (window.WS && WS.rate) || 1;
+      if (MT.playing) {
+        if (v.paused) { v.currentTime = t; v.play().catch(() => {}); }
+        else if (Math.abs(v.currentTime - t) > 0.25) v.currentTime = t;
+      } else { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - t) > 0.01) v.currentTime = t; }
+    } catch (e) {}
+  },
   seek(t) { if (MT.driven) return Workspace.seek(t); this.post({ seek: t }); if (MT.playing && MT.d) MTA.play(MT.d, t); },
   play(on) {
     if (MT.driven) return on ? Workspace.play() : Workspace.pause();
     this.post({ play: on }); MT.playing = on;
     if (on && MT.d) MTA.play(MT.d, MT.t); else MTA.stop();
   },
-  reload(t) { if (this.frame && this.url) { this.frame.src = 'about:blank'; setTimeout(() => { if (this.frame) this.frame.src = this.url + '#t=' + (+t || 0).toFixed(2) + '&r=' + Date.now(); }, 30); } },
+  reload(t) { if (this.video) return; if (this.frame && this.url) { this.frame.src = 'about:blank'; setTimeout(() => { if (this.frame) this.frame.src = this.url + '#t=' + (+t || 0).toFixed(2) + '&r=' + Date.now(); }, 30); } },
 };
 addEventListener('message', ev => {
   const m = ev.data || {};

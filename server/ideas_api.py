@@ -83,6 +83,7 @@ import thumbs_api  # noqa: E402  S12.9: обложки — доски и ген�
 import memory_api  # noqa: E402  S12.10: память — правила из правок автора
 import make3d_api  # noqa: E402  S12.11: «✨ Сделать 3D» — Claude выбирает способ
 import locations_api  # noqa: E402  S13: локации и сцены монтажа
+import clips_api  # noqa: E402  S13.4: клипы сцен — плейбек и экспорт склейкой
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -101,7 +102,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts", "brollfetch")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("clips", "produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts", "brollfetch")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -143,6 +144,10 @@ def agapi():
 
 def stgapi():
     return _fresh(settings_api, "stg")
+
+
+def clapi():
+    return _fresh(clips_api, "clips")
 
 
 def lcapi():
@@ -983,6 +988,8 @@ def _run_job(job):
             chnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("voicesplit", "voicetts"):          # 🎙 голос ролика (S11): нарезка записи / черновой голос
             vcapi().run_job(sys.modules[__name__], job)
+        elif job.kind == "clips":                              # S13.4: клипы сцен (видео на локациях)
+            clapi().render(sys.modules[__name__], job)
         elif job.kind == "make3d":                             # ✨ Сделать 3D (S12.11): Claude выбирает способ -> element / charparts / charmodel
             mk3d().run(sys.modules[__name__], job)
         elif job.kind == "brollfetch":                         # 🎞 B-roll элемента (S12.6): кусок видео -> files/<id>/broll_<el>.mp4
@@ -1431,6 +1438,8 @@ def handle_get(h):
         return True
     if p.startswith("/api/make3d/") and mk3d().handle_get(sys.modules[__name__], h, p, q):
         return True
+    if p.startswith("/api/clips/") and clapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p == "/api/version":
         h._json({"api": API_VERSION, "data": DATA, "web": web_mtime()}); return True
     if p == "/api/state":
@@ -1579,6 +1588,8 @@ def handle_post(h):
         if p.startswith("/api/thumbs/") and thapi().handle_post(sys.modules[__name__], h, p, q, body):
             return True
         if p.startswith("/api/memory/") and mmapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
+        if p.startswith("/api/clips/") and clapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p == "/api/new":
             d = new_plan(body.get("mode", "short"), body.get("name", ""), body.get("topic", ""), channel=body.get("channel"))

@@ -102,7 +102,7 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       await closeB(browser);
       const fps = +(a1 || 30); let workers = +(a2 || 4);
       let fmt = process.env.RENDER_FMT === 'png' ? 'png' : process.env.RENDER_FMT === 'jpg' ? 'jpg' : 'h264';   // S12.8: по умолчанию H.264 в браузере (видеокарта)
-      const dir = 'build/frames';
+      const dir = process.env.RENDER_OUT || 'build/frames';   // S13.4: клипы сцен — каждый кусок в свой каталог
       const probeB = await launch(0), probe = await openPage(probeB);   // первый работник: страница уже загружена — не грузим её второй раз
       const total = await probe.evaluate(() => window.TOTAL);
       // S12.8 замер (Ностальгия, 3D, 1080×1920): кадр + JPEG + base64 через CDP — ~39 мс; кадр + аппаратный H.264 (WebCodecs) — ~16 мс и ~66 КБ вместо ~650 КБ;
@@ -118,7 +118,7 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       if (!process.env.WORKERS && !process.env.RENDER_WORKERS_FORCE && await probe.evaluate(() => typeof X3 !== 'undefined' && !!X3.R))
         workers = Math.min(workers, 4);                   // 3D-сцены (WebGL): видеокарта одна — 4 окна быстрее 6 (замер: 1044 кадра 31 с против 48 с)
       const N = Math.ceil(total * fps), CH0 = fmt === 'h264' ? 120 : 60;
-      const [r0, r1] = (process.env.RENDER_RANGE || `0:${N}`).split(':').map(Number);
+      const [r0, r1x] = (process.env.RENDER_RANGE || `0:${N}`).split(':').map(Number), r1 = Math.min(N, Number.isFinite(r1x) && r1x > 0 ? r1x : N);
       const sig = projectSig({ fps, fmt, N, size: fmt0(), br: fmt === 'h264' ? BITRATE : 0 });
       const sigF = path.join(dir, 'sig.json');
       const old = (() => { try { return JSON.parse(fs.readFileSync(sigF, 'utf8')); } catch (e) { return null; } })();
