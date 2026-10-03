@@ -18,7 +18,7 @@ BLENDER_RUN = os.path.join(P.STANDS, "blender_run.py").replace("\\", "/")       
 RENDER_PROP = os.path.join(P.STANDS, "render_prop.js").replace("\\", "/")         # кадры 3D-пропса / персонажа-модели
 RENDER_CHAR = os.path.join(P.STANDS, "render_char.js").replace("\\", "/")         # кадры персонажа на скелете частей
 AGENT_DIR = os.path.join(P.STATE, "agent")
-RULES_REV = 20                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
+RULES_REV = 21                                         # права / правила агента: другая — старая сессия перезапускается (2: lib fork, Write/Edit, стенды)
 IDLE_MIN = 40                                         # сессия без дела закрывается через столько минут
 
 
@@ -162,7 +162,7 @@ def system_prompt(A, vid, mode):
 - Секция без сцены редактора — оставь пустой (в окне она заглушка с текстом голоса) и скажи в конце, какой сцены не хватает.
 - Между секциями: show {vid} → пометки автора notes (status open) — если они про уже собранные сцены, поправь и закрой (set plan:{vid} notes.<id>.status '"done"' и notes.<id>.reply '"что сделал"').
 - В конце: set plan:{vid} live null → montage snap → посмотри → montage build."""
-    if mode == "montage" and A.load("plan:" + vid).get("locations"):
+    if mode in ("montage", "chat", "build") and A.load("plan:" + vid).get("locations"):
         build += f"""
 
 СХЕМА S13 — ЭТО ВИДЕО НА ЛОКАЦИЯХ (docs/studio/stage13-locations.md). Сцен препродакшена нет — в препродакшене ЛОКАЦИИ (места без действия, утверждены автором),

@@ -216,7 +216,12 @@ const AgentPanel = {
       if (e.kind === 'step') { steps.push(e); continue; }
       flush();
       if (e.kind === 'you') items.push(h('div.ag-you', e.ctx && h('div.ag-ctx', e.ctx.replace(/^\[контекст: |\]$/g, '')), e.text));
-      else if (e.kind === 'claude') items.push(h('div.ag-cl', { html: md(e.text) }));
+      else if (e.kind === 'claude') {                        // S13: [[выбор: A | B]] — вопрос автору кнопками (например, «во всех сценах / только в этой»)
+        const ch = [...(e.text || '').matchAll(/\[\[выбор:\s*([^\]]+)\]\]/g)].map(m => m[1].split('|').map(x => x.trim()).filter(Boolean));
+        items.push(h('div.ag-cl', { html: md((e.text || '').replace(/\[\[выбор:[^\]]*\]\]/g, '')) }));
+        const last = !E.slice(E.indexOf(e) + 1).some(x => x.kind === 'you');   // выбор активен, пока автор не ответил
+        for (const opts of ch) items.push(h('div.ag-choice', opts.map(o => h('button' + (last ? '.primary' : ''), { disabled: !last || this.busy, onclick: () => this.say(o) }, o))));
+      }
       else if (e.kind === 'done') items.push(this.card(e, shots[e.run], undone.has(e.run)));
       else if (e.kind === 'note') items.push(h('div.ag-note', e.text));
       else if (e.kind === 'err') items.push(h('div.ag-note.bad', '⚠ ' + e.text));

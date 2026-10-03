@@ -101,3 +101,5 @@ body.ws-mode #agentfab { bottom: 72px; }   /* не на кнопках подв�
 .ag-cl a { word-break: break-all; }
 .ag-cl pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
 .ag-cl table { display: block; max-width: 100%; overflow-x: auto; }
+.ag-choice { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 6px; }
+.ag-choice button { white-space: normal; text-align: left; }
