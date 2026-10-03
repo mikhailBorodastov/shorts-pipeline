@@ -94,3 +94,10 @@ body.ws-mode #agentfab { bottom: 72px; }   /* не на кнопках подв�
   .ag-head select { max-width: 92px; }
 }
 @media (max-width: 1280px) { .ag-title { font-size: 0; gap: 0; } .ag-head { gap: 6px; } }
+
+/* длинные ссылки и пути без пробелов переносятся, лента не скроллится вбок */
+.ag-feed { overflow-x: hidden; }
+.ag-cl, .ag-you, .ag-step, .ag-card, .ag-res { overflow-wrap: anywhere; min-width: 0; }
+.ag-cl a { word-break: break-all; }
+.ag-cl pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
+.ag-cl table { display: block; max-width: 100%; overflow-x: auto; }
