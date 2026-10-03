@@ -107,7 +107,22 @@ def _save_index(pd, ix):
     json.dump(ix, open(os.path.join(cdir(pd), "index.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
 
+def fast_state(A, vid):
+    """Быстрый монтаж: плейбек — собранный ролик out/*.mp4 (со звуком); устарел — код или ассеты новее ролика -> пересборка build.sh."""
+    pd = P.video(vid)
+    mn = A.mnapi()
+    out = mn.fast_out(pd) if pd else ""
+    fresh = bool(out) and os.path.getmtime(out) >= mn.fast_src_mtime(pd) - 1
+    job = next((j.info() for j in A.JOBS.values() if j.kind == "montagebuild" and j.key == "plan:" + vid and j.status in ("running", "queued")), None)
+    agent = A.agapi().SESS.get(vid)
+    busy = bool(agent and agent.busy and agent.alive())
+    return {"segments": [], "fps": 30, "stale": [] if fresh else ["all"], "playback": bool(out), "playbackFresh": fresh, "fast": True,
+            "stamp": int(os.path.getmtime(out) * 1000) if out else 0, "job": job, "agent": busy}
+
+
 def state(A, vid):
+    if A.load("plan:" + vid).get("fast"):
+        return fast_state(A, vid)
     pd = P.video(vid)
     segs, fps = segments(A, vid)
     ix = _index(pd) if pd else {}
@@ -214,7 +229,7 @@ def handle_get(A, h, p, q):
     if p == "/api/clips/state":
         h._json(state(A, vid)); return True
     if p == "/api/clips/playback":
-        f = os.path.join(cdir(P.video(vid) or ""), "playback.mp4")
+        f = A.mnapi().fast_out(P.video(vid) or "") if A.load("plan:" + vid).get("fast") else os.path.join(cdir(P.video(vid) or ""), "playback.mp4")
         if not os.path.isfile(f):
             h._json({"error": "клипов ещё нет"}, 404); return True
         A._send_file(h, f); return True
@@ -225,6 +240,14 @@ def handle_post(A, h, p, body):
     if p == "/api/clips/render":
         vid = body.get("video", "")
         try:
+            if A.load("plan:" + vid).get("fast"):                 # быстрый монтаж: пересобрать ролик целиком (build.sh)
+                ag = A.agapi().SESS.get(vid)
+                if ag and ag.busy and ag.alive():
+                    raise RuntimeError("Claude ещё пишет ролик — соберу, когда закончит")
+                if not A.mnapi().fast_out(P.video(vid) or "") and not body.get("force"):   # первый раз ролик собирает сам Claude (montage build)
+                    raise RuntimeError("ролика ещё нет — его соберёт Claude")
+                j = A.start_job("montagebuild", "plan:" + vid, "montage", {})
+                h._json({"job": j.info()}); return True
             j = A.start_job("clips", "plan:" + vid, "clips", {})
             h._json({"job": j.info()})
         except RuntimeError as e:

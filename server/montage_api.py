@@ -221,6 +221,79 @@ def at(A, vid, tv):
     return {"el": u["scene"], "ts": round(ts, 3), "unit": u["id"], "name": sc.get("name") or u["scene"], "vt": round(tv, 3)}
 
 
+def fast_len(pd):
+    """Длина ролика быстрого монтажа: по голосу / таймкодам (build/vo_timing.json)."""
+    try:
+        return float(json.load(open(os.path.join(pd, "build", "vo_timing.json"), encoding="utf-8")).get("total") or 0)
+    except (OSError, ValueError):
+        return 0.0
+
+
+def fast_out(pd):
+    """Собранный ролик быстрого монтажа (out/<имя>.mp4 без _NO_VO) или ''."""
+    outs = sorted((o for o in glob.glob(os.path.join(pd, "out", "*.mp4")) if not o.endswith("_NO_VO.mp4")), key=os.path.getmtime)
+    return outs[-1] if outs else ""
+
+
+def fast_src_mtime(pd):
+    """Когда последний раз менялся код или ассеты ролика (src/, assets/, script.md, build/vo_timing.json)."""
+    best = 0.0
+    for d in ("src", "assets"):
+        for root, _, files in os.walk(os.path.join(pd, d)):
+            for f in files:
+                try:
+                    best = max(best, os.path.getmtime(os.path.join(root, f)))
+                except OSError:
+                    pass
+    for f in ("script.md", os.path.join("build", "vo_timing.json")):
+        try:
+            best = max(best, os.path.getmtime(os.path.join(pd, f)))
+        except OSError:
+            pass
+    return best
+
+
+def fast_start(A, vid, wish=""):
+    """«Сделать монтаж» быстро (как до Studio): флаг fast, тулкит бумаги в проект, агент в режиме fast пишет ролик кодом."""
+    key = "plan:" + vid
+    plan = A.load(key)
+    pd = vdir(vid)
+    if not pd or not has_project(vid):
+        raise ValueError("у видео ещё нет проекта ролика — сначала сценарий («Начать»)")
+    A.apply_ops(key, [{"op": "set", "path": ["fast"], "value": True}, {"op": "set", "path": ["locations"], "value": False}])
+    src = os.path.join(pd, "src")
+    pj = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "stands", "paper.js")
+    if pj and os.path.isfile(pj) and not os.path.isfile(os.path.join(src, "paper.js")):
+        shutil.copy2(pj, os.path.join(src, "paper.js"))
+    ih = os.path.join(src, "index.html")
+    try:
+        html = open(ih, encoding="utf-8").read()
+        if "paper.js" not in html and '<script src="scenes.js"></script>' in html:
+            open(ih, "w", encoding="utf-8").write(html.replace('<script src="scenes.js"></script>', '<script src="paper.js"></script>\n<script src="scenes.js"></script>'))
+    except OSError:
+        pass
+    text = ("⚡ Быстрый монтаж: сделай ролик по сценарию кодом, как до Studio (режим fast). Препродакшен не обязателен — бери из него то, что есть, остальное рисуй сам; "
+            "в конце занеси в препродакшен то, что вышло (персонажи, предметы, места)." + (" Пожелания автора: " + wish.strip() if (wish or "").strip() else ""))
+    s = A.agapi().get_session(A, vid, A.VISUAL_MODEL, "fast")
+    s.say(text, None)
+    return {"ok": True, "run": s.run}
+
+
+def fast_done(A, vid):
+    """После сборки быстрого монтажа: длина ролика -> montage (таймлайн окна знает длину, шаг «Монтаж» — готов)."""
+    pd = vdir(vid)
+    out = fast_out(pd)
+    dur = fast_len(pd)
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out], capture_output=True, text=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        dur = float(r.stdout.strip() or dur)
+    except (OSError, ValueError):
+        pass
+    A.apply_ops("plan:" + vid, [{"op": "set", "path": ["montage"], "value": {"fast": True, "units": [], "len": round(dur, 2), "voice": {"on": False},
+                                                                            "captions": {"on": False}, "sfx": [], "music": [], "overlays": []}}])
+
+
 def studio_owned(pd):
     """Можно ли генератору писать src/scenes.js проекта: файла нет, он уже сгенерирован монтажом или это нетронутая заглушка шаблона.
     Рукописные ролики (до Studio: PS6, «Коты сыщики 3D» …) генератор не трогает — иначе он затирает их сцены и движок (случай 2 окт 2026)."""
@@ -243,6 +316,8 @@ def generate(A, vid, montage=None):
     pd = vdir(vid)
     if not has_project(vid):
         raise ValueError("у видео ещё нет проекта ролика — «🚀 Начать производство»")
+    if A.load("plan:" + vid).get("fast"):                 # быстрый монтаж: ролик — код агента (src/scenes.js), генератор его не трогает
+        return {"len": fast_len(pd), "fast": True, "scenes": [], "report": []}
     if not studio_owned(pd):
         raise ValueError("src/scenes.js этого ролика написан руками (сделан до монтажа Studio) — монтаж его не перезапишет. "
                          "Чтобы монтировать в Studio, сначала переведи сцены в редактор (препродакшен) и сохрани копию scenes.js.")
@@ -380,8 +455,7 @@ def generate(A, vid, montage=None):
                  "const SCENE_B = MONTAGE.units.map(u => u.at);\n"
                  "if (window.VO && VO.total < MONTAGE.len) VO.total = MONTAGE.len;   // монтаж длиннее голоса — ролик длиной в монтаж\n")
     A.write_text(os.path.join(pd, "src", "scenes.js"), SCENES_JS)
-    A.write_text(os.path.join(pd, "src", "format.js"), "// Кадр ролика (монтаж Claude Studio): по формату видео.\nwindow.FRAME_SIZE = "
-                 + ("[1920, 1080]" if plan.get("mode") == "long" else "[1080, 1920]") + ";\n")
+    A.write_text(os.path.join(pd, "src", "format.js"), A.lkapi().format_js(A, plan))   # кадр по формату видео + визуал канала (window.LOOK, S14)
     _patch_format(pd)
     _patch_index(pd, prefab_scripts)
     report.update(len=total, sfx=len(sfx_cues), music=len(music), voice=bool(words))
@@ -539,6 +613,8 @@ def build(A, job):
     proc.wait()
     if proc.returncode:
         raise RuntimeError("build.sh: " + "\n".join(log[-12:]))
+    if A.load("plan:" + vid).get("fast"):
+        fast_done(A, vid)
     outs = sorted(glob.glob(os.path.join(pd, "out", "*.mp4")), key=os.path.getmtime)
     main = [o for o in outs if not o.endswith("_NO_VO.mp4")]
     job.result = {"file": (main or outs)[-1] if outs else "", "report": rep}
@@ -714,6 +790,8 @@ def handle_get(A, h, p, q):
 
 
 def handle_post(A, h, p, body):
+    if p == "/api/montage/fast":                             # ⚡ быстрый монтаж: агент пишет ролик кодом (2D и 3D), без препродакшена
+        h._json(fast_start(A, body["video"], body.get("wish") or "")); return True
     if p == "/api/montage/gen":                              # предпросмотр: монтаж -> файлы проекта (без рендера)
         h._json({"ok": True, "report": generate(A, body["video"])}); return True
     if p == "/api/montage/fix":                              # S8: ✋ правка в кадре ревью -> пометка с точными операциями сцены и «почему»
