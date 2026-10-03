@@ -143,18 +143,170 @@ def compose(loc, ov):
     return doc
 
 
+PH_JS = """
+// ---- заглушки (монтаж без препродакшена): персонаж / предмет ещё рисуется — бумажная карточка с подписью; готов — подставится сам
+function _phDraw(g, cw, ch, name, kind) {
+  g.clearRect(0, 0, cw, ch);
+  g.fillStyle = kind === 'char' ? '#efe4cf' : '#e6e9ee'; g.strokeStyle = '#6b5f4f'; g.lineWidth = 10;
+  g.setLineDash([26, 16]);
+  g.beginPath(); g.roundRect ? g.roundRect(14, 14, cw - 28, ch - 28, 40) : g.rect(14, 14, cw - 28, ch - 28); g.fill(); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle = '#6b5f4f'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '700 ' + Math.round(cw * 0.34) + 'px Caveat, sans-serif'; g.fillText('?', cw / 2, ch * 0.36);
+  const words = String(name || '').split(' '), lines = []; let cur = '';
+  for (const w of words) { if ((cur + ' ' + w).trim().length > 12 && cur) { lines.push(cur); cur = w; } else cur = (cur + ' ' + w).trim(); }
+  if (cur) lines.push(cur);
+  g.font = '700 ' + Math.round(cw * 0.12) + 'px Caveat, sans-serif';
+  lines.slice(0, 3).forEach((l, i) => g.fillText(l, cw / 2, ch * 0.66 + i * cw * 0.13));
+}
+"""
+
+
+def resolve_pending(A, vid, doc):
+    """objects[].src.pending = <id элемента> -> его готовое 3D (персонаж со скелетом / 3D-пропс, выбранная версия) или заглушка-карточка.
+    -> [(ключ префаба, имя, вид, высота)] заглушек для prefabs.js."""
+    pend = [o for o in doc.get("objects") or [] if isinstance(o.get("src"), dict) and o["src"].get("pending")]
+    if not pend:
+        return []
+    key = "plan:" + vid
+    plan = A.load(key)
+    S = A.scapi()
+    chars = {c.get("el") or c["ref"][3:].split("@")[0]: c["ref"] for c in S.chars3d_choices(A, key, plan) if c["ref"].startswith("el:")}
+    props = {c["ref"][3:].split("@")[0]: c["ref"] for c in S.props3d_choices(A, key, plan) if c["ref"].startswith("el:")}
+    ph = []
+    for o in pend:
+        el = o["src"]["pending"]
+        e = A._by_id(plan.get("elements"), el) or {}
+        if el in chars:
+            o["src"] = {"prefab": chars[el], "pending": el}         # персонажи в сценах — тоже src.prefab (el:/lib:characters…)
+        elif el in props:
+            o["src"] = {"prefab": props[el], "pending": el}
+        else:
+            k = "_ph:" + el
+            h = float(o["src"].get("h") or (1.0 if e.get("kind") == "char" else 0.7))
+            ph.append((k, e.get("name") or o.get("name") or el, e.get("kind") or "prop", h))
+            o["src"] = {"prefab": k, "pending": el}
+    return ph
+
+
 def recompose(A, vid, sid):
     """overlay.json (+ локация) -> work/scene.json и prefabs.js локации. -> собранная сцена."""
     ov = json.load(open(overlay_path(A, vid, sid), encoding="utf-8"))
     loc = load_loc(A, vid, ov["location"])
     doc = compose(loc, ov)
+    ph = resolve_pending(A, vid, doc)
     wd = os.path.join(mdir(A, vid, sid), "work")
     os.makedirs(wd, exist_ok=True)
     src = os.path.join(loc_dir(A, vid, ov["location"]), "prefabs.js")
     if os.path.isfile(src):
         shutil.copy2(src, os.path.join(wd, "prefabs.js"))
+    if ph:                                                  # заглушки: дописать карточки к PREFABS
+        js = PH_JS + "".join(
+            f"PREFABS[{json.dumps(k)}] = {{ kind: 'card', px: [420, {int(420 * max(0.8, h / 0.75))}], h: {h:.2f}, foot: 0, rim: 6, thick: 0.015,\n"
+            f"  draw(g, cw, ch) {{ _phDraw(g, cw, ch, {json.dumps(n, ensure_ascii=False)}, {json.dumps(kd)}); }} }};\n" for k, n, kd, h in ph)
+        with open(os.path.join(wd, "prefabs.js"), "a", encoding="utf-8") as f:
+            f.write(js)
     A.write_text(os.path.join(wd, "scene.json"), json.dumps(doc, ensure_ascii=False, indent=1))
     return doc
+
+
+def on_element_ready(A, vid, el):
+    """Черновик персонажа / пропса готов -> пересобрать сцены монтажа, где он стоял заглушкой (src.pending) — клипы перерендерятся сами."""
+    n = 0
+    for m in (A.load("plan:" + vid).get("mscenes") or []):
+        try:
+            ov = json.load(open(overlay_path(A, vid, m["id"]), encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if any(isinstance(o.get("src"), dict) and o["src"].get("pending") == el for o in ov.get("objects") or []):
+            recompose(A, vid, m["id"]); n += 1
+    return n
+
+
+# ---------------------------------------------------------------- «Сделать монтаж» без препродакшена (задача automontage)
+def _wait(A, job, ids, what):
+    """Ждать задачи Claude (они в общей очереди). -> {id: статус}"""
+    import time as _t
+    while True:
+        js = [A.JOBS.get(i) for i in ids]
+        left = [j for j in js if j and j.status in ("running", "queued")]
+        if not left:
+            return {i: (A.JOBS.get(i).status if A.JOBS.get(i) else "?") for i in ids}
+        if job.cancelled:
+            raise RuntimeError("отменено")
+        job.summary = f"{what}: готово {len(ids) - len(left)} из {len(ids)}"
+        _t.sleep(3)
+
+
+def _start(A, kind, key, scope, params):
+    try:
+        return A.start_job(kind, key, scope, params).id
+    except RuntimeError:                                     # уже идёт — ждём ту же
+        j = next((j for j in A.JOBS.values() if j.key == key and j.scope == scope and j.status in ("running", "queued")), None)
+        return j.id if j else None
+
+
+def auto_montage(A, job):
+    """«Сделать монтаж» сразу по сценарию: локации (Claude накидывает по сценарию, если их нет) -> их черновики (ждём) ->
+    монтаж агентом (недостающих персонажей и предметы он заводит в препродакшен и ставит заглушками) -> черновики новых элементов в очередь;
+    готовый черновик подменяет заглушку во всех сценах сам (on_element_ready)."""
+    import time as _t
+    vid = job.key[5:]
+    key = job.key
+    plan = A.load(key)
+    if plan.get("engine") != "3d":
+        raise ValueError("сборка без препродакшена — пока только для 3D-видео")
+    if not plan.get("locations"):
+        A.apply_ops(key, [{"op": "set", "path": ["locations"], "value": True}])
+    locs = lambda: [e for e in A.load(key).get("elements") or [] if e.get("kind") == "scene" and e.get("status") != "drop"]
+    if not locs():
+        job.summary = "Claude накидывает локации по сценарию…"
+        jid = _start(A, "elements", key, "elements:scene", {"kind": "scene", "focus": "Локации по сценарию: по одной на каждое место, где идёт действие"})
+        st = _wait(A, job, [jid], "локации по сценарию") if jid else {}
+        if not locs():
+            raise RuntimeError("Claude не предложил локаций" + (f" ({list(st.values())[0]})" if st else ""))
+    todo = [e for e in locs() if not (e.get("stage") or {}).get("work")]
+    if todo:
+        ids = [x for x in (_start(A, "element", key, "element:" + e["id"], {"el": e["id"]}) for e in todo) if x]
+        _wait(A, job, ids, f"черновики локаций ({len(todo)})")
+    ready = [e for e in locs() if (e.get("stage") or {}).get("work")]
+    if not ready:
+        raise RuntimeError("ни одна локация не нарисовалась — посмотрите ошибки в препродакшене")
+    before = {e["id"] for e in A.load(key).get("elements") or []}
+    job.summary = f"локаций {len(ready)} — Claude монтирует…"
+    sp = "_studio/server/studio.py"
+    wish = (job.params.get("wish") or "").strip()
+    text = ("🎞 Сделай монтаж сразу по сценарию (препродакшен автор не делал — локации готовы, остальное заводи по ходу). "
+            "Локации — mscene locations; для каждой секции голоса — сцена на локации (mscene new), юниты по порядку, как в режиме монтажа в прямом эфире. "
+            f"Персонажа или предмета из сценария нет ни в видео, ни в библиотеке (или у элемента видео ещё нет 3D) — заведи его: python {sp} add-elements {vid} char|prop \"Название | как выглядит\" "
+            "(id — в выводе), и ставь в сцену объектом с src: {\"pending\": \"<id элемента>\", \"h\": <рост в м>} — пока черновика нет, в кадре бумажная заглушка с подписью; "
+            "черновики я поставлю в очередь сам, когда закончишь, и они заменят заглушки во всех сценах. Главного героя-ёжика бери из библиотеки."
+            + (" Пожелания автора: " + wish if wish else ""))
+    s = A.agapi().get_session(A, vid, A.VISUAL_MODEL, "montage")
+    s.say(text, None)
+    _t.sleep(5)
+    while s.busy and s.alive():                              # автор видит работу в панели Claude и пишет правки по ходу
+        if job.cancelled:
+            s.stop(); raise RuntimeError("отменено")
+        job.summary = "Claude монтирует (смотрите панель справа)…"
+        _t.sleep(5)
+    # дорисовка задним числом: персонажи и предметы, которые стоят заглушками
+    plan = A.load(key)
+    pend = set()
+    for m in plan.get("mscenes") or []:
+        try:
+            ov = json.load(open(overlay_path(A, vid, m["id"]), encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        pend |= {o["src"]["pending"] for o in ov.get("objects") or [] if isinstance(o.get("src"), dict) and o["src"].get("pending")}
+    S = A.scapi()
+    have = {c["ref"][3:].split("@")[0] for c in S.chars3d_choices(A, key, plan) + S.props3d_choices(A, key, plan) if c["ref"].startswith("el:")}
+    need = [e for e in plan.get("elements") or [] if e["id"] in pend and e["id"] not in have and e.get("kind") in ("char", "prop")]
+    for e in need:
+        _start(A, "make3d", key, "element:" + e["id"], {"el": e["id"]})
+    new = len([e for e in plan.get("elements") or [] if e["id"] not in before])
+    job.summary = f"монтаж готов · в препродакшен добавлено: {new} · дорисовываются в очереди: {len(need)} (заменят заглушки сами)"
+
 
 
 def new_scene(A, vid, loc_el, name, overlay=None, sec=""):
