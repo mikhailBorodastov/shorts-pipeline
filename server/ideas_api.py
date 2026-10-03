@@ -895,17 +895,61 @@ class Job:
         return d
 
 
+def max_jobs():
+    """Сколько задач Claude идут одновременно: ⚙ Настройки → «Claude одновременно» (1–8), по умолчанию MAX_JOBS."""
+    try:
+        return max(1, min(8, int(P.state_get("max_jobs") or MAX_JOBS)))
+    except (TypeError, ValueError):
+        return MAX_JOBS
+
+
+_PUMP = threading.Lock()
+
+
+def _waits_for(job):
+    """Сцену препродакшена рисуем после черновиков её состава (S12.13): пока у её персонажей / пропсов идёт или ждёт задача — сцена ждёт."""
+    if job.kind not in ("element", "make3d") or not job.key.startswith("plan:"):
+        return False
+    try:
+        d = load(job.key)
+        e = _by_id(d.get("elements"), job.params.get("el"))
+        if not e or e.get("kind") != "scene":
+            return False
+        cast = {x["id"] for x, _ in preprod.cast_of(e, d)}
+    except Exception:
+        return False
+    scopes = {f"{p}:{i}" for i in cast for p in ("element", "charmodel")}
+    return any(j is not job and j.key == job.key and j.status in ("running", "queued") and j.scope in scopes for j in JOBS.values())
+
+
+def _pump():
+    """Очередь задач Claude: ждущие (queued) запускаются по порядку, пока свободных мест меньше max_jobs(); сцены — после своего состава."""
+    with _PUMP:
+        busy = sum(1 for j in JOBS.values() if j.status == "running" and j.kind not in LOCAL_KINDS)
+        for job in sorted((j for j in JOBS.values() if j.status == "queued"), key=lambda j: j.started):
+            if busy >= max_jobs():
+                break
+            if _waits_for(job):
+                job.summary = "ждёт черновики персонажей и пропсов сцены"
+                continue
+            job.status, job.started, job.summary = "running", time.time(), ""
+            busy += 1
+            threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+
+
 def start_job(kind, key, scope, params):
-    running = [j for j in JOBS.values() if j.status == "running"]
-    if any(j.key == key and j.scope == (scope or kind) for j in running):
-        raise RuntimeError("эта задача уже идёт")
-    if kind not in LOCAL_KINDS and sum(1 for j in running if j.kind not in LOCAL_KINDS) >= MAX_JOBS:
-        raise RuntimeError(f"Claude уже занят {MAX_JOBS} задачами — подожди немного")
+    live = [j for j in JOBS.values() if j.status in ("running", "queued")]
+    if any(j.key == key and j.scope == (scope or kind) for j in live):
+        raise RuntimeError("эта задача уже идёт или ждёт в очереди")
     if kind not in LOCAL_KINDS and not claude_bin():
         raise RuntimeError("не найден Claude Code (claude.exe)")
     job = Job(kind, key, scope, params)
     JOBS[job.id] = job
-    threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    if kind in LOCAL_KINDS:
+        threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    else:                                                  # S12.13: лишние не отклоняются — ждут в очереди (status queued), _pump запускает по мере освобождения
+        job.status, job.summary = "queued", "в очереди"
+        _pump()
     for jid in [i for i, j in JOBS.items() if j.finished and time.time() - j.finished > 1800]:
         JOBS.pop(jid, None)
     return job
@@ -950,6 +994,10 @@ def _run_job(job):
         job.status = "cancelled" if job.cancelled else "error"
         job.error = str(e) or type(e).__name__
     job.finished = time.time()
+    try:
+        _pump()
+    except Exception:
+        pass
     try:
         os.makedirs(JOBS_DIR, exist_ok=True)
         with open(os.path.join(JOBS_DIR, "log.txt"), "a", encoding="utf-8") as f:
@@ -1381,7 +1429,8 @@ def handle_get(h):
                  "plans": [dict(plan_summary(d), stage=d.get("stage") or "idea", folder=d.get("_folder"), channel=d.get("_channel"))
                            for d in plans(ch["id"] if ch else None) if not d.get("service")]}); return True   # служебное (🛠 Мастерская) — не в списке роликов
     if p == "/api/revs":
-        jobs = [j.info() for j in JOBS.values() if j.status == "running" or time.time() - j.finished < 90]
+        _pump()
+        jobs = [j.info() for j in JOBS.values() if j.status in ("running", "queued") or time.time() - j.finished < 90]
         out = {"docs": all_revs(), "jobs": jobs, "web": web_mtime(), "api": API_VERSION}
         vid = q.get("v", [""])[0]
         if vid:                                           # открытое видео: файлы проекта, которые меняют Claude и скрипты (голос, тайминги, сценарий, сцены)
@@ -1626,7 +1675,10 @@ def handle_post(h):
             h._json({"ok": bool(s)}); return True
         if p == "/api/job/cancel":
             j = JOBS.get(q.get("id", [""])[0])
-            if j and j.status == "running":
+            if j and j.status == "queued":                      # из очереди — просто снять
+                j.cancelled, j.status, j.finished, j.summary = True, "cancelled", time.time(), "снята из очереди"
+                _pump()
+            elif j and j.status == "running":
                 j.cancelled = True
                 if j.proc and j.proc.poll() is None:
                     j.proc.kill()

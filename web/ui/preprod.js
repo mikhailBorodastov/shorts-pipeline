@@ -6,6 +6,32 @@
 const PRE = { tab: Local.get('pretab') || 'all' };
 
 Object.assign(Plan, {
+  // ✨ Сделать всё (S12.13): черновики всех элементов без черновика — в очередь Claude. Порядок: персонажи, пропсы, эффекты, звуки, сцены
+  // (сервер запускает по «Claude одновременно» из ⚙ Настроек, сцена ждёт черновики своего состава). B-roll — нет: ему нужен источник.
+  doAllTodo(d, key, live) {
+    const order = { char: 0, prop: 1, vfx: 2, sound: 3, scene: 4 };
+    return live.filter(e => e.kind in order && !(e.from && e.from.scene))
+      .filter(e => e.kind === 'sound' ? !(e.sounds || []).length : !elRender(e))
+      .filter(e => !Claude.running(key, e.kind === 'sound' ? 'sound:' + e.id : 'element:' + e.id))
+      .sort((a, b) => order[a.kind] - order[b.kind]);
+  },
+  doAllBtn(d, key, live) {
+    const todo = this.doAllTodo(d, key, live), q = Claude.queued();
+    if (!todo.length) return q ? h('span.dim.small', Icon('hourglass', 13), ` в очереди: ${q}`) : null;
+    return h('button.claude', { title: 'Черновики всех элементов, у которых их ещё нет, — в очередь Claude: сначала персонажи, пропсы, эффекты и звуки, сцены — после своего состава. Сколько сразу — ⚙ Настройки → «Claude одновременно»',
+      onclick: async () => {
+        const by = {}; for (const e of todo) by[e.kind] = (by[e.kind] || 0) + 1;
+        const names = { char: 'персонажей', prop: 'пропсов', vfx: 'эффектов', sound: 'звуков', scene: 'сцен' };
+        if (!confirm(`Поставить в очередь Claude ${todo.length}: ${Object.entries(by).map(([k, n]) => `${names[k]} ${n}`).join(', ')}?\nРаботают по несколько сразу (⚙ Настройки), остальные ждут. Каждый черновик тратит лимит подписки Claude.`)) return;
+        for (const e of todo) {
+          const mk3 = isRigChar(e) || isProp3(e);
+          if (e.kind === 'sound') await Claude.run({ action: 'sound', key, scope: 'sound:' + e.id, params: { el: e.id } });
+          else await Claude.run({ action: mk3 ? 'make3d' : 'element', key, scope: 'element:' + e.id, params: { el: e.id } });
+        }
+        UI.toast(`В очереди Claude: ${todo.length}`);
+      } }, Icon('sparkles', 14), `Сделать всё (${todo.length})`);
+  },
+
   // 🎞 B-roll: источник (ссылка / YouTube / файл), «с … по …», чьи кадры → «⬇ Взять кусок» (задача brollfetch) → плеер
   elBroll(d, key, e) {
     const B = e.broll || {}, scope = 'broll:' + e.id, run = Claude.running(key, scope);
@@ -62,7 +88,8 @@ Object.assign(Plan, {
         focus,
         Claude.btn({ label: hasScript ? (live.some(e => e.kind === 'scene') ? 'Накидать ещё' : 'Накидать по сценарию') : live.length ? 'Накидать ещё' : 'Накидать элементы', action: 'elements', key,
           params: () => ({ focus: focus.value, kind: PRE.tab !== 'all' ? PRE.tab : undefined }),
-          title: hasScript ? 'Claude разложит сценарий: каждой сцене сценария — сцена препродакшена, персонажи, пропсы, звуки, эффекты и B-roll — из «Картинки» и текста' : 'Claude соберёт элементы по идее и твоим ответам' })),
+          title: hasScript ? 'Claude разложит сценарий: каждой сцене сценария — сцена препродакшена, персонажи, пропсы, звуки, эффекты и B-roll — из «Картинки» и текста' : 'Claude соберёт элементы по идее и твоим ответам' }),
+        Plan.doAllBtn(d, key, live)),
       !hasScript && h('div.ws-pre-note', '📝 Сначала сценарий — сцены препродакшена строятся по нему (каждой сцене сценария — своя). Можно и без него: тогда Claude накидает по идее и ответам.'),
       h('div.seg.ws-pre-tabs', tabs.map(([k, l, [ok, n]]) => h('button', { class: PRE.tab === k ? 'sel' : '', onclick: () => { PRE.tab = k; Local.set('pretab', k); App.render(); } },
         l, n ? h('span.c', { class: ok === n ? 'ok' : '' }, `${ok}/${n}`) : null))),

@@ -278,6 +278,12 @@ Object.assign(Pages, {
       h('section.card', h('div.card-head', h('h3', '🧊 Blender')), h('div.row', bl, h('button.primary', { onclick: () => save({ blender: bl.value }) }, '💾')),
         h('p.dim.small', S.blender.found ? 'Сейчас работает: ' + S.blender.found : '⚠ Blender не найден — 3D-пропсы, герои в Blender и проверка моделей не заработают.')),
       Pages.local3dCard(),
+      S.jobs && (() => {
+        const n = h('input.box', { type: 'number', min: 1, max: 8, value: S.jobs.max, style: { width: '72px' } });
+        return h('section.card', h('div.card-head', h('h3', '⏳ Claude одновременно')),
+          h('div.row', h('label', 'задач сразу ', n), h('button.primary', { onclick: () => save({ jobs: { max: +n.value || S.jobs.default } }) }, '💾'), h('span.dim.small', `по умолчанию ${S.jobs.default}`)),
+          h('p.dim.small', 'Остальные кнопки ✨ не отказывают, а ждут в очереди и запускаются сами. Больше — быстрее, но каждая задача тратит лимит подписки Claude (5 часов), а черновики с рендером делят одну видеокарту. Сцены ждут черновики своих персонажей и пропсов.'));
+      })(),
       h('section.card', h('div.card-head', h('h3', '🤖 Модели Claude')),
         h('div.row', h('label', 'текстовые кнопки ', mt), h('label', 'рисование и 3D ', mv), h('label', 'усилие ', me),
           h('button.primary', { onclick: () => save({ models: { text: mt.value, visual: mv.value, effort: me.value } }) }, '💾')),

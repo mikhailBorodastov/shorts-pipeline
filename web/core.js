@@ -196,7 +196,8 @@ const Sync = {
 // ---------- Claude (claude -p through the local script, on the user's Claude Code subscription) ----------
 const Claude = {
   on: false, jobs: {}, cbs: {},
-  running(key, scope) { return Object.values(this.jobs).find(j => j.status === 'running' && j.key === key && j.scope === scope); },
+  running(key, scope) { return Object.values(this.jobs).find(j => (j.status === 'running' || j.status === 'queued') && j.key === key && j.scope === scope); },
+  queued() { return Object.values(this.jobs).filter(j => j.status === 'queued').length; },
   async run({ action, key, scope = action, params = {}, onResult, confirm: q }) {
     const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch', montagebuild: '/api/montage/build', brollfetch: '/api/videos/broll' }[action];
     if (!this.on && !local) return UI.toast('Claude Code не найден — кнопки ✨ не работают', 'err');
@@ -216,9 +217,9 @@ const Claude = {
     let flip = false;
     for (const [id, old] of Object.entries(this.jobs)) {
       const j = now[id];
-      if (old.status !== 'running') continue;
+      if (old.status !== 'running' && old.status !== 'queued') continue;
       if (!j) { flip = true; continue; }
-      if (j.status === 'running') continue;
+      if (j.status === 'running' || j.status === 'queued') { if (j.status !== old.status) flip = true; continue; }   // из очереди — в работу
       flip = true;
       if (j.status === 'done' || j.status === 'error') Unread.done(j);
       if (j.status === 'done') {
@@ -227,7 +228,7 @@ const Claude = {
       } else if (j.status === 'error') UI.toast('Claude: ' + j.error, 'err');
       delete this.cbs[id];
     }
-    for (const [id, j] of Object.entries(now)) if (!this.jobs[id] && j.status === 'running') flip = true;
+    for (const [id, j] of Object.entries(now)) if (!this.jobs[id] && (j.status === 'running' || j.status === 'queued')) flip = true;
     this.jobs = now;
     if (flip) App.render();
   },
@@ -235,6 +236,8 @@ const Claude = {
   // noClaude: a job of the local script that does not need Claude (project creation)
   btn({ label, action, key, scope = action, params = {}, onResult, confirm: q, cls = '', title, icon = '✨', noClaude = false }) {
     const j = this.running(key, scope);
+    if (j && j.status === 'queued') return h('button.claude.run.queued', { class: cls, title: (j.summary && j.summary !== 'в очереди' ? j.summary + ' · ' : '') + 'Ждёт свободного места — снять из очереди', onclick: () => api('POST', '/api/job/cancel?id=' + j.id).catch(() => {}) },
+      Icon('hourglass', 13), label ? ' В очереди ' : ' ', '✕');
     if (j) return h('button.claude.run', { class: cls, title: 'Отменить', onclick: () => api('POST', '/api/job/cancel?id=' + j.id).catch(() => {}) },
       h('span.spin'), label ? (noClaude ? ' Делаю… ' : ' Claude думает… ') : ' ', h('span.elapsed', { 'data-start': j.started }, fmtSec(j.elapsed)), ' ✕');
     return h(noClaude ? 'button.primary' : 'button.claude', { class: cls, disabled: !this.on && !noClaude, title: title || 'Сделает Claude (подписка Claude Code, без API-ключей)',

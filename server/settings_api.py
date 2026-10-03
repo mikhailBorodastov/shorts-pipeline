@@ -43,6 +43,7 @@ def get(A):
     m = P.state_get("models") or {}
     return {"secrets": {k: {"set": bool(s.get(k)), "mask": mask(s.get(k, "")), "label": lbl} for k, lbl in SECRETS.items()},
             "blender": {"path": P.state_get("blender") or "", "found": P.blender() or ""},
+            "jobs": {"max": A.max_jobs(), "default": A.MAX_JOBS},
             "models": {"text": m.get("text") or A.TEXT_MODEL, "visual": m.get("visual") or A.VISUAL_MODEL, "effort": m.get("effort") or A.VISUAL_EFFORT or "",
                        "env": {k: bool(os.environ.get(k)) for k in ("IDEAS_TEXT_MODEL", "IDEAS_VISUAL_MODEL", "IDEAS_VISUAL_EFFORT")}}}
 
@@ -80,6 +81,10 @@ def save(A, body):
         if p and not os.path.isfile(p):
             raise ValueError("нет такого файла: " + p)
         P.state_set("blender", p or None)
+    if "jobs" in body:                                     # S12.13: сколько задач Claude одновременно (остальные ждут в очереди)
+        n = int((body["jobs"] or {}).get("max") or 0)
+        P.state_set("max_jobs", max(1, min(8, n)) if n else None)
+        A._pump()
     if "models" in body:
         m = dict(P.state_get("models") or {}, **{k: (v or "").strip() for k, v in (body["models"] or {}).items() if k in ("text", "visual", "effort")})
         P.state_set("models", m)
