@@ -415,6 +415,9 @@ name — коротко (2–5 слов); desc — как выглядит ил�
     elif action == "assets":
         return assets_spec(docs, params, sysp)
 
+    elif action in ("split3d", "vary3d"):                     # S12.13: 3D-пропс -> отдельные модели / вариации (новые пропсы препродакшена)
+        return split3d_spec(docs, params, sysp, action)
+
     elif action == "q7":
         prompt = f"""Шаг 1 генератора названий: ответь на 7 вопросов о ролике — коротко, но по сути, 1–3 предложения на ответ.
 struck («что зацепило тебя») и need («почему НУЖНО снять») — про автора: предложи, что могло зацепить и зачем это снимать, как черновик, который автор поправит.
@@ -1240,6 +1243,52 @@ def animteach_spec(docs, params, sysp):
             "dirs": [wd, lib, P.STANDS, P.ENGINE], "schema": S({"name": STR, "slug": STR, "summary": STR, "note": STR})}
 
 
+def _src3d(plan, params):
+    """Исходный 3D-пропс и его версия: (элемент, render) — по params.el / params.base (по умолчанию — выбранная версия)."""
+    e = next((x for x in plan.get("elements") or [] if x["id"] == params.get("el")), None)
+    if not e:
+        raise ValueError("элемент не найден")
+    rs = [r for r in e.get("renders") or [] if r.get("three3") or r.get("model3d")]
+    r = next((x for x in rs if x.get("id") == params.get("base")), None) or next((x for x in rs if x.get("id") == e.get("render")), None) or (rs[-1] if rs else None)
+    if not r:
+        raise ValueError("у элемента ещё нет 3D-версии — сначала «Сделать 3D»")
+    return e, r
+
+
+def split3d_spec(docs, params, sysp, action):
+    """«Разделить модели» / «Сделать вариации» у 3D-пропса: Claude смотрит кадры и prefab.js исходной модели и предлагает список новых пропсов
+    (что вынести отдельно / чем отличаются вариации). apply() добавляет их в препродакшен и ставит черновики в очередь (element с from3d)."""
+    plan = docs["plan"]
+    e, r = _src3d(plan, params)
+    d = P.resolve("render/" + r["dir"])
+    pics = [os.path.join(d, f) for f in ("element.png", "prop_1.png", "prop_3.png") if os.path.isfile(os.path.join(d, f))]
+    if r.get("img") and os.path.isfile(P.resolve(r["img"])):
+        pics.insert(0, P.resolve(r["img"]))
+    code = [os.path.join(d, f) for f in ("prefab.js", "model.py") if os.path.isfile(os.path.join(d, f))]
+    n = max(2, min(8, int(params.get("n") or 3)))
+    head = f"""3D-пропс препродакшена «{e.get('name')}» — {e.get('desc') or '(без описания)'}.
+Где в ролике: {e.get('why') or '—'}
+Посмотри его кадры через Read: {', '.join(_fwd(p) for p in pics[:4]) or '(кадров нет)'}; код модели: {', '.join(_fwd(p) for p in code) or '(кода нет — модель из файла)'}."""
+    if action == "split3d":
+        prompt = head + f"""
+Задача: модель собрана из нескольких отдельных предметов, стоящих рядом (например, несколько панельных домов в ряд). Автор хочет, чтобы каждый стал
+ОТДЕЛЬНЫМ пропсом — ставить их в сцены по одному, в разном порядке и количестве.
+Найди в модели отдельные предметы (обычно 2–8). Одинаковые копии одного и того же предмета — один пропс (скажи в desc, что их было несколько).
+Если модель — один цельный предмет и делить нечего, верни пустой список и объясни в note.
+items: name — короткое имя нового пропса по-русски («Панелька 9 этажей»), desc — как выглядит (форма, этажность, цвет, детали — из кода и кадров),
+part — по-русски, какую часть исходного кода и кадра взять (чтобы реализатор нашёл её в prefab.js: имена функций, координаты, цвет)."""
+    else:
+        prompt = head + f"""
+Задача: сделать {n} ВАРИАЦИЙ этой модели, чтобы в сцене стояли разные, а не одинаковые копии (как разные панельки во дворе).
+Каждая вариация — того же типа, стиля, масштаба и эпохи, но заметно другая: пропорции, этажность/высота, цвет и фактура, детали (балконы, окна,
+вывески, пристройки, износ). Не меняй вид на что-то другое и не делай карикатуру. Отличия между вариациями — тоже разные.
+{('Пожелание автора: «' + params['wish'].strip() + '»') if (params.get('wish') or '').strip() else ''}
+items (ровно {n}): name — имя («Панелька: 12 этажей, голубая»), desc — как выглядит, part — что поменять относительно исходного кода (для реализатора)."""
+    dirs = sorted({os.path.dirname(p) for p in pics + code})
+    return {"system": sysp, "prompt": prompt, "timeout": 600, "tools": ["Read"], "allowed": ["Read"], "dirs": dirs,
+            "schema": S({"items": ARR(S({"name": STR, "desc": STR, "part": STR}, ["name", "desc", "part"])), "note": STR}, ["items"])}
+
+
 def element_spec(docs, params, sysp, genre):
     """«🎨 Сделать» for a preproduction element: Claude writes element.js for the stand (2D page.html, or the 3D stand for a scene
     when the plan's engine is 3d), shoots it with render_shot.js, looks and fixes. Work folder: _ideas/render/<plan>/<element>/v<N>/."""
@@ -1297,7 +1346,21 @@ def element_spec(docs, params, sysp, genre):
     ref_lines = "\n".join(f"- '/{r['img']}' (файл {_fwd(p)})" + (f" — {r['note']}" if r.get("note") else "") for r, p in refs) or "(автор референсов не дал — опирайся на описание и узнаваемую конкретику)"
     own = preprod.assets_brief(e, data, three or prop3)
     flat = ""
-    if prop3 and not base:
+    f3 = e.get("from3d") or {}
+    if prop3 and not base and f3.get("dir") and not renders:   # S12.13: часть / вариация другой 3D-модели — начинаем с её кода
+        sd = P.resolve("render/" + f3["dir"])
+        for f in ("prefab.js", "model.py", "model.glb"):
+            if os.path.isfile(os.path.join(sd, f)) and not os.path.isfile(os.path.join(wd, f)):
+                shutil.copy2(os.path.join(sd, f), os.path.join(wd, f))
+        src_img = next((os.path.join(sd, f) for f in ("element.png", "prop_1.png") if os.path.isfile(os.path.join(sd, f))), "")
+        if f3.get("mode") == "split":
+            flat = (f"ЭТОТ ПРОПС — ОТДЕЛЬНАЯ ЧАСТЬ модели «{f3.get('src_name')}». В папке уже лежит её prefab.js (кадры исходной: {_fwd(src_img)}). "
+                    f"Оставь в нём ТОЛЬКО эту часть: {f3.get('part')}. Остальные предметы убери; часть поставь в начало координат (0 — центр низа, перед на +z), "
+                    "h и params — по этой части, name — новое. Вид части не меняй: тот же код, цвета и детали.")
+        else:
+            flat = (f"ЭТОТ ПРОПС — ВАРИАЦИЯ {f3.get('i')} из {f3.get('n')} модели «{f3.get('src_name')}». В папке уже лежит её prefab.js (кадры исходной: {_fwd(src_img)}). "
+                    f"Начни с него и сделай заметно другую версию того же предмета: {f3.get('part')}. Стиль, масштаб, эпоха и способ сборки — те же; name — новое.")
+    if prop3 and not base and not flat:
         r2 = next((r for r in reversed(renders) if not r.get("three3") and r.get("img")), None)
         if r2:
             flat = (f"Этот пропс уже нарисован в 2D{' и утверждён автором' if e.get('status') == 'ok' else ''}: картинка {_fwd(P.resolve(r2['img']))}, код {_fwd(os.path.join(P.resolve('render/' + r2['dir']), 'element.js'))}"
@@ -1734,6 +1797,24 @@ def apply(action, docs, params, res):
             by[o["item"]["kind"]] = by.get(o["item"]["kind"], 0) + 1
         many = {"scene": "сцены", "char": "персонажи", "prop": "пропсы", "sound": "звуки", "vfx": "эффекты", "broll": "B-roll"}
         return [(key, ops)], "Claude: " + (", ".join(f"{many.get(k, k)} +{n}" for k, n in by.items()) or "новых элементов нет")
+
+    if action in ("split3d", "vary3d"):
+        e, r = _src3d(plan, params)
+        items = [x for x in res.get("items") or [] if (x.get("name") or "").strip()]
+        if not items:
+            return [(key, [])], "Claude: " + (res.get("note") or ("делить нечего — модель цельная" if action == "split3d" else "вариаций нет"))
+        ops, spawn = [], []
+        mode = "split" if action == "split3d" else "vary"
+        for i, x in enumerate(items, 1):
+            iid = nid("e")
+            ops.append({"op": "add", "path": ["elements"], "item": {
+                "id": iid, "kind": "prop", "dim": "3d", "name": x["name"].strip()[:80], "desc": x.get("desc", ""),
+                "why": (f"Часть модели @[{e.get('name')}]" if mode == "split" else f"Вариация {i} из {len(items)} модели @[{e.get('name')}]") + (f" — {e.get('why')}" if e.get("why") else ""),
+                "status": "", "refs": [], "by": "claude",
+                "from3d": {"el": e["id"], "rid": r["id"], "dir": r["dir"], "mode": mode, "part": x.get("part", ""), "i": i, "n": len(items), "src_name": e.get("name", "")}}})
+            spawn.append(iid)
+        params["_spawn"] = spawn
+        return [(key, ops)], ("Claude: разделил на " if mode == "split" else "Claude: вариаций ") + f"{len(items)} — черновики в очереди"
 
     if action == "animteach":
         wd, typ = params["_wd"], params["_type"]

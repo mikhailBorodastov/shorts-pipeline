@@ -1244,6 +1244,11 @@ def run_action(job):
             apply_ops(key, ops)
     if job.kind == "element" and not job.cancelled:
         auto_stage(job)
+    for eid in job.params.get("_spawn") or []:             # S12.13: «Разделить модели» / «Вариации» -> черновики новых пропсов в очередь
+        try:
+            start_job("element", job.key, "element:" + eid, {"el": eid})
+        except Exception:
+            pass
 
 
 def auto_stage(job):

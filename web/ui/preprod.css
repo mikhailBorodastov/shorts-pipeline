@@ -34,3 +34,4 @@ input.box.wide { width: 100%; }
 .mk3menu button:hover:not(:disabled) { background: var(--field); }
 .mk3menu button:disabled { opacity: .45; }
 .mk3menu small { color: var(--text-mute); font-size: 12px; line-height: 1.3; white-space: normal; }
+.modal .col { display: flex; flex-direction: column; gap: 12px; }

@@ -471,6 +471,7 @@ Object.assign(Plan, {
           title: 'Та же фигура (те же сиды), но 1536³, текстура 2048 и полная сетка — 3–8 минут' }, '⬆ Довести'),
         trl && h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, cur, 'retex'), title: 'Форма та же — новая раскраска: по другой картинке или новым сидом' }, '🎨 Перекрасить'),
         mk3 && !(e.from && e.from.scene) && Plan.make3dBtn(key, e, scope, !!cur),
+        e.kind === 'prop' && cur && (cur.three3 || cur.model3d) && Plan.more3dBtn(key, e, cur),
         Claude.running(key, 'charmodel:' + e.id) && h('span.dim.small', h('span.spin'), ' ', (Object.values(Claude.jobs).find(j => j.scope === 'charmodel:' + e.id && j.status === 'running') || {}).summary || 'делаю…'),
         !cur && e.from && e.from.scene && h('div.s11from', h('span', '🎬 Сделан в сцене «' + (((d.elements || []).find(x => x.id === e.from.scene) || {}).name || e.from.scene) + '» — живёт в её коде'),
           h('a.btn', { href: `#/v/${d.id}/pre/${e.from.scene}/stage` }, 'открыть сцену'),
@@ -551,7 +552,7 @@ Object.assign(Plan, {
     const close = UI.modal(`🧊 ${e.name} · v${r.v}`, h('div.view3d',
       h('iframe', { src, title: '3D-сцена', allow: 'fullscreen' }),
       h('div.row', h('span.dim.small', '«✋ Двигать» (M) — переставить объекты: тяни мышью или стрелками, Q / E — поворот, + / − — размер. «💾 Сохранить» делает новую версию черновика без Claude. Пробел — пауза.'), h('span.sp'),
-        h('a.btn', { href: src, target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => removeEventListener('message', onMsg) });
+        h('a.btn', { href: src, target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => { removeEventListener('message', onMsg); App.render(); } });   // пины и их текст — сразу в карточке
   },
   // 🧊 3D-пропс: поворотный стол (stand3d.html?prop=…&view=1&pin=1) — крутить мышью, клик по модели ставит пин (fx.main.pins3d) с текстом справа
   viewProp(d, e, r) {
@@ -579,7 +580,36 @@ Object.assign(Plan, {
     draw();
     UI.modal(`🧊 ${e.name} · v${r.v}`, h('div.view3d.prop3', h('div.p3main', frame, list),
       h('div.row', h('span.dim.small', 'Лист из четырёх ракурсов — в карточке; клик по картинке открывает этот просмотр.'), h('span.sp'),
-        h('a.btn', { href: src.replace('&pin=1', ''), target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => removeEventListener('message', onMsg) });
+        h('a.btn', { href: src.replace('&pin=1', ''), target: '_blank', rel: 'noopener' }, '↗ Во весь экран'))), { wide: true, onClose: () => { removeEventListener('message', onMsg); App.render(); } });   // пины и их текст — сразу в карточке
+  },
+  // ⋯ у 3D-пропса (S12.13): «Разделить на отдельные модели» и «Сделать вариации» — новые пропсы препродакшена, черновики — в очередь Claude
+  more3dBtn(key, e, cur) {
+    const split = Claude.running(key, 'split3d:' + e.id), vary = Claude.running(key, 'vary3d:' + e.id);
+    if (split || vary) return Claude.btn({ label: split ? 'Делю модель' : 'Вариации', action: split ? 'split3d' : 'vary3d', key, scope: (split ? 'split3d:' : 'vary3d:') + e.id });
+    const runSplit = () => Claude.run({ action: 'split3d', key, scope: 'split3d:' + e.id, params: { el: e.id, base: cur.id },
+      confirm: `Разделить «${e.name}» v${cur.v} на отдельные модели? Claude найдёт в ней отдельные предметы, добавит каждый новым 3D-пропсом в препродакшен и поставит их черновики в очередь (каждый тратит лимит подписки).` });
+    const runVary = () => {
+      const st = { n: 3, wish: '' };
+      const n = h('input.box', { type: 'number', min: 2, max: 8, value: 3, style: { width: '72px' }, oninput: ev => { st.n = +ev.target.value || 3; } });
+      const wish = h('input.box.grow', { placeholder: 'по желанию: «разная этажность и цвет», «одна — заброшенная»…', oninput: ev => { st.wish = ev.target.value; } });
+      const close = UI.modal(`Вариации «${e.name}»`, h('div.col',
+        h('p.dim.small', 'Claude сделает несколько разных версий этой модели — того же стиля и масштаба, но с другими пропорциями, цветом и деталями. Каждая станет отдельным 3D-пропсом в препродакшене, черновики встанут в очередь.'),
+        h('div.row', h('label', 'Сколько ', n), wish),
+        h('div.row', h('span.sp'), h('button', { onclick: () => close() }, 'Отмена'),
+          h('button.primary', { onclick: () => { close(); Claude.run({ action: 'vary3d', key, scope: 'vary3d:' + e.id, params: { el: e.id, base: cur.id, n: Math.max(2, Math.min(8, st.n)), wish: st.wish } }); } }, Icon('sparkles', 14), 'Сделать вариации'))));
+      setTimeout(() => n.focus(), 0);
+    };
+    const menu = ev => {
+      const b = ev.currentTarget.getBoundingClientRect();
+      const m = h('div.mk3menu', { style: { left: Math.max(8, Math.min(b.left, innerWidth - 348)) + 'px', top: b.bottom + 4 + 'px' } },
+        h('div.mk3h', '3D-модель'),
+        h('button', { onclick: () => { close(); runSplit(); } }, h('b', 'Разделить на отдельные модели'), h('small', 'В модели несколько предметов рядом (дома в ряд) — каждый станет своим пропсом')),
+        h('button', { onclick: () => { close(); runVary(); } }, h('b', 'Сделать вариации…'), h('small', '2–8 разных версий этой модели — чтобы в сцене не стояли одинаковые копии')));
+      const close = () => { m.remove(); removeEventListener('pointerdown', out, true); };
+      const out = x => { if (!m.contains(x.target)) close(); };
+      document.body.append(m); setTimeout(() => addEventListener('pointerdown', out, true));
+    };
+    return h('button.icon', { title: 'Ещё: разделить модель на отдельные, сделать вариации', onclick: menu }, '⋯');
   },
   // ✨ Сделать 3D (S12.11): Claude выбирает способ (server/make3d_api.py); ▾ — список способов, недоступные — серые с причиной, Meshy / Tripo — только с ключом
   make3dBtn(key, e, scope, again) {
