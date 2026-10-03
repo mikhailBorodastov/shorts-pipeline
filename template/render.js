@@ -99,6 +99,7 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       //   RENDER_RANGE=a:b  only frames a..b-1 (benchmarks)           RENDER_RECYCLE=N fresh browser every N frames (default 900)
       //   S12.12 возобновление: build/frames/sig.json — отпечаток (кадр, fps, формат, файлы src/ и assets/). Совпал — готовые куски не рендерятся заново
       //   (сбой, отмена, закрытое окно на 20-минутном ролике), всё готово — рендер пропускается. RENDER_FRESH=1 — начать с нуля.
+      //   S13: RENDER_SEGS=<файл.json> [{a, b, out}] — несколько отрезков за ОДИН запуск браузеров (клипы сцен): каждый -> <out>/video.h264
       await closeB(browser);
       const fps = +(a1 || 30); let workers = +(a2 || 4);
       let fmt = process.env.RENDER_FMT === 'png' ? 'png' : process.env.RENDER_FMT === 'jpg' ? 'jpg' : 'h264';   // S12.8: по умолчанию H.264 в браузере (видеокарта)
@@ -116,9 +117,23 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         if (!ok) { fmt = 'jpg'; console.log('[render] WebCodecs H.264 недоступен — кадры JPEG'); }
       }
       if (!process.env.WORKERS && !process.env.RENDER_WORKERS_FORCE && await probe.evaluate(() => typeof X3 !== 'undefined' && !!X3.R))
+      {
         workers = Math.min(workers, 4);                   // 3D-сцены (WebGL): видеокарта одна — 4 окна быстрее 6 (замер: 1044 кадра 31 с против 48 с)
+        // S13: тяжёлые сцены (локации на 50+ объектов) упираются в видеокарту — окна мешают друг другу: «Металлические штуки» 1 окно 27 к/с, 2 — 22, 4 — 12.
+        // Замер кадра в пробной странице: дороже ~12 мс — одно окно.
+        const tot = await probe.evaluate(() => window.TOTAL), fps0 = +(a1 || 30);
+        const ms = await probe.evaluate((tot, fps) => {
+          let sum = 0, n = 0;
+          for (const f of [0.2, 0.5, 0.8]) { const t = tot * f; renderFrame(t); const s = performance.now(); for (let i = 1; i <= 6; i++) renderFrame(t + i / fps); sum += performance.now() - s; n += 6; }
+          return sum / n;
+        }, tot, fps0).catch(() => 0);
+        if (ms > 12) workers = 1;
+        console.log(`[render] 3D: кадр ~${ms.toFixed(0)} мс — окон: ${workers}`);
+      }
       const N = Math.ceil(total * fps), CH0 = fmt === 'h264' ? 120 : 60;
-      const [r0, r1x] = (process.env.RENDER_RANGE || `0:${N}`).split(':').map(Number), r1 = Math.min(N, Number.isFinite(r1x) && r1x > 0 ? r1x : N);
+      const SEGS = process.env.RENDER_SEGS ? JSON.parse(fs.readFileSync(process.env.RENDER_SEGS, 'utf8')) : null;
+      if (SEGS) process.env.RENDER_RANGE = process.env.RENDER_RANGE || 'segs';   // как RENDER_RANGE: без отпечатка и возобновления
+      const [r0, r1x] = (SEGS ? '0:0' : (process.env.RENDER_RANGE || `0:${N}`)).split(':').map(Number), r1 = Math.min(N, Number.isFinite(r1x) && r1x > 0 ? r1x : N);
       const sig = projectSig({ fps, fmt, N, size: fmt0(), br: fmt === 'h264' ? BITRATE : 0 });
       const sigF = path.join(dir, 'sig.json');
       const old = (() => { try { return JSON.parse(fs.readFileSync(sigF, 'utf8')); } catch (e) { return null; } })();
@@ -130,13 +145,18 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
       }
       if (!process.env.RENDER_RANGE && !same) { fs.rmSync(dir, { recursive: true, force: true }); }
       fs.mkdirSync(dir, { recursive: true });
+      if (SEGS) for (const g of SEGS) { fs.rmSync(g.out, { recursive: true, force: true }); fs.mkdirSync(g.out, { recursive: true }); }
       fs.writeFileSync(path.join(dir, 'format.txt'), fmt);
       if (!process.env.RENDER_RANGE) fs.writeFileSync(sigF, JSON.stringify({ sig, N, fps, fmt, started: Date.now() }));
       const chunkF = c0 => path.join(dir, `c${String(c0).padStart(6, '0')}.h264`), frameF = i => path.join(dir, `${String(i).padStart(5, '0')}.${fmt}`);
       const have = c0 => (fmt === 'h264' ? (fs.existsSync(chunkF(c0)) && fs.statSync(chunkF(c0)).size > 0)
         : Array.from({ length: Math.min(CH0, r1 - c0) }, (_, k) => fs.existsSync(frameF(c0 + k))).every(Boolean));
       const CH = CH0, RECYCLE = +(process.env.RENDER_RECYCLE || 900), TIMEOUT = 30000;
-      let nextChunk = r0, done = 0; const t0 = Date.now(), todo = r1 - r0;
+      // очередь кусков: обычный рендер — r0..r1 подряд; RENDER_SEGS — куски каждого отрезка в его каталог (кусок не пересекает границу отрезка)
+      const JOBS = [];
+      for (const g of (SEGS || [{ a: r0, b: r1, out: dir }])) for (let c = Math.max(0, g.a); c < Math.min(N, g.b); c += CH0) JOBS.push({ c0: c, c1: Math.min(c + CH0, g.b, N), dir: g.out });
+      let nextJob = 0, done = 0; const t0 = Date.now(), todo = JOBS.reduce((n, j) => n + j.c1 - j.c0, 0);
+      const chunkIn = (d, c0) => path.join(d, `c${String(c0).padStart(6, '0')}.h264`);
       let reused = 0;
       if (same) for (let c = r0; c < r1; c += CH) if (have(c)) reused += Math.min(CH, r1 - c);
       if (reused) { done = reused; console.log(`[render] продолжаю: ${reused} из ${todo} кадров уже готовы`); console.log(`${done}/${todo}  0s`); }
@@ -166,21 +186,22 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         if (w === 0) { br = probeB; page = probe; } else { br = await launch(w); page = await openPage(br); }
         const fresh = async () => { await closeB(br); br = await launch(w); page = await openPage(br); since = 0; };
         while (true) {
-          const c0 = nextChunk; if (c0 >= r1) break; nextChunk += CH;
+          const J = JOBS[nextJob++]; if (!J) break;
+          const c0 = J.c0;
           if (same && have(c0)) continue;                 // готово с прошлого запуска
           if (fmt === 'h264') {                          // S12.8: весь кусок — одним вызовом, наружу только сжатый поток
-            const c1 = Math.min(c0 + CH, r1);
+            const c1 = J.c1, cf = chunkIn(J.dir, c0);
             for (let attempt = 0; ; attempt++) {
-              try { const buf = Buffer.from(await withTimeout(encChunk(page, c0, c1), TIMEOUT + (c1 - c0) * 500), 'base64'); fs.writeFileSync(chunkF(c0) + '.tmp', buf); fs.renameSync(chunkF(c0) + '.tmp', chunkF(c0)); break; }   // целиком или никак — для возобновления
+              try { const buf = Buffer.from(await withTimeout(encChunk(page, c0, c1), TIMEOUT + (c1 - c0) * 500), 'base64'); fs.writeFileSync(cf + '.tmp', buf); fs.renameSync(cf + '.tmp', cf); break; }   // целиком или никак — для возобновления
               catch (e) { if (attempt >= 3) throw e; console.log(`[render] worker ${w}: chunk ${c0} ${e.message}, restarting browser`); await fresh(); }
             }
             since += c1 - c0; if (since >= RECYCLE) await fresh();
             done += c1 - c0; console.log(`${done}/${todo}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
             continue;
           }
-          for (let i = c0; i < Math.min(c0 + CH, r1); i++) {
+          for (let i = c0; i < J.c1; i++) {
             for (let attempt = 0; ; attempt++) {
-              try { save(await withTimeout(grabF(page, i / fps), TIMEOUT), path.join(dir, `${String(i).padStart(5, '0')}.${fmt}`)); break; }
+              try { save(await withTimeout(grabF(page, i / fps), TIMEOUT), path.join(J.dir, `${String(i).padStart(5, '0')}.${fmt}`)); break; }
               catch (e) { if (attempt >= 3) throw e; console.log(`[render] worker ${w}: frame ${i} ${e.message}, restarting browser`); await fresh(); }
             }
             if (++since >= RECYCLE) await fresh();
@@ -189,9 +210,9 @@ const launch = id => puppeteer.launch({ executablePath: EDGE, headless: true, us
         }
         await closeB(br);
       }));
-      if (fmt === 'h264') {                              // куски по порядку -> build/frames/video.h264
-        const fd = fs.openSync(path.join(dir, 'video.h264'), 'w');
-        for (const f of fs.readdirSync(dir).filter(f => /^c\d{6}\.h264$/.test(f)).sort()) { fs.writeSync(fd, fs.readFileSync(path.join(dir, f))); fs.rmSync(path.join(dir, f)); }
+      if (fmt === 'h264') for (const d of [...new Set(JOBS.map(j => j.dir))]) {   // куски по порядку -> <каталог>/video.h264
+        const fd = fs.openSync(path.join(d, 'video.h264'), 'w');
+        for (const f of fs.readdirSync(d).filter(f => /^c\d{6}\.h264$/.test(f)).sort()) { fs.writeSync(fd, fs.readFileSync(path.join(d, f))); fs.rmSync(path.join(d, f)); }
         fs.closeSync(fd);
       }
       if (!process.env.RENDER_RANGE) fs.writeFileSync(sigF, JSON.stringify({ sig, N, fps, fmt, complete: Date.now() }));

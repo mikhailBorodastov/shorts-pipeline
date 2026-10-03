@@ -511,6 +511,13 @@ def _bash():
 def build(A, job):
     """🔨 монтаж -> проект -> build.sh (кадры, звук, mp4) с прогрессом."""
     vid = job.key[5:]
+    if A.load("plan:" + vid).get("locations"):             # S13: видео на локациях — сборка = клипы сцен (кэш окна видео) + склейка со звуком
+        job.cancelled = getattr(job, "cancelled", False)
+        job.meta = {}
+        out = A.clapi().render(A, job, export=True)
+        job.result = {"file": out, "report": {"len": (A.load("plan:" + vid).get("montage") or {}).get("len") or 0}}
+        job.summary = f"готово: {os.path.basename(out)} · " + job.summary
+        return
     rep = generate(A, vid)
     pd = vdir(vid)
     job.summary = "собираю: звук…"
@@ -803,7 +810,7 @@ def cli(A, argv):
         print(json.dumps(generate(A, vid), ensure_ascii=False, indent=1)); return True
     if cmd == "build":
         class J:
-            key, params, summary, result, proc = "plan:" + vid, {}, "", None, None
+            key, params, summary, result, proc, cancelled, meta = "plan:" + vid, {}, "", None, None, False, {}
         j = J()
         build(A, j)
         print(j.summary, j.result["file"]); return True

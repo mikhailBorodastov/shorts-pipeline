@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -138,22 +139,39 @@ def render(A, job, export=False):
     os.makedirs(cdir(pd), exist_ok=True)
     env = _bash_env(A, pd)
     todo = [s for s in segs if not s["fresh"]]
-    for k, s in enumerate(todo, 1):
+    if todo:                                                  # все устаревшие клипы — ОДНИМ запуском браузеров (RENDER_SEGS): без 20–30 с старта на каждый
+        frames = sum(s["b"] - s["a"] for s in todo)
+        job.summary = f"рендер клипов: {len(todo)} из {len(segs)} · кадры 0 из {frames}"
+        job.meta = {"done": 0, "total": frames}
+        tmp = {s["key"]: os.path.join(cdir(pd), "_tmp_" + s["key"]) for s in todo}
+        sf = os.path.join(cdir(pd), "_segs.json")
+        json.dump([{"a": s["a"], "b": s["b"], "out": tmp[s["key"]]} for s in todo], open(sf, "w", encoding="utf-8"))
+        e = dict(env, RENDER_SEGS=sf)
+        proc = subprocess.Popen(["node", "render.js", "frames", str(fps), "4"], cwd=pd, env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", creationflags=CF)
+        job.proc = proc
+        log = []
+        for line in proc.stdout:
+            log.append(line.rstrip())
+            m = re.match(r"(\d+)/(\d+)\s", line)
+            if m:
+                job.meta = {"done": int(m.group(1)), "total": int(m.group(2))}
+                job.summary = f"рендер клипов: {len(todo)} из {len(segs)} · кадры {m.group(1)} из {m.group(2)}"
+            if job.cancelled:
+                proc.kill()
+        proc.wait()
         if job.cancelled:
             raise RuntimeError("отменено")
-        job.summary = f"клип {k} из {len(todo)} · сцена {s['i'] + 1}"
-        job.meta = {"done": k - 1, "total": len(todo)}
-        tmp = os.path.join(cdir(pd), "_tmp_" + s["key"])
-        shutil.rmtree(tmp, ignore_errors=True)
-        e = dict(env, RENDER_RANGE=f"{s['a']}:{s['b']}", RENDER_OUT=tmp)
-        r = subprocess.run(["node", "render.js", "frames", str(fps), "4"], cwd=pd, env=e, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=CF)
-        src = os.path.join(tmp, "video.h264")
-        if r.returncode != 0 or not os.path.isfile(src):
-            raise RuntimeError("рендер клипа: " + (r.stdout + r.stderr)[-500:])
-        dst = os.path.join(cdir(pd), s["key"] + ".mp4")
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", str(fps), "-f", "h264", "-i", src, "-c:v", "copy", dst], check=True, creationflags=CF)
-        shutil.rmtree(tmp, ignore_errors=True)
-        ix["clips"][s["key"]] = {"unit": s["unit"], "scene": s["scene"], "a": s["a"], "b": s["b"], "at": int(time.time())}
+        if proc.returncode != 0:
+            raise RuntimeError("рендер клипов: " + " | ".join(log[-12:]))
+        for s in todo:
+            src = os.path.join(tmp[s["key"]], "video.h264")
+            if not os.path.isfile(src):
+                raise RuntimeError("рендер клипа: нет " + src)
+            dst = os.path.join(cdir(pd), s["key"] + ".mp4")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", str(fps), "-f", "h264", "-i", src, "-c:v", "copy", dst], check=True, creationflags=CF)
+            shutil.rmtree(tmp[s["key"]], ignore_errors=True)
+            ix["clips"][s["key"]] = {"unit": s["unit"], "scene": s["scene"], "a": s["a"], "b": s["b"], "at": int(time.time())}
         _save_index(pd, ix)
     job.summary = "склейка…"
     lst = os.path.join(cdir(pd), "list.txt")
