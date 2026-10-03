@@ -241,6 +241,7 @@ Object.assign(Plan, {
           UI.toast(`✓ Утверждено: ${todo.length}`);
         } }, `✓ Утвердить все (${live - ok})`),
         (K.key === 'char' || K.key === 'prop') && h('button.mini', { onclick: () => libImport(d, key, K), title: `Взять готов${K.key === 'char' ? 'ого персонажа' : 'ый пропс'} из библиотеки канала: копия версии станет утверждённым элементом этого видео` }, '📚 Из библиотеки'),
+        K.key !== 'broll' && Plan.doAllBtn && Plan.doAllBtn(d, key, all.filter(e => e.status !== 'drop'), K.key),
         Claude.btn({ label: 'Ещё', action: 'elements', key, scope: 'elements:' + K.key, params: () => ({ kind: K.key, focus: focus.value }), cls: 'mini',
           title: `Claude предложит ещё: ${K.label.toLowerCase()} (учтёт поле «чего не хватает?»)` })),
       K.key === 'scene' && cast.length > 0 && castOk < cast.length && h('p.warnline', `Персонажи и пропсы утверждены: ${castOk} из ${cast.length}. `,

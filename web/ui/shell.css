@@ -111,3 +111,17 @@ body.side-mini .side-nav .live { position: absolute; margin: -14px 0 0 16px; }
 svg.ico.emo { flex: none; display: inline-block; vertical-align: -0.17em; margin-right: .38em; opacity: .9; }
 svg.ico.emo.solo { margin-right: 0; }
 button > svg.ico.emo, .btn > svg.ico.emo, a.btn > svg.ico.emo { margin-right: 0; }
+
+/* S12.13: поиск картинок — крупный просмотр */
+.imgsearch { position: relative; }
+.is-item { position: relative; cursor: pointer; }
+.is-zoom { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; padding: 0; justify-content: center; border-radius: 8px;
+  background: rgba(0,0,0,.65); border-color: rgba(255,255,255,.2); color: #fff; font-size: 15px; opacity: 0; transition: opacity .12s; }
+.is-item:hover .is-zoom { opacity: 1; }
+.is-pv { position: absolute; inset: 0; z-index: 5; background: rgba(10,10,12,.96); border-radius: inherit; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.is-pvimg { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; }
+.is-pvimg img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.is-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 56px; justify-content: center; font-size: 26px; background: rgba(0,0,0,.55); border-color: rgba(255,255,255,.15); color: #fff; }
+.is-nav.l { left: 4px; } .is-nav.r { right: 4px; }
+.is-pvbar { align-items: center; gap: 8px; }
+.is-pvbar .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

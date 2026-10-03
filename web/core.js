@@ -392,23 +392,50 @@ const ImgSearch = {
       } catch (e) { status.textContent = '⚠ ' + e.message; }
       S.busy = false;
     }
+    // взять картинку: скачать оригинал (или превью) в файлы видео -> слот
+    async function take(it, c) {
+      if (c.classList.contains('busy') || c.classList.contains('done')) return false;
+      c.classList.add('busy');
+      try {
+        const r = await api('POST', '/api/file/url', { plan: planId, url: it.full, fallback: it.thumb });
+        c.classList.remove('busy'); c.classList.add('done');
+        onPath && onPath(r.path);
+        UI.toast(r.thumb ? '✓ взял превью — сайт не отдал оригинал' : '✓ картинка в референсах');
+        if (!multi) close();
+        return true;
+      } catch (e) { c.classList.remove('busy'); UI.toast(e.message, 'err'); return false; }
+    }
     function card(it) {
-      const c = h('button.is-item', { title: [it.title, it.domain, it.w && `${it.w}×${it.h}`, it.license].filter(Boolean).join(' · ') },
+      const c = h('div.is-item', { title: [it.title, it.domain, it.w && `${it.w}×${it.h}`, it.license].filter(Boolean).join(' · ') + '\nклик — взять · ⤢ — посмотреть крупно' },
         h('img', { src: it.thumb, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onerror: e => c.remove() }),
-        h('span.is-dom', it.license ? it.license : it.domain));
-      c.onclick = async () => {
-        if (c.classList.contains('busy') || c.classList.contains('done')) return;
-        c.classList.add('busy');
-        try {
-          const r = await api('POST', '/api/file/url', { plan: planId, url: it.full, fallback: it.thumb });
-          c.classList.remove('busy'); c.classList.add('done');
-          onPath && onPath(r.path);
-          UI.toast(r.thumb ? '✓ взял превью — сайт не отдал оригинал' : '✓ картинка в референсах');
-          if (!multi) close();
-        } catch (e) { c.classList.remove('busy'); UI.toast(e.message, 'err'); }
-      };
+        h('span.is-dom', it.license ? it.license : it.domain),
+        h('button.is-zoom', { title: 'Посмотреть крупно', onclick: ev => { ev.stopPropagation(); preview(S.items.indexOf(it)); } }, '⤢'));
+      c._it = it;
+      c.onclick = () => take(it, c);
       return c;
     }
+    // ⤢ крупный просмотр: оригинал (пока грузится — превью), размер и сайт; «Взять», ← → по выдаче, Esc — назад к сетке (S12.13)
+    let pv = null;
+    function preview(i) {
+      const it = S.items[i]; if (!it) return;
+      const c = [...grid.children].find(x => x._it === it);
+      const img = h('img', { src: it.thumb, alt: '', referrerpolicy: 'no-referrer' });
+      const full = new Image(); full.referrerPolicy = 'no-referrer'; full.onload = () => { img.src = it.full; }; full.src = it.full;
+      const done = c && c.classList.contains('done');
+      const btn = h('button.primary', { disabled: done, onclick: async () => { if (await take(it, c || h('div'))) { btn.disabled = true; btn.textContent = '✓ Взято'; } } }, done ? '✓ Взято' : 'Взять');
+      if (pv) pv.remove();
+      pv = h('div.is-pv', { onclick: e => { if (e.target === pv) closePv(); } },
+        h('div.is-pvimg', img,
+          i > 0 && h('button.is-nav.l', { title: 'Предыдущая (←)', onclick: () => preview(i - 1) }, '‹'),
+          i < S.items.length - 1 && h('button.is-nav.r', { title: 'Следующая (→)', onclick: () => preview(i + 1) }, '›')),
+        h('div.row.is-pvbar',
+          h('span.dim.small', [it.title, it.domain, it.w && `${it.w}×${it.h}`, it.license].filter(Boolean).join(' · ')), h('span.sp'),
+          it.page && h('a.btn', { href: it.page, target: '_blank', rel: 'noopener' }, 'Страница ↗'),
+          h('button', { onclick: () => closePv() }, 'Назад'), btn));
+      pv._i = i;
+      box.append(pv);
+    }
+    const closePv = () => { if (pv) { pv.remove(); pv = null; } };
     inp.onkeydown = e => { if (e.key === 'Enter') run(); };
     const box = h('div.imgsearch',
       h('div.row', h('b', '🔎 Картинки'), seg, h('span.sp'), h('button', { title: 'Google Картинки в отдельном окне — оттуда перетащи картинку в слот', onclick: google }, '↗ Google в окне'), h('button.icon', { title: 'Закрыть (Esc)', onclick: () => close() }, '×')),
@@ -416,7 +443,10 @@ const ImgSearch = {
       grid, h('div.row', status, h('span.sp'), more),
       h('p.dim.small', 'Это референсы для Claude и для тебя, не кадры ролика: права на картинки — у их авторов.'));
     const ov = h('div.imgsearch-ov', { onclick: e => { if (e.target === ov) close(); } }, box);
-    const esc = e => { if (e.key === 'Escape') close(); };
+    const esc = e => {
+      if (pv && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); preview(pv._i + (e.key === 'ArrowLeft' ? -1 : 1)); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); pv ? closePv() : close(); }
+    };
     const close = () => { ov.remove(); removeEventListener('keydown', esc, true); };
     addEventListener('keydown', esc, true);
     more.hidden = true;
