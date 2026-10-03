@@ -66,6 +66,9 @@ def _step(A, d, vdir, mt):
             return "script"
     except Exception:
         pass
+    moved_on = (d.get("montage") or {}).get("units") or any(e.get("status") == "ok" for e in d.get("elements") or [])
+    if not d.get("scriptOk") and not moved_on:              # написан, но автор не утвердил (видео, где уже утверждены элементы или есть монтаж, — дальше сценария)
+        return "script"
     live = [e for e in d.get("elements") or [] if e.get("status") != "drop"]
     if not live or any(e.get("status") != "ok" for e in live):
         return "pre"

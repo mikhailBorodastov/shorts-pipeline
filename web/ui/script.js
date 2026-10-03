@@ -76,6 +76,9 @@ const ScriptWin = {
       h('b.sw-title', 'Сценарий'), h('span.dim.sw-name', d.name || ''),
       h('div.seg', tabs.map(([k, l]) => h('button', { class: SW.tab === k ? 'sel' : '', onclick: () => this.go(k) }, l))),
       h('span.sp'), h('span.sw-stats'),
+      (() => { const key = 'plan:' + d.id, ok = (Store.get(key) || {}).scriptOk;   // S12.13: сценарий утверждает автор — дальше препродакшен
+        return ok ? h('button.sw-ok.on', { title: 'Сценарий утверждён ' + fmtDate(ok) + '. Клик — снять утверждение', onclick: () => { Store.set(key, ['scriptOk'], null, true); this.draw(); } }, Icon('check', 14), 'Утверждён')
+          : h('button.primary.sw-ok', { title: 'Сценарий готов — утвердить: дальше озвучка и препродакшен', onclick: () => { Store.set(key, ['scriptOk'], Date.now(), true); UI.toast('✓ Сценарий утверждён'); this.draw(); } }, Icon('check', 14), 'Утвердить сценарий'); })(),
       h('button.icon', { title: 'Закрыть (Esc)', onclick: () => this.close() }, Icon('x', 18)));
     const board = SW.el.querySelector('.sw-board'), side = SW.el.querySelector('.sw-side');
     board.hidden = SW.tab !== 'board';

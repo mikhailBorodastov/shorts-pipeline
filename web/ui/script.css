@@ -27,3 +27,5 @@ body.agent-open .sw { right: 400px; }
 .sw-vview { overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
 .sw-pre { white-space: pre-wrap; font: 12.5px/1.55 var(--mono); color: var(--dim); background: var(--field); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; margin: 0; }
 .sw-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--bg-raise); }
+
+.sw-ok.on { color: var(--ok); border-color: rgba(61,220,151,.45); background: rgba(61,220,151,.08); }

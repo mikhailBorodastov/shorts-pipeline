@@ -78,10 +78,12 @@ const Workspace = {
     const els = (d.elements || []).filter(e => e.status !== 'drop'), ok = els.filter(e => e.status === 'ok').length;
     const agent = (text, mode = 'chat', model = 'opus') => { AgentPanel.toggle(true); AgentPanel.say(text, { mode, model }); };
     const nav = tab => () => go(`#/v/${id}/${tab}`);
-    const scriptDone = has && scr.template === false;
+    const scriptWritten = has && scr.template === false;
+    const scriptDone = scriptWritten && !!(d.scriptOk || (d.montage && (d.montage.units || []).length) || (d.elements || []).some(e => e.status === 'ok'));   // S12.13: готов — когда автор утвердил (или уже ушёл дальше)
     const steps = [
-      { icon: 'pencil', label: 'Сценарий', st: scriptDone ? 'done' : '', act: scriptDone ? 'Открыть' : 'Написать', primary: !scriptDone,
-        btn: scriptDone ? () => ScriptWin.open(d) : () => this.writeScript(d),
+      { icon: 'pencil', label: 'Сценарий', sub: scriptWritten && !scriptDone ? 'написан — проверьте и утвердите' : '', st: scriptDone ? 'done' : scriptWritten ? 'part' : '',
+        act: scriptWritten ? 'Открыть' : 'Написать', primary: !scriptDone,
+        btn: scriptWritten ? () => ScriptWin.open(d) : () => this.writeScript(d),
         title: scriptDone ? 'Раскадровка: текст сцен, правки, фактчек' : d.brief ? 'Claude: ресерч и сценарий по брифу (проект ролика создастся сам)' : 'Сначала бриф и вопросы Claude — потом сценарий' },
       { icon: 'mic', label: 'Озвучка', sub: mute ? 'без диктора — по сценарию' : words.length ? '' : 'черновой голос или своя запись', st: words.length || mute ? 'done' : '', act: mute ? 'Открыть' : words.length ? 'Заменить' : 'Добавить', btn: nav('voice'), off: !scriptDone,
         title: mute ? 'В сценарии нет закадрового текста — голос не нужен. Реплики героев — звериная речь в панели «Озвучка»' : '' },
