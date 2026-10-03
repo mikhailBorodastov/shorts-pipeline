@@ -208,6 +208,8 @@ def create(A, body, channel=None):
            {"op": "set", "path": ["topic"], "value": brief_text(A, b, channel or body.get("channel"))}]
     if look and look.get("engine"):
         ops.append({"op": "set", "path": ["engine"], "value": look["engine"]})
+        if look["engine"] == "3d":                              # S13: 3D — локации в препродакшене, сцены на монтаже
+            ops.append({"op": "set", "path": ["locations"], "value": True})
     for u in body.get("refs") or []:
         u = (u or "").strip()
         if re.match(r"https?://", u):

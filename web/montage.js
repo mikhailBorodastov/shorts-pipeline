@@ -103,6 +103,7 @@ const Montage = {
     AgentPanel.say('🎞 Смонтируй ролик из сценария с голосом, сцен препродакшена и звуков (режим монтажа).' + (wish.trim() ? ' Пожелания автора: ' + wish.trim() : ''), { mode: 'montage', model: 'opus' });
   },
   async openAt(d, vt) {
+    if (d.locations) { UI.toast('Сцены — плейбек: правку напишите Claude (чат или пин на кадре). Место меняется в препродакшене — «Локации».'); return; }   // S13
     try { const a = await api('GET', `/api/montage/at?video=${encodeURIComponent(d.id)}&t=${vt}`); StageEditor.openScene(d.id, a.el, a.ts); }
     catch (e) { UI.toast(e.message, 'err'); }
   },

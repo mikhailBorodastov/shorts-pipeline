@@ -81,7 +81,7 @@ Object.assign(Plan, {
     const focus = h('input.box', { key: key + '|pfocus', placeholder: 'чего не хватает? Claude учтёт', style: { width: '240px' },
       value: Local.get('pfocus:' + d.id) || '', oninput: e => Local.set('pfocus:' + d.id, e.target.value) });
     const cnt = k => { const a = live.filter(e => e.kind === k); return [a.filter(e => e.status === 'ok').length, a.length]; };
-    const tabs = [['all', 'Все', [ready, live.length]], ...REF.kinds.map(K => [K.key, K.label, cnt(K.key)])];
+    const tabs = [['all', 'Все', [ready, live.length]], ...REF.kinds.map(K => [K.key, kindFor(d, K).label, cnt(K.key)])];
     const shown = PRE.tab === 'all' ? REF.kinds : REF.kinds.filter(K => K.key === PRE.tab);
     return h('div.ws-pre', h('div.ws-pre-in',
       h('div.ws-pre-head',

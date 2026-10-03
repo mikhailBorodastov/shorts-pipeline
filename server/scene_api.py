@@ -953,6 +953,12 @@ def convert(A, job):
         raise RuntimeError("scene.json не прошёл проверку: " + "; ".join(errs[:5]))
     diff = finish_convert(A, key, el, base, cmp_dir, ts, port)
     job.summary = (f"Сцена в редакторе: {len(doc.get('objects') or [])} объектов · кадры " + ("похожи ✓" if diff.get("ok") else "отличаются — посмотри «было / стало»"))
+    if A.load(key).get("locations"):                       # S13: локация — без времени, ключи камеры -> ракурсы
+        doc = load_scene(A, key, el)
+        loc = A.lcapi().strip_time(doc)
+        loc["rev"] = doc.get("rev", 0) + 1
+        save_scene(A, key, el, loc)
+        job.summary = f"🏠 Локация в редакторе: {len(loc.get('objects') or [])} объектов, ракурсов {len(loc.get('shots') or [])}"
 
 
 def finish_convert(A, key, el, base, cmp_dir, ts, port, by="claude"):
@@ -1083,7 +1089,7 @@ def handle_get(A, h, p, q):
         plan = A.load(key)
         e = A._by_id(plan.get("elements"), el) or {}
         sounds = [{"id": x["id"], "name": x.get("name", ""), "ready": bool(A.pr().el_mix(x))} for x in plan.get("elements") or [] if x.get("kind") == "sound" and x.get("status") != "drop"]
-        h._json({"scene": doc, "rev": doc.get("rev", 0), "work": rel, "prefabs": f"/rscene/{rel}/prefabs.js", "history": history(A, key, el, 60),
+        h._json({"scene": doc, "rev": doc.get("rev", 0), "work": rel, "location": bool(plan.get("locations") and e.get("kind") == "scene"), "prefabs": f"/rscene/{rel}/prefabs.js", "history": history(A, key, el, 60),
                  "locked": LOCKS.get(skey(key, el)), "limits": LIM, "cues": sound_cues(A, key, dict(doc, _el=el)), "soundEls": sounds,
                  "ws": ws_info(A, plan, e),
                  "element": {"id": el, "name": e.get("name", ""), "stage": e.get("stage") or {}, "plan": plan.get("name", ""), "v": (e.get("stage") or {}).get("v"),

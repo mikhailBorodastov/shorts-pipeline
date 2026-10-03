@@ -44,6 +44,15 @@ def scenes(A, vid, doc):
                     "scripts": (e.get("script") or {}).get("titles") or ([(e.get("script") or {}).get("title")] if (e.get("script") or {}).get("title") else []),
                     "markers": [{"t": m["t"], "name": m.get("name", ""), "id": m.get("id")} for m in s.get("markers") or []],
                     "sounds": len(s.get("sounds") or [])})
+    for m in doc.get("mscenes") or []:                    # S13: сцены монтажа (оверлеи на локациях) — собранная сцена в work/
+        s = _scene_doc(A, vid, m["id"])
+        if not s:
+            continue
+        cam = s.get("camera") or {}
+        out.append({"el": m["id"], "name": s.get("name") or m.get("name"), "len": s.get("len") or 6, "cuts": [c["t"] for c in cam.get("cuts") or []],
+                    "script": (m.get("sec") or "").split(" | ")[0], "scripts": [x for x in (m.get("sec") or "").split(" | ") if x],
+                    "markers": [{"t": x["t"], "name": x.get("name", ""), "id": x.get("id")} for x in s.get("markers") or []],
+                    "sounds": len(s.get("sounds") or []), "location": m.get("location")})
     return out
 
 

@@ -243,6 +243,11 @@ def locations_brief(A, vid):
             L.append(f"- {e['id']} «{e.get('name')}» — черновика в редакторе ещё нет")
     S = list_scenes(A, vid)
     out = "Локации (препродакшен):\n" + ("\n".join(L) or "  —")
+    try:
+        ch = A.scapi().chars3d_choices(A, "plan:" + vid, plan)
+        out += "\nПерсонажи для сцен (objects[].src.character): " + ("; ".join(f"{c['ref']} «{c.get('name')}»" for c in ch[:30]) or "—")
+    except Exception:
+        pass
     out += "\nСцены монтажа (оверлеи на локациях):\n" + ("\n".join(f"- {s['id']} «{s['name']}» на {s['location']} «{s['locName']}» · {s['len']} с · своих объектов {s['objects']}, отличий от локации {s['patch']}" for s in S) or "  —")
     return out
 

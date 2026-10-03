@@ -3,6 +3,9 @@
 'use strict';
 
 const KIND = k => REF.kinds.find(x => x.key === k) || REF.kinds[2];
+// S13: в видео с локациями сцена препродакшена — ЛОКАЦИЯ (место без действия), сцены собираются на монтаже
+const LOC_KIND = { key: 'scene', label: 'Локации', one: 'локация', icon: '🏠', hint: 'места без действия: окружение, пропсы, свет, фоновая жизнь и ракурсы — сцены собираются из них на монтаже' };
+const kindFor = (d, K) => (d && d.locations && K.key === 'scene' ? LOC_KIND : K);
 // 2D / 3D у персонажа и пропса (S3): нет поля dim — 2D, если черновики уже есть, иначе по умолчанию канала (как ideas_claude.dim_of)
 const dimOf = e => e.dim || ((e.renders || []).length ? '2d' : (((App.info.channel || {}).defaults || {}).dim || '2d'));
 const isProp3 = e => e.kind === 'prop' && dimOf(e) === '3d';
@@ -227,7 +230,8 @@ Object.assign(Plan, {
   },
 
   // ---------------- 🎬 Препродакшен ----------------
-  kindBox(d, key, K, focus) {
+  kindBox(d, key, K0, focus) {
+    const K = kindFor(d, K0);
     const all = (d.elements || []).filter(e => e.kind === K.key && !e.ws);   // ws — служебные сцены мастерской
     const list = [...all.filter(e => e.status !== 'drop'), ...all.filter(e => e.status === 'drop')];
     const live = all.filter(e => e.status !== 'drop').length, ok = all.filter(e => e.status === 'ok').length;
@@ -463,7 +467,7 @@ Object.assign(Plan, {
           onclick: () => Store.set(key, ['elements', e.id, 'render'], r.id, true) }, 'v' + r.v))),
         cur && h('button.small', { title: `Убрать v${cur.v} в архив (не понравилось — сделать заново). Файлы уезжают в _archive, текущей станет прошлая версия`, onclick: () => renderArchive(key, e, cur) }, `🗑 v${cur.v}`),
         h('span.sp'),
-        e.kind === 'scene' && e.stage && e.stage.work && h('button.primary', { onclick: () => go(`#/v/${d.id}/pre/${e.id}/stage`), title: 'Редактор сцены: расстановка, камера и планы, ключи движения, звуки, маркеры, отмена, версии, клип, просьбы Claude' }, '🎬 Оформить сцену'),
+        e.kind === 'scene' && e.stage && e.stage.work && h('button.primary', { onclick: () => go(`#/v/${d.id}/pre/${e.id}/stage`), title: d.locations ? 'Редактор локации: расстановка, свет, ракурсы, фоновая жизнь — без времени (действие — на монтаже)' : 'Редактор сцены: расстановка, камера и планы, ключи движения, звуки, маркеры, отмена, версии, клип, просьбы Claude' }, d.locations ? '🏠 Оформить локацию' : '🎬 Оформить сцену'),
         e.kind === 'scene' && !(e.stage && e.stage.work) && cur && cur.three && !cur.stage && Claude.btn({ label: 'Перевести в редактор', icon: '🎬', action: 'sceneconvert', key, scope: 'sceneconvert:' + e.id,
           params: { el: e.id, base: cur.id }, confirm: `Claude (Opus) переведёт «${e.name}» v${cur.v} в редактор сцены: код предметов отдельно, расстановка и движение — данными. Картинка не должна измениться — он сам сравнит кадры «было / стало». 5–10 минут.`,
           title: 'Перевести сцену в формат редактора (🎬 Оформить сцену)' }),

@@ -1274,6 +1274,7 @@ def auto_stage(job):
         job.params = {"el": el, "base": r["id"]}
         scapi().convert(sys.modules[__name__], job)
         job.summary = (drawn + " · " if drawn else "") + "🎬 " + job.summary
+
     except Exception as ex:
         job.summary = (drawn + " · " if drawn else "") + f"в редактор не перенёс ({ex}) — кнопка «🎬 Перевести в редактор»"
     finally:
