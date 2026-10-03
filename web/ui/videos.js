@@ -18,7 +18,7 @@ const fmtLen = s => (s ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).pad
 const Videos = {
   // стадия производства для таблетки карточки
   stage(p, x) {
-    if (p.stage === 'brief') return { label: 'Бриф не закончен', cls: 'warn' };
+    if (p.stage === 'brief') return { label: 'Бриф', cls: 'amber', title: 'Бриф не закончен — клик по карточке: вопросы Claude' };
     if (p.status === 'out') return { label: 'Вышло', cls: 'ok' };
     if (x && x.ready) return { label: 'Готово', cls: 'ok' };
     if (p.status === 'draft') return { label: 'Черновик', cls: '' };
@@ -75,7 +75,7 @@ const Videos = {
         h('div.vc-title', p.name),
         h('div.vc-meta', x ? (x.scenes ? `${x.scenes} ${plural(x.scenes, 'сцена', 'сцены', 'сцен')}` : 'сцен пока нет') : '…'),
         h('div.vc-foot',
-          h('span.pill', { class: st.cls }, h('i'), st.label), h('span.vc-time', relTime(p.updated)), h('span.sp'),
+          h('span.pill', { class: st.cls, title: st.title || null }, h('i'), st.label), h('span.vc-time', relTime(p.updated)), h('span.sp'),
           h('button.icon', { title: 'Открыть папку видео', onclick: stop(() => api('POST', '/api/videos/open', { id: p.id }).catch(e => UI.toast(e.message, 'err'))) }, Icon('folder', 15)),
           h('button.icon', { title: 'Препродакшен', onclick: stop(() => go(`#/v/${p.id}/pre`)) }, Icon('users', 15)),
           h('button.icon.del', { title: 'Удалить (в архив)', onclick: stop(() => this.remove(p)) }, Icon('trash', 15)))));

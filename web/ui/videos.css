@@ -71,5 +71,9 @@
   padding: 8px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 10px 30px rgba(0,0,0,.5); color: var(--text); }
 #nv-dock small { color: var(--text-mute); }
 #nv-dock:hover { border-color: var(--text-mute); }
-.pill.warn { color: #ffd479; }
-.pill.warn i { background: #ffd479; }
+.pill.amber { color: #ffd479; }
+.pill.amber i { background: #ffd479; }
+/* подвал карточки: метка не переносится, время ужимается, иконки на месте */
+.vc-foot .pill { flex: none; white-space: nowrap; }
+.vc-foot .icon { flex: none; }
+.vc-time { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
