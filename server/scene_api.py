@@ -45,9 +45,13 @@ def now_ms():
 
 # ---------------------------------------------------------------- where
 def work_dir(A, pid, el):
-    if not re.fullmatch(r"[a-z0-9-]{3,40}", pid or "") or not re.fullmatch(r"e[0-9a-z]{4,16}", el or ""):
+    if not re.fullmatch(r"[a-z0-9-]{3,40}", pid or "") or not re.fullmatch(r"(e|ms)[0-9a-z]{4,16}", el or ""):
         raise ValueError("плохой ключ сцены")
     return os.path.join(P.render(pid), el, "work")
+
+
+def _is_ms(el):
+    return (el or "").startswith("ms")
 
 
 def skey(key, el):
@@ -61,6 +65,8 @@ def _pid(key):
 
 
 def scene_path(A, key, el):
+    if _is_ms(el):                                         # S13: сцена монтажа — правится её оверлей (поверх локации)
+        return os.path.join(P.render(_pid(key)), el, "overlay.json")
     return os.path.join(work_dir(A, _pid(key), el), "scene.json")
 
 
@@ -76,6 +82,13 @@ def load_scene(A, key, el):
 def save_scene(A, key, el, doc):
     p = scene_path(A, key, el)
     A.write_text(p, json.dumps(doc, ensure_ascii=False, indent=1))
+    try:
+        if _is_ms(el):                                     # оверлей поменялся — пересобрать сцену
+            A.lcapi().recompose(A, _pid(key), el)
+        elif A.load(key).get("locations"):                  # S13: локация поменялась — все её сцены монтажа
+            A.lcapi().on_location_change(A, _pid(key), el)
+    except Exception as ex:
+        print("! S13 пересборка:", ex)
 
 
 # ---------------------------------------------------------------- schema (подмножество JSON Schema: type, required, properties, items, enum, const, min/max, $ref)
@@ -332,6 +345,8 @@ def authored_conflicts(doc, ops, allow=()):
 
 # ---------------------------------------------------------------- history
 def hist_path(A, key, el):
+    if _is_ms(el):
+        return os.path.join(P.render(_pid(key)), el, "history.jsonl")
     return os.path.join(work_dir(A, _pid(key), el), "history.jsonl")
 
 
@@ -1264,6 +1279,12 @@ def cli(A, argv):
         print(channels_brief(A, key, d))
         print(skills_brief(A, key, d))
         print(variants_brief(A, key))
+        if _is_ms(el) or A.load(key).get("locations"):
+            print(A.lcapi().locations_brief(A, _pid(key)))
+            if _is_ms(el):
+                print("Это СЦЕНА МОНТАЖА: документ выше — её оверлей поверх локации (patch — свои отличия от объектов локации, objects — персонажи и добавленные предметы, "
+                      "camera.keys — {id, t, shot: <ракурс локации>, dolly?, dpos?, dtarget?} или свои pos/target). Правка места (расстановка, окружение) для ВСЕХ сцен — "
+                      f"scene ops {_pid(key)} <локация> (сначала спроси автора); только для этой сцены — patch.")
         print(finals_brief(A, key, el))
         return True
     if cmd == "frame":                         # S7: кадр сцены в момент t (или несколько через запятую) -> пути PNG

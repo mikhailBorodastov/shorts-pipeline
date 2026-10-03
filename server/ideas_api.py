@@ -82,6 +82,7 @@ import render_api  # noqa: E402  S12.8: экспорт, очередь ренд�
 import thumbs_api  # noqa: E402  S12.9: обложки — доски и генерация картинок
 import memory_api  # noqa: E402  S12.10: память — правила из правок автора
 import make3d_api  # noqa: E402  S12.11: «✨ Сделать 3D» — Claude выбирает способ
+import locations_api  # noqa: E402  S13: локации и сцены монтажа
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -142,6 +143,10 @@ def agapi():
 
 def stgapi():
     return _fresh(settings_api, "stg")
+
+
+def lcapi():
+    return _fresh(locations_api, "loc")
 
 
 def mk3d():
@@ -1825,6 +1830,8 @@ def cli(argv):
         return mdapi().cli(sys.modules[__name__], a)
     if cmd == "model":
         return m3d().cli(sys.modules[__name__], a)
+    if cmd == "mscene":                                # S13: сцены монтажа поверх локаций
+        return lcapi().cli(sys.modules[__name__], a)
     if cmd == "memory":                                # S12.10: правила из правок автора
         return mmapi().cli(sys.modules[__name__], a)
     if cmd == "produce":
