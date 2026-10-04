@@ -11,7 +11,7 @@ Object.assign(Plan, {
   doAllTodo(d, key, live) {
     const order = { char: 0, prop: 1, vfx: 2, sound: 3, scene: 4 };
     return live.filter(e => e.kind in order && !(e.from && e.from.scene))
-      .filter(e => e.kind === 'sound' ? !(e.sounds || []).length : !elRender(e))
+      .filter(e => e.kind === 'sound' ? !(e.sounds || []).length : !elRender(e) && !(e.own || []).some(x => x.img))   // свой ассет автора — рисовать не надо
       .filter(e => !Claude.running(key, e.kind === 'sound' ? 'sound:' + e.id : 'element:' + e.id))
       .sort((a, b) => order[a.kind] - order[b.kind]);
   },

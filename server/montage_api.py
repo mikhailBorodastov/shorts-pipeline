@@ -331,53 +331,7 @@ def generate(A, vid, montage=None):
         sc = _scene_doc(A, vid, el)
         if not sc:
             report["warn"].append(f"нет сцены {el}"); continue
-        dst = os.path.join(S, "scenes", el)
-        _copy(os.path.join(wd, "prefabs.js"), os.path.join(dst, "prefabs.js"))
-        if el not in [x.split("/")[-2] for x in prefab_scripts]:  # у каждой сцены свои префабы — в своей области видимости (одинаковые имена не мешают)
-            _scoped(os.path.join(dst, "prefabs.js"), os.path.join(dst, "prefabs.scoped.js"), el)
-            prefab_scripts.append(f"../{STUDIO_DIR}/scenes/{el}/prefabs.scoped.js")
-        # картинки префабов: '/files/<plan>/…' -> assets/studio/files/…
-        pf = open(os.path.join(wd, "prefabs.js"), encoding="utf-8").read()
-        for ref in set(re.findall(r"/files/" + re.escape(vid) + r"/([^'\"\s]+)", pf)):
-            _copy(os.path.join(P.files(vid), *ref.split("/")), os.path.join(S, "files", *ref.split("/")))
-        # библиотека и черновики: lib: / el: (объекты и scene.libs), клипы, огибающие липсинка
-        refs = {(o.get("src") or {}).get("prefab") for o in sc.get("objects") or []} | set(sc.get("libs") or [])
-        for o in sc.get("objects") or []:                    # предметы в руках (S10.2) и видео экранов (S10.3) — тоже из библиотеки
-            refs |= {v for v in (o.get("hold") or {}).values() if isinstance(v, str)}
-            for k, lst in (o.get("keys") or {}).items():
-                for x in lst or []:
-                    v = x.get("v")
-                    if k.startswith("hold.") and isinstance(v, str):
-                        refs.add(v)
-                    if k.startswith("ch.") and isinstance(v, dict) and isinstance(v.get("media"), str):
-                        refs.add(v["media"])
-            refs |= {v["media"] for v in (o.get("params") or {}).values() if isinstance(v, dict) and isinstance(v.get("media"), str)}
-        for ref in filter(None, refs):
-            m = re.match(r"lib:([a-z]+)/([a-z0-9-]+)@(\d+)$", ref)
-            if m:
-                kind, slug, v = m.groups()
-                _copy(os.path.join(lib, kind, slug, "v" + v), os.path.join(S, "lib", kind, slug, "v" + v))
-                _copy(os.path.join(lib, kind, slug, "emotions.json"), os.path.join(S, "lib", kind, slug, "emotions.json"))
-                report["copied"].append(ref)
-            m = re.match(r"el:([A-Za-z0-9_-]+)@v?(\d+)$", ref)
-            if m:
-                _copy(os.path.join(P.render(vid), m.group(1), "v" + m.group(2)), os.path.join(S, "el", m.group(1), "v" + m.group(2)))
-                report["copied"].append(ref)
-        anims = set()
-        for o in sc.get("objects") or []:
-            for c in o.get("clips") or []:
-                anims.add(c["anim"])
-            if o.get("walk") not in (None, "auto", "off"):
-                anims.add(o["walk"])
-        for a in anims:
-            _copy(os.path.join(lib, "anims", *a.split("/")) + ".json", os.path.join(S, "anims", *a.split("/")) + ".json")
-        cues = {c["id"]: c for c in A.scapi().sound_cues(A, "plan:" + vid, dict(sc, _el=el))}
-        for o in sc.get("objects") or []:
-            sid = (o.get("lipsync") or {}).get("sound")
-            if sid and sid in cues:
-                env = A.scapi().envelope(cues[sid]["file"])
-                os.makedirs(os.path.join(S, "env"), exist_ok=True)
-                json.dump({"sid": sid, "t0": cues[sid]["t"], "fps": 30, "env": env}, open(os.path.join(S, "env", sid + ".json"), "w"))
+        dst = _pack_scene(A, vid, el, sc, wd, S, prefab_scripts, report, lib)
         pairs = _fwd_map(u, words)
         # звуки сцены — по карте времени в ролик
         for s in sc.get("sounds") or []:
@@ -447,6 +401,60 @@ def generate(A, vid, montage=None):
     _patch_index(pd, prefab_scripts)
     report.update(len=total, sfx=len(sfx_cues), music=len(music), voice=bool(words))
     return report
+
+
+def _pack_scene(A, vid, el, sc, wd, S, prefab_scripts, report, lib=None):
+    """Сцена редактора -> проект ролика: prefabs.js (в своей области видимости), картинки, библиотека и черновики (lib: / el:), клипы, огибающие липсинка.
+    Общее для генератора монтажа и быстрого монтажа (fast_api: препродакшен в коде)."""
+    lib = lib or _lib_dir(A, vid)
+    dst = os.path.join(S, "scenes", el)
+    _copy(os.path.join(wd, "prefabs.js"), os.path.join(dst, "prefabs.js"))
+    if el not in [x.split("/")[-2] for x in prefab_scripts]:  # у каждой сцены свои префабы — в своей области видимости (одинаковые имена не мешают)
+        _scoped(os.path.join(dst, "prefabs.js"), os.path.join(dst, "prefabs.scoped.js"), el)
+        prefab_scripts.append(f"../{STUDIO_DIR}/scenes/{el}/prefabs.scoped.js")
+    # картинки префабов: '/files/<plan>/…' -> assets/studio/files/…
+    pf = open(os.path.join(wd, "prefabs.js"), encoding="utf-8").read()
+    for ref in set(re.findall(r"/files/" + re.escape(vid) + r"/([^'\"\s]+)", pf)):
+        _copy(os.path.join(P.files(vid), *ref.split("/")), os.path.join(S, "files", *ref.split("/")))
+    # библиотека и черновики: lib: / el: (объекты и scene.libs), клипы, огибающие липсинка
+    refs = {(o.get("src") or {}).get("prefab") for o in sc.get("objects") or []} | set(sc.get("libs") or [])
+    for o in sc.get("objects") or []:                    # предметы в руках (S10.2) и видео экранов (S10.3) — тоже из библиотеки
+        refs |= {v for v in (o.get("hold") or {}).values() if isinstance(v, str)}
+        for k, lst in (o.get("keys") or {}).items():
+            for x in lst or []:
+                v = x.get("v")
+                if k.startswith("hold.") and isinstance(v, str):
+                    refs.add(v)
+                if k.startswith("ch.") and isinstance(v, dict) and isinstance(v.get("media"), str):
+                    refs.add(v["media"])
+        refs |= {v["media"] for v in (o.get("params") or {}).values() if isinstance(v, dict) and isinstance(v.get("media"), str)}
+    for ref in filter(None, refs):
+        m = re.match(r"lib:([a-z]+)/([a-z0-9-]+)@(\d+)$", ref)
+        if m:
+            kind, slug, v = m.groups()
+            _copy(os.path.join(lib, kind, slug, "v" + v), os.path.join(S, "lib", kind, slug, "v" + v))
+            _copy(os.path.join(lib, kind, slug, "emotions.json"), os.path.join(S, "lib", kind, slug, "emotions.json"))
+            report["copied"].append(ref)
+        m = re.match(r"el:([A-Za-z0-9_-]+)@v?(\d+)$", ref)
+        if m:
+            _copy(os.path.join(P.render(vid), m.group(1), "v" + m.group(2)), os.path.join(S, "el", m.group(1), "v" + m.group(2)))
+            report["copied"].append(ref)
+    anims = set()
+    for o in sc.get("objects") or []:
+        for c in o.get("clips") or []:
+            anims.add(c["anim"])
+        if o.get("walk") not in (None, "auto", "off"):
+            anims.add(o["walk"])
+    for a in anims:
+        _copy(os.path.join(lib, "anims", *a.split("/")) + ".json", os.path.join(S, "anims", *a.split("/")) + ".json")
+    cues = {c["id"]: c for c in A.scapi().sound_cues(A, "plan:" + vid, dict(sc, _el=el))}
+    for o in sc.get("objects") or []:
+        sid = (o.get("lipsync") or {}).get("sound")
+        if sid and sid in cues:
+            env = A.scapi().envelope(cues[sid]["file"])
+            os.makedirs(os.path.join(S, "env"), exist_ok=True)
+            json.dump({"sid": sid, "t0": cues[sid]["t"], "fps": 30, "env": env}, open(os.path.join(S, "env", sid + ".json"), "w"))
+    return dst
 
 
 def _scoped(src, dst, el):

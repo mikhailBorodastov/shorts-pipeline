@@ -106,6 +106,203 @@ def sections(pd):
     return out, d.get("total") or 0
 
 
+
+# ---------------------------------------------------------------- препродакшен в коде: есть — берём, нет — рисуем сами
+PP_JS = r"""// СГЕНЕРИРОВАНО быстрым монтажом (server/fast_api.py) — препродакшен видео для кода сцен. Не правь руками: пересоздаётся при каждом запуске.
+// ppWorld(el, {build(w), update(w, lt, D, T), sceneTime}) — 3D-мир из сцены / локации препродакшена (как в редакторе) + своё действие поверх;
+// ppShot(el, 'sh1') -> {pos, target, fov} — ракурс локации; ppAdd(w, ref, {pos, rotY, scale, name, params}) -> {S, holder, tick(lt)} — 3D-пропс / персонаж препродакшена в любой мир;
+// PP2D[el].<функция>(…) — 2D-черновик препродакшена; PP_IMAGES — картинки препродакшена для ASSETS.images.
+const SCENE_URLS = { lib: '../assets/studio/lib/', el: '../assets/studio/el/', anims: '../assets/studio/anims/', env: '../assets/studio/env/' };
+const PP_LIB = {};
+let PP_LIBALL = {};
+const PP_IMAGES = {};
+(() => {
+  const fix = v => String(v).replace(/^\/files\/[^/]+\//, '../assets/studio/files/').replace(/^\/render\/[^/]+\//, '../assets/studio/el/');
+  for (const S of Object.values(window.SCENE_PREFABS || {})) for (const [k, v] of Object.entries(S.PICS || {})) PP_IMAGES[k] = fix(v);
+  for (const S of Object.values(window.PP2D || {})) for (const [k, v] of Object.entries(S.PICS || {})) PP_IMAGES[k] = fix(v);
+  Object.assign(PP_IMAGES, typeof PP_OWN !== 'undefined' ? PP_OWN : {});   // свои ассеты автора (как есть)
+})();
+const ppLoad = async () => {
+  const load = src => new Promise((ok, bad) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('не загрузилось: ' + src)); document.head.append(s); });
+  for (const [el, sc] of Object.entries(PP_SCENES)) {
+    PP_LIB[el] = await loadSceneProps(scenePropRefs(sc), PP_PLAN, load, {}, sc);
+    await loadSceneEnvs(sc, PP_PLAN, el);
+  }
+  if (PP_ALL.objects.length) PP_LIBALL = await loadSceneProps(scenePropRefs(PP_ALL), PP_PLAN, load, {}, PP_ALL);
+};
+// загрузка препродакшена — всегда первой; если сцены задают свой window.STUDIO_READY, он выполнится после неё (а не вместо)
+let ppUserReady = null;
+Object.defineProperty(window, 'STUDIO_READY', { configurable: true, get() { return async () => { await ppLoad(); if (ppUserReady) await ppUserReady(); }; }, set(f) { ppUserReady = f; } });
+function ppWorld(el, o = {}) {
+  const sc = PP_SCENES[el];
+  if (!sc) throw new Error('ppWorld: нет сцены препродакшена ' + el);
+  const pf = ((window.SCENE_PREFABS || {})[el] || {}).PREFABS || {};
+  return sceneWorld(sc, pf, {}, {
+    build(w) { w.S = buildFromScene(w, sc, pf, PP_LIB[el] || {}); if (o.build) o.build(w); },
+    update(w, lt, D, T) { if (o.sceneTime !== false) applyScene(w.S, typeof o.sceneTime === 'function' ? o.sceneTime(lt) : lt); if (o.update) o.update(w, lt, D, T); },
+  });
+}
+function ppShot(el, id) {
+  const sc = PP_SCENES[el] || {}, sh = sc.shots || [];
+  const s = sh.find(x => x.id === id) || sh[0];
+  if (s) return { pos: s.pos, target: s.target, fov: s.fov };
+  const k = ((sc.camera || {}).keys || [])[0];
+  return k ? { pos: k.pos, target: k.target, fov: k.fov } : null;
+}
+function ppAdd(w, ref, o = {}) {
+  ppAdd.n = (ppAdd.n || 0) + 1;
+  const id = 'pp' + ppAdd.n;
+  const S = buildFromScene(w, { objects: [{ id, name: o.name || ref, src: { prefab: ref }, pos: o.pos || [0, 0, 0], rot: o.rot || [0, o.rotY || 0, 0], scale: o.scale || 1, params: o.params || {} }] },
+    {}, Object.assign({}, PP_LIBALL, ...Object.values(PP_LIB)));
+  const rec = S.objects.get(id);
+  return { S, holder: rec && rec.holder, tick(lt) { applyScene(S, lt); } };
+}
+"""
+
+
+def _fn_names(code):
+    return sorted(set(re.findall(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)", code, flags=re.M)))
+
+
+def _head_comment(code, n=8):
+    out = []
+    for line in code.splitlines():
+        if line.startswith("//"):
+            out.append(line[2:].strip())
+            if len(out) >= n:
+                break
+        elif out:
+            break
+    return " / ".join(out)
+
+
+def pack_preprod(A, vid):
+    """Препродакшен видео -> проект ролика для кода сцен (src/montage.js + assets/studio/…). -> (текст «что есть и как звать», сколько)."""
+    import montage_api as M
+    key = "plan:" + vid
+    pd = P.video(vid)
+    plan = A.load(key)
+    S = os.path.join(pd, M.STUDIO_DIR)
+    os.makedirs(S, exist_ok=True)
+    for f in M.ENGINE_SYNC:                                   # движок сцен редактора — тот же, что показывал редактор
+        src = os.path.join(P.STANDS if f == "paper.js" else P.ENGINE, f)
+        if os.path.isfile(src) and (f != "paper.js" or not os.path.isfile(os.path.join(pd, "src", f))):
+            shutil.copy2(src, os.path.join(pd, "src", f))
+    lines, prefab_scripts, report = [], [], {"copied": [], "warn": []}
+    scenes = {}
+    els = [e for e in plan.get("elements") or [] if e.get("status") != "drop"]
+    # 1) сцены / локации редактора
+    for e in els:
+        if e.get("kind") != "scene" or not (e.get("stage") or {}).get("work"):
+            continue
+        sc = M._scene_doc(A, vid, e["id"])
+        if not sc:
+            continue
+        wd = A.scapi().work_dir(A, vid, e["id"])
+        M._pack_scene(A, vid, e["id"], sc, wd, S, prefab_scripts, report)
+        scenes[e["id"]] = sc
+        shots = ", ".join(f"{x['id']}" + (f" «{x.get('name')}»" if x.get("name") and not str(x.get("name")).startswith("ракурс") else "") for x in sc.get("shots") or []) or "камера сцены"
+        objs = ", ".join((o.get("name") or o["id"]) for o in (sc.get("objects") or [])[:25])
+        lines.append(f"- МЕСТО «{e.get('name')}»{' ✓' if e.get('status') == 'ok' else ''} — ppWorld('{e['id']}', {{ update(w, lt) {{ /* камера, герои */ }} }}); ракурсы ppShot('{e['id']}', id): {shots}. "
+                     f"Внутри: {objs}. {(e.get('desc') or '')[:160]}")
+    # 2) 3D-пропсы и персонажи (видео и библиотека канала)
+    S_ = A.scapi()
+    objs = []
+    for c in S_.props3d_choices(A, key, plan) + S_.chars3d_choices(A, key, plan):
+        objs.append({"id": "o" + str(len(objs)), "name": c.get("name"), "src": {"prefab": c["ref"]}, "pos": [0, 0, 0]})
+        kind = "персонаж" if "characters" in c["ref"] or c in S_.chars3d_choices(A, key, plan) else "3D-пропс"
+        lines.append(f"- {kind.upper()} «{c.get('name')}» ({c.get('from', '')}) — ppAdd(w, '{c['ref']}', {{ pos: [x, 0, z], rotY, scale }})")
+    pp_all = {"objects": objs}
+    if objs:
+        tmp = os.path.join(S, "_pp_all_src")
+        os.makedirs(tmp, exist_ok=True)
+        open(os.path.join(tmp, "prefabs.js"), "w", encoding="utf-8").write("const PREFABS = {};\n")
+        M._pack_scene(A, vid, "_pp_all", pp_all, tmp, S, [], report)
+    # 3а) СВОИ АССЕТЫ АВТОРА (e.own[]: картинка + состояние) — в ролик как есть, не рисовать
+    own, owned = {}, set()
+    for e in els:
+        st = [x for x in e.get("own") or [] if x.get("img")]
+        if not st:
+            continue
+        owned.add(e["id"])
+        keys = []
+        for i, x in enumerate(st):
+            src = P.resolve(x["img"]) if hasattr(P, "resolve") else ""
+            if not src or not os.path.isfile(src):
+                continue
+            ext = os.path.splitext(src)[1].lower() or ".png"
+            dst = os.path.join(pd, "assets", "own", e["id"], f"{i}{ext}")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            k = f"own_{e['id']}_{i}"
+            own[k] = f"../assets/own/{e['id']}/{i}{ext}"
+            keys.append(f"«{x.get('state') or ('основное' if not i else 'состояние ' + str(i + 1))}» → IMG.{k}")
+        if keys:
+            lines.append(f"- СВОЙ АССЕТ АВТОРА «{e.get('name')}» ({e['kind']}) — ВКЛЕИТЬ КАК ЕСТЬ, НЕ РИСОВАТЬ И НЕ ПЕРЕРИСОВЫВАТЬ: состояния: {'; '.join(keys)}. "
+                         "2D: cut(ctx, IMG.<ключ>, …) / photo(…) / ctx.drawImage — вырезкой с бумажной обводкой, по сценарию переключай состояния (можно с переворотом-флипом); "
+                         "3D: spriteCard с этой картинкой. Можно двигать, масштабировать, качать, но не менять сам рисунок.")
+    # 3) 2D-черновики (element.js) — в своей области видимости: PP2D[el].<функция>
+    pp2d = []
+    for e in els:
+        if e["id"] in owned:
+            continue
+        rs = e.get("renders") or []
+        r = next((x for x in rs if x.get("id") == e.get("render")), rs[-1] if rs else None)
+        if not r or r.get("three3") or r.get("rigchar") or r.get("model3d") or r.get("three") or e.get("kind") == "sound":
+            continue
+        ej = os.path.join(P.render(vid), e["id"], f"v{r.get('v')}", "element.js")
+        if not os.path.isfile(ej) or (e.get("stage") or {}).get("work"):
+            continue
+        code = _read(ej)
+        if "world3d(" in code:                                # 3D-черновик сцены без редактора — не переносится, только образ
+            continue
+        M._copy(os.path.dirname(ej), os.path.join(S, "el", e["id"], f"v{r.get('v')}"))
+        for ref in set(re.findall(r"/files/" + re.escape(vid) + r"/([^'\"\s]+)", code)):
+            M._copy(os.path.join(P.files(vid), *ref.split("/")), os.path.join(S, "files", *ref.split("/")))
+        fns = [f for f in _fn_names(code) if f not in ("draw",)]
+        dst = os.path.join(S, "pp2d", e["id"] + ".js")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        ret = ", ".join(fns + ["ELEMENT: typeof ELEMENT !== 'undefined' ? ELEMENT : null", "PICS: typeof PICS !== 'undefined' ? PICS : {}"])
+        open(dst, "w", encoding="utf-8").write(f"// СГЕНЕРИРОВАНО быстрым монтажом: 2D-черновик «{e.get('name')}» v{r.get('v')} в своей области видимости.\n"
+                                               f"window.PP2D = window.PP2D || {{}};\nwindow.PP2D[{json.dumps(e['id'])}] = (function () {{\n{code}\n;return {{ {ret} }};\n}})();\n")
+        pp2d.append(f"../{M.STUDIO_DIR}/pp2d/{e['id']}.js")
+        lines.append(f"- 2D {'ПЕРСОНАЖ' if e['kind'] == 'char' else 'МЕСТО' if e['kind'] == 'scene' else 'ПРЕДМЕТ'} «{e.get('name')}»{' ✓' if e.get('status') == 'ok' else ''} — "
+                     f"PP2D['{e['id']}'].{fns[0] if fns else 'ELEMENT.draw'}(…); функции: {', '.join(fns[:8])}. {_head_comment(code)[:400]}")
+    # 4) звуки
+    for e in els:
+        if e.get("kind") != "sound":
+            continue
+        try:
+            fs = M._sound_files(A, vid, "el:" + e["id"], pd, "pp_" + e["id"])
+        except Exception:
+            fs = []
+        if fs:
+            lines.append(f"- ЗВУК «{e.get('name')}» — " + "; ".join(f"add(t + {round(dt, 2)}, '{f}', {round(g, 2)})" for f, dt, g in fs[:3]))
+    # src/montage.js: препродакшен для кода (заменяет сгенерированный монтажом — у fast-видео его SCENE_B ломал границы сцен)
+    A.write_text(os.path.join(pd, "src", "montage.js"),
+                 f"const PP_PLAN = {json.dumps(vid)};\nconst PP_OWN = {json.dumps(own, ensure_ascii=False)};\nconst PP_SCENES = {json.dumps(scenes, ensure_ascii=False)};\nconst PP_ALL = {json.dumps(pp_all, ensure_ascii=False)};\n" + PP_JS)
+    M._patch_index(pd, prefab_scripts + pp2d)
+    ih = os.path.join(pd, "src", "index.html")                # paper.js — только внутри блока studio (дважды const-объявления ломают страницу)
+    h0 = _read(ih)
+    m0 = re.search(r"<!-- studio.*?<!-- /studio -->\n", h0, flags=re.S)
+    if m0:
+        out = h0[:m0.start()].replace('<script src="paper.js"></script>\n', "") + m0.group(0) + h0[m0.end():].replace('<script src="paper.js"></script>\n', "")
+        open(ih, "w", encoding="utf-8").write(out)
+    rv = os.path.join(pd, "src", "review.html")              # ревью грузит те же скрипты
+    if os.path.isfile(rv):
+        h_ = _read(rv)
+        blk = re.search(r"<!-- studio.*?<!-- /studio -->\n", _read(os.path.join(pd, "src", "index.html")), flags=re.S)
+        if blk:
+            if "<!-- studio" in h_:
+                h_ = re.sub(r"<!-- studio.*?<!-- /studio -->\n", lambda m: blk.group(0), h_, flags=re.S)
+            elif '<script src="scenes.js"></script>' in h_:
+                h_ = h_.replace('<script src="scenes.js"></script>', blk.group(0) + '<script src="scenes.js"></script>')
+            open(rv, "w", encoding="utf-8").write(h_)
+    head = ("ПРЕПРОДАКШЕН ВИДЕО — что уже есть (✓ — утверждено автором). ОБЯЗАТЕЛЬНО бери это, а не рисуй своё: места — ppWorld, герои и предметы — ppAdd / PP2D, звуки — add(...). "
+            "Рисуй сам только то, чего здесь нет. ASSETS.images дополни PP_IMAGES: const ASSETS = { images: Object.assign({ /* свои */ }, PP_IMAGES), sequences: {} };")
+    return (head + "\n" + "\n".join(lines)) if lines else "ПРЕПРОДАКШЕН ВИДЕО: пусто — всё рисуй сам.", len(lines)
+
+
 # ---------------------------------------------------------------- 2–3. план и писатели
 def _sys(A, key):
     from ideas_claude import system
@@ -115,7 +312,7 @@ def _sys(A, key):
         return "Ты — соавтор YouTube-канала в Claude Studio."
 
 
-def plan(A, job, vid, wish):
+def plan(A, job, vid, wish, inv=""):
     key = "plan:" + vid
     pd = P.video(vid)
     d = A.load(key)
@@ -123,7 +320,7 @@ def plan(A, job, vid, wish):
     if not secs:
         raise RuntimeError("нет таймингов голоса (build/vo_timing.json) — сценарий без сцен?")
     from ideas_claude import S, STR, ARR
-    els = "\n".join(f"- {e['kind']} «{e.get('name')}» — {(e.get('desc') or '')[:160]}" for e in d.get("elements") or [] if e.get("status") != "drop") or "—"
+    els = inv or "—"
     eng = d.get("engine") or "2d"
     prompt = f"""⚡ Быстрый монтаж — ШАГ 1 из 3 (план и общий код). Ролик «{d.get('name')}», движок: {eng} ({'бумажная аппликация 2D' if eng != '3d' else '3D-диорама (world3d) + 2D поверх'}).
 Проект: {pd.replace(chr(92), '/')}. Шпаргалка движка — {FASTKIT.replace(chr(92), '/')} (прочитай её ЦЕЛИКОМ; движок и чужие ролики не читай — всё нужное там).
@@ -139,8 +336,8 @@ def plan(A, job, vid, wish):
 3. Ответь планом: для каждой секции k — что в кадре и что происходит по словам (brief: 3–6 фраз: место, герои, действия к словам, переходы trans, звуки lib:…),
    какие общие функции звать; groups — разбей сцены на 3–5 групп подряд идущих (примерно поровну по длительности) для параллельных писателей;
    elements — персонажи, предметы и места, которые есть в ролике (для препродакшена задним числом).
-Препродакшен видео (если что-то уже есть — опирайся):
 {els}
+(Общие функции в scenes.js строй ПОВЕРХ препродакшена: место есть — функция возвращает ppWorld('<id>', …), герой есть — ppAdd / PP2D; своё — только для того, чего нет.)
 Пожелания автора: {wish or '—'}
 
 Секции голоса (k · начало · длина · текст):
@@ -155,7 +352,7 @@ def plan(A, job, vid, wish):
     return A.run_claude(job, spec), secs
 
 
-def write_group(A, job, vid, grp, P_, secs):
+def write_group(A, job, vid, grp, P_, secs, inv=""):
     key = "plan:" + vid
     pd = P.video(vid)
     from ideas_claude import S, STR
@@ -171,6 +368,8 @@ def write_group(A, job, vid, grp, P_, secs):
 
 План сцен:
 {chr(10).join(f"[{k}] {secs[k]['start']}–{round(secs[k]['start'] + secs[k]['dur'], 2)} с «{secs[k]['title']}». Слова: {secs[k]['words'][:900]}" + chr(10) + f"    что в кадре: {briefs.get(k, {}).get('brief', '')}" + (f" · общие функции: {briefs[k].get('uses')}" if briefs.get(k, {}).get('uses') else '') for k in grp if k < len(secs))}
+
+{inv}
 
 Ответ: ok и note — 1–2 фразы, что сделано и что не вышло."""
     spec = {"system": _sys(A, key), "prompt": prompt, "timeout": 1500, "model": job.params.get("writer") or A.TEXT_MODEL, "effort": "medium", "cwd": pd, "dirs": [P.STUDIO],
@@ -199,7 +398,9 @@ def run(A, job):
     t0 = time.time()
     job.subs = []
     prep(A, job, vid)
-    res, secs = plan(A, job, vid, job.params.get("wish") or "")
+    job.summary = "беру препродакшен: места, героев, предметы, звуки…"
+    inv, n_pp = pack_preprod(A, vid)
+    res, secs = plan(A, job, vid, job.params.get("wish") or "", inv)
     res = res or {}
     n = len(secs)
     set_parts(pd, n)
@@ -212,7 +413,7 @@ def run(A, job):
     job.summary = f"сцены пишут {len(groups)} писателей параллельно ({par} сразу)…"
     notes = []
     with cf.ThreadPoolExecutor(par) as ex:
-        futs = [ex.submit(write_group, A, job, vid, g, res, secs) for g in groups]
+        futs = [ex.submit(write_group, A, job, vid, g, res, secs, inv) for g in groups]
         done = 0
         for f in cf.as_completed(futs):
             if job.cancelled:

@@ -296,3 +296,13 @@ const SCENES = [S0, S1, S2];
 12. `SCENES.length` не совпадает с числом секций VO. Сцена k = секция k (`## `/сцена с VO в script.md).
 13. `hogCard` без paper.js падает, `hog.fedora` без `fedora()` тоже. Пиксельного ёжика не бери.
 14. После правок проверяй глазами: `REVIEW_PORT=$(python review_server.py port) node render.js snap 1.5,4,8.2 build/snap.png` → Read. Снимай кадры и внутри окон переходов. Обложки — `node render.js thumb`.
+
+## 9. Препродакшен в коде (быстрый монтаж кладёт его в src/montage.js)
+Есть в препродакшене — бери оттуда, не рисуй своё (список «ПРЕПРОДАКШЕН ВИДЕО» в задании):
+- `ppWorld(el, { build(w), update(w, lt, D, T), sceneTime })` — 3D-мир из сцены / локации редактора (всё, как расставил автор) + своё поверх: камера `w.camKeys`, герои `ppAdd`.
+- `ppShot(el, 'sh1')` → `{pos, target, fov}` — ракурс локации: `w.camKeys(lt, [[0, s.pos, s.target]])`.
+- `ppAdd(w, 'el:<id>@vN' | 'lib:…', { pos, rotY, scale, params })` → `{ holder, tick(lt) }` — 3D-пропс / персонаж в любой мир (holder — THREE.Group: двигай `holder.position`).
+- `PP2D['<id>'].<функция>(ctx, …)` — 2D-черновик препродакшена (функции и их параметры — в списке задания).
+- Свой ассет автора — картинки `IMG.own_<id>_<n>` по состояниям: вклеивать как есть (cut / photo / drawImage, в 3D — spriteCard), не перерисовывать.
+- `const ASSETS = { images: Object.assign({ /* свои */ }, PP_IMAGES), sequences: {} };` — иначе картинки препродакшена не загрузятся.
+- Своя загрузка `window.STUDIO_READY = async () => {…}` можно — она выполнится ПОСЛЕ загрузки препродакшена.
