@@ -266,6 +266,29 @@ def fast_start(A, vid, wish=""):
     return {"ok": True, "job": j.info()}
 
 
+def fast_redo(A, vid, wish=""):
+    """«Сделать монтаж заново» у быстрого ролика: код ролика (src/scenes.js, src/scenes/) и собранный out/*.mp4 -> _archive/fast/<видео>-<время>/,
+    монтаж обнуляется, и быстрый монтаж запускается с нуля — по сценарию и ТЕКУЩЕМУ препродакшену."""
+    pd = vdir(vid)
+    if not pd or not has_project(vid):
+        raise ValueError("у видео ещё нет проекта ролика")
+    if any(j.key == "plan:" + vid and j.kind in ("fastmontage", "automontage", "montagebuild") and j.status in ("running", "queued") for j in A.JOBS.values()):
+        raise ValueError("монтаж уже идёт")
+    arch = os.path.join(P.ARCHIVE, "fast", f"{vid}-{time.strftime('%y%m%d-%H%M%S')}")
+    os.makedirs(arch, exist_ok=True)
+    for rel in ("src/scenes.js", "src/scenes", "src/montage.js", *[os.path.relpath(o, pd) for o in glob.glob(os.path.join(pd, "out", "*.mp4"))]):
+        src = os.path.join(pd, rel)
+        if os.path.exists(src):
+            dst = os.path.join(arch, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+    shutil.copy2(os.path.join(P.TPL_SRC, "scenes.js"), os.path.join(pd, "src", "scenes.js"))   # заглушка шаблона — до плана
+    A.apply_ops("plan:" + vid, [{"op": "set", "path": ["montage"], "value": None}])
+    r = fast_start(A, vid, wish)
+    r["archived"] = arch
+    return r
+
+
 def fast_done(A, vid):
     """После сборки быстрого монтажа: длина ролика -> montage (таймлайн окна знает длину, шаг «Монтаж» — готов)."""
     pd = vdir(vid)
@@ -787,6 +810,8 @@ def handle_get(A, h, p, q):
 
 
 def handle_post(A, h, p, body):
+    if p == "/api/montage/redo":                             # ⚡ сделать заново: старый код ролика — в архив, быстрый монтаж с нуля
+        h._json(fast_redo(A, body["video"], body.get("wish") or "")); return True
     if p == "/api/montage/fast":                             # ⚡ быстрый монтаж: агент пишет ролик кодом (2D и 3D), без препродакшена
         h._json(fast_start(A, body["video"], body.get("wish") or "")); return True
     if p == "/api/montage/gen":                              # предпросмотр: монтаж -> файлы проекта (без рендера)
