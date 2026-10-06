@@ -10,17 +10,24 @@
   hf:ideogram             — Ideogram 4.0 (1 референс)
   hf:soul                 — SOUL V2 (без референсов)
   claude                  — Claude рисует обложку кодом нашим движком (концепт видео → задача render), с ёжиком канала
+  flux:4b | flux:9b       — FLUX.2 [klein] локально на видеокарте (server/flux2.py, ComfyUI Studio): промпт + до 3 референсов, seed;
+                            9B (некоммерческая лицензия) в списке, только если включена в ⚙ Настройках
 
 GET  /api/thumbs/boards                   -> [{b, name, cover, n}]
 GET  /api/thumbs/board?b=                 -> {board, results, models, key}
 GET  /api/thumbs/file?b=&f=               -> картинка доски (in/… | gen/…)
 POST /api/thumbs/board      <- {b, board}             сохранить ноды и связи
 POST /api/thumbs/upload?b=&name=  <- байты             картинка -> in/<id>.<ext> -> {src}
-POST /api/thumbs/fromurl    <- {b, url}                 картинка по адресу (кадр ролика, элемент) -> in/
-POST /api/thumbs/generate   <- {b, rid, model, prompt, refs[src…], aspect, quality, resolution}  -> {rid}
+POST /api/thumbs/fromurl    <- {b, url, fallback?}      картинка по адресу (кадр ролика, элемент, 🔎 поиск; fallback — превью, если оригинал не отдали) -> in/
+GET  /api/thumbs/chars?b=                 -> {items: [{slug, name, preview, rig, emotions[]}]}   персонажи библиотеки канала доски
+POST /api/thumbs/fromlib    <- {b, slug, emotion}       персонаж библиотеки -> in/: со скелетом — фигура в эмоции без фона (стенд char.html), 2D — его лист-превью
+POST /api/thumbs/generate   <- {b, rid, model, prompt, refs[src…], aspect, quality, resolution, seed, title}  -> {rid}
+                            title — только у flux: заголовок накладывается шрифтом поверх (кириллицу модель пишет с опечатками)
 POST /api/thumbs/use        <- {b, src}                 «Сделать обложкой» -> <видео>/out/thumbnail_main.<ext>, pack.thumb
+POST /api/thumbs/unuse      <- {b}                      снять обложку видео (файл out/thumbnail_main.* и pack.thumb)
+POST /api/thumbs/paste      <- {from, to, files[src…], results{rid: R}}  Ctrl+V нод с другой доски: картинки копируются в доску to -> {map{src: новый}, results}
 """
-import base64, json, mimetypes, os, re, shutil, threading, time, urllib.request, uuid
+import base64, json, mimetypes, os, re, shutil, threading, time, urllib.parse, urllib.request, uuid
 
 import paths as P
 
@@ -38,7 +45,15 @@ MODELS = [
     {"id": "hf:soul", "label": "SOUL V2", "path": "/higgsfield-ai/soul/v2/standard", "refs": 0, "res": ["2k", "4k"], "q": [], "ar": ["1:1", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9"]},
     {"id": "claude", "label": "Claude · кодом (наш движок, ёжик канала)", "refs": 8, "res": [], "q": [], "ar": ["9:16", "16:9"]},
 ]
+FLUX_AR = ["16:9", "9:16", "1:1", "4:3", "3:4"]
 _lock = threading.Lock()
+
+
+def models():
+    """Список моделей доски: облачные + локальные FLUX.2 [klein] (9B — только если разрешена в настройках)."""
+    import flux2
+    return MODELS + [{"id": "flux:" + k, "label": flux2.MODELS[k]["label"], "refs": flux2.MAX_REFS, "res": list(flux2.RES), "q": [], "ar": FLUX_AR, "seed": True, "local": True}
+                     for k in flux2.enabled_models()]
 
 
 # ---------------------------------------------------------------- доски
@@ -64,16 +79,13 @@ def _read(p, default):
 
 def _write(p, d):
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+    P.write_atomic(p, json.dumps(d, ensure_ascii=False, indent=1))
 
 
 def board(b):
     d = bdir(b)
     return {"board": _read(os.path.join(d, "board.json"), {"nodes": [], "edges": [], "view": {"x": 0, "y": 0, "z": 1}}),
-            "results": _read(os.path.join(d, "results.json"), {}), "models": MODELS, "key": bool(hf_key())}
+            "results": _read(os.path.join(d, "results.json"), {}), "models": models(), "key": bool(hf_key())}
 
 
 def save_board(b, bd):
@@ -128,10 +140,85 @@ def from_url(A, b, url):
         return upload(b, os.path.basename(f), open(f, "rb").read())
     if not re.match(r"^https?://", url):
         raise ValueError("нужна ссылка на картинку")
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ClaudeStudio", "X-Ideas": "1"}), timeout=60) as r:
-        data, ct = r.read(), r.headers.get("Content-Type", "")
+    pr = urllib.parse.urlparse(url)                      # 🔎 поиск картинок: оригиналы с чужих сайтов — как браузер, иначе 403
+    hdr = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+           "Referer": f"{pr.scheme}://{pr.netloc}/", "Accept": "image/avif,image/webp,image/png,image/jpeg,*/*"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=30) as r:
+            data, ct = r.read(40 << 20), r.headers.get("Content-Type", "")
+    except Exception as ex:
+        raise ValueError(f"сайт не отдал картинку ({getattr(ex, 'code', '') or ex.__class__.__name__})") from None
     ext = mimetypes.guess_extension((ct or "").split(";")[0].strip()) or ".png"
+    if ext not in (".png", ".jpg", ".jpe", ".jpeg", ".webp", ".gif"):   # avif / bmp / html вместо картинки
+        try:
+            from PIL import Image
+            import io
+            buf = io.BytesIO(); Image.open(io.BytesIO(data)).convert("RGBA").save(buf, "PNG"); data, ext = buf.getvalue(), ".png"
+        except Exception:
+            raise ValueError("по ссылке не картинка") from None
     return upload(b, "x" + (".jpg" if ext in (".jpe", ".jpeg") else ext), data)
+
+
+# ---------------------------------------------------------------- персонажи библиотеки на доску
+def _board_channel(b):
+    if b == "ch":
+        c = P.channel()
+    else:
+        c = P.channel((P.index()["videos"].get(b) or {}).get("channel"))
+    if not c:
+        raise ValueError("нет канала у доски")
+    return c
+
+
+def lib_chars(A, b):
+    """Персонажи библиотеки канала доски (без убранных в архив): превью, есть ли скелет, эмоции (утверждённые — первыми)."""
+    c = _board_channel(b)
+    gone = {r["id"] for r in A.stapi().lib_index(c) if r.get("archived")}
+    ch = A.chapi()
+    out = []
+    for x in ch.chars(A, c["id"]):
+        if "characters/" + x["slug"] in gone:
+            continue
+        em = []
+        if x.get("rig"):
+            try:
+                E = ch.sheet_info(A, x["slug"], c["id"]).get("emotions") or {}
+                em = sorted(E, key=lambda k: not E[k].get("ok"))
+            except Exception:
+                pass
+        out.append({"slug": x["slug"], "name": x["name"], "rig": bool(x.get("rig")), "emotions": em,
+                    "preview": f"/api/lib/file/{c['id']}/characters/{x['slug']}/{x['preview']}" if x.get("preview") else ""})
+    return {"items": out}
+
+
+def from_lib(A, b, slug, emotion=""):
+    """Персонаж -> картинка доски. Со скелетом — рендер стенда (char.html, без фона, обрезка по фигуре), иначе — превью-лист последней версии."""
+    from urllib.parse import quote
+    c = _board_channel(b)
+    ch = A.chapi()
+    x = next((i for i in ch.chars(A, c["id"]) if i["slug"] == slug), None)
+    if not x:
+        raise ValueError("нет такого персонажа в библиотеке")
+    name = x["name"] + (" · " + emotion if emotion else "")
+    if not x.get("rig"):
+        f = os.path.join(A.stapi().lib_dir(c), "characters", slug, x["preview"])
+        if not x.get("preview") or not os.path.isfile(f):
+            raise ValueError("у персонажа нет превью")
+        return dict(upload(b, os.path.basename(f), open(f, "rb").read()), name=name)
+    tmp = os.path.join(bdir(b), "_char_" + uuid.uuid4().hex[:6])
+    try:
+        png = ch.render_pose(A, f"/api/lib/file/{c['id']}/characters/{slug}/v{x['v']}/prefab.js", tmp,
+                             extra="&skel=0&bg=none" + ("&emotion=" + quote(emotion) if emotion else ""))
+        from PIL import Image
+        im = Image.open(png).convert("RGBA")
+        bb = im.getchannel("A").getbbox()                     # по фигуре, с полем
+        if bb:
+            m = 24
+            im = im.crop((max(0, bb[0] - m), max(0, bb[1] - m), min(im.width, bb[2] + m), min(im.height, bb[3] + m)))
+        im.save(png)
+        return dict(upload(b, "char.png", open(png, "rb").read()), name=name)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- генерация
@@ -170,11 +257,27 @@ def _set_result(b, rid, **kw):
         R = _read(p, {})
         R[rid] = {**R.get(rid, {}), **kw, "at": int(time.time() * 1000)}
         _write(p, R)
+        r = R[rid]
+    if kw.get("status") in ("completed", "failed"):          # S20.5: картинка для обложки готова (или нет) — в ленту 🔔
+        try:
+            import notify_api
+            vid = None if b == "ch" else b
+            who = r.get("label") or r.get("model") or "генерация"
+            if kw["status"] == "completed":
+                notify_api.add("thumb", "Картинка для обложки готова", f"{who}: {(r.get('prompt') or '')[:120]}", vid, None,
+                               "#/thumbs/" + b, "🖼", dedup="thumb:" + b + ":" + rid, channel=None if vid else notify_api.channel_of())
+            else:
+                notify_api.add("error", "Картинка для обложки не получилась", f"{who}: {r.get('error') or ''}", vid, None,
+                               "#/thumbs/" + b, "⚠", dedup="thumbx:" + b + ":" + rid, channel=None if vid else notify_api.channel_of())
+        except Exception as e:
+            print("! notify thumb:", e)
 
 
 def generate(A, body):
     b, rid = body.get("b", ""), body.get("rid") or ("r" + uuid.uuid4().hex[:8])
-    m = next((x for x in MODELS if x["id"] == body.get("model")), MODELS[0])
+    m = next((x for x in models() if x["id"] == body.get("model")), None)
+    if not m:
+        raise ValueError("модель недоступна: " + str(body.get("model")) + (" — включи 9B в ⚙ Настройках" if body.get("model") == "flux:9b" else ""))
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
         raise ValueError("нужен промпт")
@@ -192,6 +295,8 @@ def _run(A, b, rid, m, prompt, refs, body):
     try:
         if m["id"] == "claude":
             return _run_claude(A, b, rid, prompt, refs, body)
+        if m["id"].startswith("flux:"):
+            return _run_flux(b, rid, m, prompt, refs, body)
         key = hf_key()
         _set_result(b, rid, status="uploading" if refs else "queued")
         urls = [_hf_upload(key, r) for r in refs]
@@ -242,6 +347,21 @@ def _save_gen(b, rid, data, ext):
     _set_result(b, rid, status="completed", file="gen/" + fn, error="")
 
 
+def _run_flux(b, rid, m, prompt, refs, body):
+    """FLUX.2 [klein] на своей видеокарте: адаптер flux2.generate_thumbnail -> gen/<rid>.png; сид и время — в результат (повторить картинку)."""
+    import flux2
+    last = [""]
+
+    def log(s):
+        st = "queued" if s.startswith("в очереди") else "in_progress"
+        if s != last[0]:
+            last[0] = s; _set_result(b, rid, status=st, note=s)
+    d = os.path.join(bdir(b), "gen")
+    f, meta = flux2.generate_thumbnail(prompt, refs, None, body.get("seed"), m["id"][5:], os.path.join(d, rid + ".png"),
+                                       aspect=body.get("aspect"), res=body.get("resolution"), log=log, title=body.get("title"))
+    _set_result(b, rid, status="completed", file="gen/" + os.path.basename(f), error="", note="", seed=meta["seed"], secs=meta["secs"], size=f"{meta['w']}×{meta['h']}")
+
+
 def _run_claude(A, b, rid, prompt, refs, body):
     """Обложка кодом: концепт в видео (thumbs[]) -> задача render (Claude рисует нашим движком, смотрит, правит) -> картинка обложки."""
     key, cid = "plan:" + b, "t" + uuid.uuid4().hex[:7]
@@ -253,7 +373,8 @@ def _run_claude(A, b, rid, prompt, refs, body):
                                                              "type": "", "text": "", "hook": "", "frame": "", "img": imgs[0] if imgs else "", "renders": [], "by": "board"}}])
     _set_result(b, rid, status="in_progress")
     j = A.start_job("render", key, "render:" + cid, {"thumb": cid, "part": "cover"})
-    while j.status == "running":
+    j.meta["silent"] = True                               # в ленту 🔔 — одной записью «картинка готова» (ниже), без «обложка нарисована»
+    while j.status in ("running", "queued"):               # задача Claude сначала стоит в очереди (S12.13) — ждём и её
         time.sleep(2)
     if j.status != "done":
         raise RuntimeError("Claude: " + (j.error or j.status))
@@ -283,6 +404,60 @@ def use(A, b, src):
     return {"ok": True, "file": "out/thumbnail_main" + ext}
 
 
+def unuse(A, b):
+    """Снять обложку видео (поставили случайно): out/thumbnail_main.* -> прочь, pack.thumb = null."""
+    v = P.video(b)
+    if not v:
+        raise ValueError("нет такого видео")
+    for old in ("thumbnail_main.png", "thumbnail_main.jpg", "thumbnail_main.webp"):
+        try:
+            os.remove(os.path.join(v, "out", old))
+        except OSError:
+            pass
+    A.apply_ops("plan:" + b, [{"op": "set", "path": ["pack", "thumb"], "value": None}])
+    return {"ok": True}
+
+
+def paste(src_b, dst_b, files, results):
+    """Ctrl+V с другой (или той же) доски: файлы нод (in/…, gen/…) копируются в доску dst_b под свободными именами,
+    статусы результатов (ключи — уже новые id нод) пишутся в её results.json с новыми путями; незаконченные — «отменено»."""
+    dd = bdir(dst_b)
+    m = {}
+    for f in files or []:
+        if f in m or not isinstance(f, str):
+            continue
+        try:
+            sp = file_path(src_b, f)
+        except ValueError:
+            continue
+        sub, name = (f.split("/", 1) + [""])[:2] if "/" in f else ("in", f)
+        sub = sub if sub in ("in", "gen") else "in"
+        base, ext = os.path.splitext(os.path.basename(name))
+        nf = sub + "/" + base + ext
+        if os.path.exists(os.path.join(dd, nf)) and os.path.abspath(os.path.join(dd, nf)) != os.path.abspath(sp):
+            nf = sub + "/" + base[:1] + uuid.uuid4().hex[:8] + ext
+        tp = os.path.join(dd, nf)
+        if os.path.abspath(tp) != os.path.abspath(sp):
+            os.makedirs(os.path.dirname(tp), exist_ok=True)
+            shutil.copy2(sp, tp)
+        m[f] = nf
+    out = {}
+    with _lock:
+        p = os.path.join(dd, "results.json")
+        R = _read(p, {})
+        for rid, r in (results or {}).items():
+            if not isinstance(r, dict) or not re.match(r"^[a-z0-9]{3,24}$", rid):
+                continue
+            r = dict(r)
+            if r.get("file"):
+                r["file"] = m.get(r["file"], r["file"])
+            if r.get("status") not in ("completed", "failed", "nsfw", "canceled"):
+                r.update(status="canceled", note="скопировано до конца генерации")
+            R[rid] = out[rid] = r
+        _write(p, R)
+    return {"map": m, "results": out}
+
+
 # ---------------------------------------------------------------- HTTP
 def handle_get(A, h, p, q):
     g = lambda k: q.get(k, [""])[0]
@@ -290,6 +465,8 @@ def handle_get(A, h, p, q):
         h._json(boards(A)); return True
     if p == "/api/thumbs/board":
         h._json(board(g("b"))); return True
+    if p == "/api/thumbs/chars":
+        h._json(lib_chars(A, g("b"))); return True
     if p == "/api/thumbs/file":
         A._send_file(h, file_path(g("b"), g("f"))); return True
     return False
@@ -299,9 +476,21 @@ def handle_post(A, h, p, q, body):
     if p == "/api/thumbs/board":
         h._json(save_board(body.get("b", ""), body.get("board"))); return True
     if p == "/api/thumbs/fromurl":
-        h._json(from_url(A, body.get("b", ""), body.get("url", ""))); return True
+        try:
+            h._json(from_url(A, body.get("b", ""), body.get("url", "")))
+        except ValueError:                               # оригинал не отдали — берём превью из выдачи поиска
+            if not body.get("fallback"):
+                raise
+            h._json({**from_url(A, body.get("b", ""), body["fallback"]), "thumb": True})
+        return True
     if p == "/api/thumbs/generate":
         h._json(generate(A, body)); return True
+    if p == "/api/thumbs/fromlib":
+        h._json(from_lib(A, body.get("b", ""), body.get("slug", ""), body.get("emotion") or "")); return True
     if p == "/api/thumbs/use":
         h._json(use(A, body.get("b", ""), body.get("src", ""))); return True
+    if p == "/api/thumbs/unuse":
+        h._json(unuse(A, body.get("b", ""))); return True
+    if p == "/api/thumbs/paste":
+        h._json(paste(body.get("from", ""), body.get("to", ""), body.get("files"), body.get("results"))); return True
     return False

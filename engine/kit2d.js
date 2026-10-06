@@ -27,6 +27,24 @@ function kitUnderwater(ctx, k, o = {}) {
   ctx.restore();
 }
 
+// kitPhoneRing(ctx, x, y, size, o) — звонящая телефонная трубка из бумаги: изогнутая ручка, чашки, витой шнур, красные дуги звонка над ней.
+// size — ширина трубки (≈600); o.t — время (тряска, пульс дуг), o.ring 0..1 — сила звонка (0 — лежит тихо), o.color ('#1d1d22'), o.wave ('#c8202b').
+// Нужен paper.js (cutRect). Где впервые: «Какого это работать в Valve» — родители школьника звонят Гейбу.
+function kitPhoneRing(ctx, x, y, size, o = {}) {
+  const T = o.t || 0, ring = o.ring == null ? 1 : o.ring, s = size / 600, col = o.color || '#1d1d22';
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(Math.sin(T * 32) * 0.07 * ring - 0.35);
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 12; ctx.beginPath();
+  for (let i = 0; i <= 40; i++) { const u = i / 40, px = 230 + u * 120 + Math.sin(u * 60) * 14, py = 60 + u * 260 + Math.cos(u * 60) * 14; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+  ctx.stroke(); ctx.restore();
+  ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(-250, 10); ctx.quadraticCurveTo(0, -110, 250, 10); ctx.lineTo(250, 40); ctx.quadraticCurveTo(0, -60, -250, 40); ctx.closePath(); ctx.fill();
+  cutRect(ctx, -300, 0, 150, 110, col, { seed: 52, edge: 5 });
+  cutRect(ctx, 150, 0, 150, 110, col, { seed: 53, edge: 5 });
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle = o.wave || '#c8202b'; ctx.lineCap = 'round'; ctx.lineWidth = 12 * s;
+  for (let i = 0; i < 3; i++) { ctx.globalAlpha = ring * (0.4 + 0.6 * Math.abs(Math.sin(T * 9 - i * 0.8))); ctx.beginPath(); ctx.arc(x, y - (130 + i * 50) * s, (90 + i * 60) * s, -2.3, -0.84); ctx.stroke(); }
+  ctx.restore();
+}
+
 // kitWhiteVoid(ctx, T, k, o) — белая пустота из матовой бумаги на весь кадр (свет из проёма, «тот свет»): бумажный фон, мутные силуэты в глубине, зерно.
 // k 0..1 — насколько залило; o.shapes (true) — силуэты; o.colors — 4 тона бумаги. Нужен paper.js (paperBG, cut, ellP, rng, noise1, grainPat).
 // Где впервые: «Про металлические штуки» — проём подсобки, Друг в белом свете.

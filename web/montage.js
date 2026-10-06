@@ -5,7 +5,7 @@
 'use strict';
 
 const MT = { info: {}, loading: {}, zoom: 64, sel: null, t: 0, playing: false, drag: null, genTimer: null, key: null, d: null };
-const MT_LABEL = 112;                                     // ширина колонки подписей строк, px
+const MT_LABEL = 150;                                     // ширина колонки подписей строк (S23: шапки дорожек — фейдер, M / S), px
 const MT_TRANS = ['cut', 'slide', 'push', 'zoom', 'iris'];
 const msel = (pairs, v, cb) => sel(pairs.map(([value, label]) => ({ value, label })), v, cb);   // sel() из core.js — с парами [значение, подпись]
 
@@ -79,6 +79,8 @@ const Montage = {
       const w = (r.report || {}).warn || [];
       this.status(w.length ? '⚠ ' + w.join('; ') : 'предпросмотр обновлён');
       MontagePreview.reload(MT.t);
+      const had = Object.keys((MTA.map || {}).srcs || {}).join('|');   // S23: новый звук (из панели, замена) — адреса и волна
+      MTA.load(d, true).then(m => { if (Object.keys((m || {}).srcs || {}).join('|') !== had) this.redraw(); });
     } catch (e) { this.status('⚠ ' + e.message); }
     MT.genBusy = false;
   },
@@ -134,9 +136,12 @@ const Montage = {
 
   // ---------------- страница этапа
   redraw() {
+    // открыта карточка правки или тянется правка — таймлайн не трогаем (иначе полоса прыгает назад посреди перетаскивания); догонит App.resume()
+    if (typeof Workspace !== 'undefined' && Workspace.holding && Workspace.holding()) { this.redrawPending = true; return; }
+    this.redrawPending = false;
     const d = MT.d, M = this.M(d), tl = $('.mt-tl'), pr = $('.mt-props'), tb = $('.mt-toolbar');
-    if (tl) tl.replaceChildren(this.timeline(d, M));
-    if (pr) pr.replaceChildren(this.props(d, M));
+    if (tl) keepScroll(tl, () => tl.replaceChildren(this.timeline(d, M)));      // прокрутка таймлайна и свойств не прыгает
+    if (pr) keepScroll(pr, () => pr.replaceChildren(this.props(d, M)));
     if (tb) tb.replaceWith(this.toolbar(d, MT.key, M));
     if (typeof Workspace !== 'undefined' && App.route.page === 'v') Workspace.onRedraw();   // S12: окно видео — список сцен, свойства
   },
@@ -174,10 +179,32 @@ const Montage = {
     }
     for (const ph of this.holes(d, M)) {                 // S12.7: секции голоса без сцены — заглушки; секция, которую Claude собирает сейчас, — бегущая полоса
       sceneRow.append(h('div.mt-ph', { class: (ph.empty ? 'empty' : '') + (ph.live ? ' live' : ''), style: { left: X(ph.a) + 'px', width: Math.max(6, (ph.b - ph.a) * Z) + 'px' },
-        title: (ph.live ? 'Claude собирает: ' + (ph.note || '') + '\n' : '') + (ph.empty ? `Сцены нет: «${ph.title}» — заглушка (текст голоса в кадре)` : '') },
+        title: d.fast ? `Сцена «${ph.title}» (⚡ быстрый ролик: сцена — код проекта, правки — в чате Claude)` : (ph.live ? 'Claude собирает: ' + (ph.note || '') + '\n' : '') + (ph.empty ? `Сцены нет: «${ph.title}» — заглушка (текст голоса в кадре)` : '') },
         h('span', ph.live ? '◌ ' + (ph.note || 'Claude собирает…') : ph.title || 'нет сцены')));
     }
     rows.push(['Сцены', sceneRow, 1]);
+    // правки автора (пометки на кадре): отрезок «с … по …» или точка; клик — к кадру и карточка правки
+    const NL = this.notesLane(d);
+    if (NL) rows.push(['Правки', NL.lane, NL.n]);
+    // S21 «Сторож монтажа» (montage guard -> d.guard): красные — застряли / пропали рывком, жёлтые — прыжки и мелочь. Клик — к моменту, двойной — Claude чинит
+    const GI = window.AgentPanel ? AgentPanel.openGuard(d) : ((d.guard || {}).issues || []).filter(x => x.status !== 'ok');   // «✓ так задумано» не показываем
+    if (GI.length) {
+      const gl = h('div.mt-lane.guard'), gend = [];
+      GI.forEach(x => {
+        const a = x.t0 != null ? x.t0 : x.t, b = x.t1 != null ? x.t1 : a + 0.15;
+        let k = gend.findIndex(e => e <= a + 1e-3); if (k < 0) { k = gend.length; gend.push(0); } gend[k] = Math.max(b, a + 60 / Z);
+        const what = window.AgentPanel ? AgentPanel.gtext(x) : x.type;
+        const where = `${(+a).toFixed(2)} с, сцена ${(x.k || 0) + 1}${x.scene ? ` «${x.scene}»` : ''}`;
+        gl.append(h('div.mt-guard', { class: x.type + (window.AgentPanel && AgentPanel.gbad(x) ? ' bad' : ''), style: { left: X(a) + 'px', width: Math.max(10, (b - a) * Z) + 'px', top: 3 + k * 22 + 'px' },
+          title: `🛡 ${what}
+${where}
+клик — к моменту · двойной клик — Claude чинит · все находки — во вкладке «Правки» Claude`,
+          onmousedown: ev => { ev.stopPropagation(); MT.t = +(x.tShot != null ? x.tShot : a).toFixed(2); MontagePreview.seek(MT.t); this.playhead(); },
+          ondblclick: ev => { ev.stopPropagation(); if (window.AgentPanel) { AgentPanel.toggle(true); AgentPanel.fixNotes(d, [], [], [x]); } } },
+          h('span', Z >= 30 ? what : '')));
+      });
+      rows.push([`Сторож · ${GI.length}`, gl, Math.max(1, gend.length)]);
+    }
     // текст и голос (S12): сверху слова — что звучит (из них субтитры и привязка сцен), под ними волна голоса
     if (words.length) {
       const vr = h('div.mt-lane.voice', { class: this.voiceOn(d) ? '' : 'off' });
@@ -186,9 +213,10 @@ const Montage = {
       const wave = h('div.mt-wave');
       vr.append(wave);
       this.waves(d, wave, X);
-      rows.push(['Текст и голос', vr, 2]);
+      rows.push([MSnd.head(d, M, MSnd.tracks(M).find(t => t.kind === 'voice'), 'Текст и голос'), vr, 2]);
     }
-    // музыка, звуки, надписи — дорожками без наложений
+    // S23: музыка и звуки — дорожки звукового редактора (audio_tl.js); надписи — полосами без наложений
+    rows.push(...MSnd.rows(d, M, X));
     const laneOf = (items, t0, t1) => { const ends = []; return items.map(it => { const a = t0(it); let k = ends.findIndex(e => e <= a + 1e-3); if (k < 0) { k = ends.length; ends.push(0); } ends[k] = t1(it); return k; }); };
     const group = (list, title, cls, dur, label) => {
       const items = [...(M[list] || [])].sort((a, b) => (a.at || 0) - (b.at || 0)), lanes = laneOf(items, it => it.at || 0, it => (it.at || 0) + dur(it));
@@ -196,15 +224,74 @@ const Montage = {
       items.forEach((it, i) => lane.append(bar(list, it, it.at || 0, dur(it), label(it), cls, { lane: lanes[i], edge: list !== 'sfx' })));
       rows.push([title, lane, Math.max(1, ...lanes.map(k => k + 1))]);
     };
-    group('music', 'Музыка', 'music', it => it.dur || Math.max(0.5, this.srcDur(d, it.src) - (it.from || 0)), it => it.note || this.srcName(d, it.src));
-    group('sfx', 'Звуки', 'sfx', it => Math.min(this.srcDur(d, it.src), 12), it => it.note || this.srcName(d, it.src));
     if ((M.overlays || []).length) group('overlays', 'Надписи', 'ov', it => it.dur || 2, it => it.text || it.kind);
     const body = h('div.mt-rows', { style: { width: width + 'px' } },
-      rows.map(([t, lane, n]) => h('div.mt-row', { style: { height: n * 22 + 6 + 'px' } },
-        h('div.mt-rowlabel', typeof Icon === 'function' && { 'Сцены': 'clapper', 'Текст и голос': 'filetext', 'Музыка': 'music', 'Звуки': 'volume', 'Надписи': 'type' }[t] ? Icon({ 'Сцены': 'clapper', 'Текст и голос': 'filetext', 'Музыка': 'music', 'Звуки': 'volume', 'Надписи': 'type' }[t], 13) : null, t), lane)),
-      h('div.mt-playhead', { style: { left: X(MT.t) + 'px' } }),
+      rows.map(([t, lane, n, px]) => h('div.mt-row', { style: { height: (px || n * 22 + 6) + 'px' }, 'data-track': lane.dataset.track || null },
+        t instanceof Node ? t : h('div.mt-rowlabel', typeof Icon === 'function' && { 'Сцены': 'clapper', 'Правки': 'pin', 'Текст и голос': 'filetext', 'Музыка': 'music', 'Звуки': 'volume', 'Надписи': 'type', 'Сторож': 'shield' }[t.split(' ·')[0]] ? Icon({ 'Сцены': 'clapper', 'Правки': 'pin', 'Текст и голос': 'filetext', 'Музыка': 'music', 'Звуки': 'volume', 'Надписи': 'type', 'Сторож': 'shield' }[t.split(' ·')[0]], 13) : null, t), lane)),
+      h('div.mt-playhead', { style: { left: X(MT.t) + 'px' }, title: 'Тяните — перемотка', onmousedown: ev => this.scrub(ev) }),
       h('div.mt-end', { style: { left: X(M.len || 0) + 'px' }, title: `конец ролика — ${(M.len || 0).toFixed(2)} с` }));
-    return h('div.mt-scroll', ruler, body);
+    return h('div.mt-scroll', ruler, body, h('div.mt-selbar', { hidden: !(TLSel.kind && TLSel.ids.size > 1) }, TLSel.kind && TLSel.ids.size > 1 ? TLSel.barText() : ''));
+  },
+  // дорожка правок отдельно от таймлайна: правка / перетаскивание / удаление пометки перерисовывает только её (не волну голоса и не сцены) — без мигания
+  notesLane(d) {
+    const notes = typeof Workspace !== 'undefined' && Workspace.notesOpen ? Workspace.notesOpen(d).sort((a, b) => a.t - b.t) : [];
+    if (!notes.length) return null;
+    const Z = MT.zoom, X = t => MT_LABEL + t * Z, nl = h('div.mt-lane.notes'), ends = [];
+    notes.forEach((n, i) => {
+      const b = n.t2 != null ? n.t2 : n.t + 0.4;
+      let k = ends.findIndex(e => e <= n.t + 1e-3); if (k < 0) { k = ends.length; ends.push(0); } ends[k] = b;
+      nl.append(h('div.mt-note', { class: (n.t2 != null ? 'range' : '') + ((n.refs || []).length || (n.assets || []).length ? ' ref' : '') + (TLSel.has('notes', n.id) ? ' sel' : ''), 'data-id': n.id,
+        style: { left: X(n.t) + 'px', width: Math.max(14, (b - n.t) * Z) + 'px', top: 3 + k * 22 + 'px' },
+        title: `${Workspace.fmt(n.t)}${n.t2 != null ? '–' + Workspace.fmt(n.t2) : ''} · ${n.text}${(n.refs || []).length ? ` · картинок: ${n.refs.length}` : ''}${(n.assets || []).length ? ` · ассетов: ${n.assets.length}` : ''}\nклик — открыть · Ctrl/Shift+клик — выделить несколько · рамка по пустому месту — выделить · за край — растянуть · за середину — сдвинуть (выделенные — вместе) · Delete — удалить · Ctrl+Z — отменить`,
+        onmousedown: ev => this.dragNote(ev, d, n) }, h('i.edge.l'), h('span', `${i + 1} ${n.text}`), h('i.edge.r')));
+    });
+    nl.addEventListener('mousedown', ev => TLSel.marquee(ev, 'notes', nl));
+    return { lane: nl, n: Math.max(1, ends.length) };
+  },
+  refreshNotes() {
+    const d = MT.d; if (!d) return;
+    const cur = $('.mt-lane.notes'), NL = this.notesLane(d);
+    const row = cur && cur.closest('.mt-row');
+    if (cur && NL && row && row.style.height === NL.n * 22 + 6 + 'px') { cur.replaceWith(NL.lane); return; }   // та же высота дорожки — подмена на месте
+    this.redraw();                                                                                            // появилась / пропала дорожка или стала выше — весь таймлайн
+  },
+  // правка на таймлайне как клип в Premiere: за край — начало / конец, за середину — сдвиг всего отрезка, клик без движения — открыть правку.
+  // Края прилипают к плейхеду (8 px); правка в один кадр, растянутая за правый край, становится отрезком.
+  dragNote(ev, d, n) {
+    if (ev.button !== 0) return;
+    ev.stopPropagation(); ev.preventDefault();
+    const el = ev.currentTarget, Z = MT.zoom, x0 = ev.clientX, a0 = n.t, b0 = n.t2 != null ? n.t2 : null;
+    const mode = ev.target.classList.contains('l') ? 'l' : ev.target.classList.contains('r') ? 'r' : 'move';
+    if (mode === 'move' && !(ev.ctrlKey || ev.metaKey || ev.shiftKey)) {
+      if (!TLSel.has('notes', n.id)) TLSel.set('notes', [n.id]);     // взяли невыделенную — выделяется она одна
+      if (TLSel.ids.size > 1) return TLSel.drag(ev, d, 'notes', n.id, el);
+    }
+    const end0 = b0 != null ? b0 : a0 + 0.4, min = 0.1, total = Math.max(Montage.M(d).len || 0, this.autoLen(d, Montage.M(d)));
+    const snap = t => Math.abs((t - MT.t) * Z) < 8 ? MT.t : t;
+    let a = a0, b = b0, moved = false;
+    const tip = h('div.mt-note-tip'); document.body.append(tip);
+    const show = e => { tip.textContent = Workspace.fmt(a) + (b != null ? ' – ' + Workspace.fmt(b) + ` · ${(b - a).toFixed(1)} с` : ''); tip.style.left = e.clientX + 12 + 'px'; tip.style.top = e.clientY - 30 + 'px'; };
+    const mv = e => {
+      const dt = (e.clientX - x0) / Z;
+      if (!moved && Math.abs(e.clientX - x0) < 3) return;
+      moved = true; document.body.classList.add('mt-dragging');
+      if (mode === 'l') { a = Math.max(0, Math.min(snap(a0 + dt), end0 - min)); if (b == null) b = +end0.toFixed(2); }
+      else if (mode === 'r') b = Math.min(total, Math.max(snap(end0 + dt), a0 + min));
+      else { const w = end0 - a0; a = Math.max(0, Math.min(total - w, a0 + dt)); const sa = snap(a), sb = snap(a + w); a = sa !== a ? sa : sb !== a + w ? sb - w : a; if (b0 != null) b = a + w; }
+      el.style.left = (MT_LABEL + a * Z) + 'px';
+      el.style.width = Math.max(14, ((b != null ? b : a + 0.4) - a) * Z) + 'px';
+      show(e);
+    };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up); tip.remove(); document.body.classList.remove('mt-dragging');
+      if (!moved) { App.resume(); return TLSel.ADAPT.notes.click(ev, n.id); }
+      Workspace.noteEdit('сдвиг правки', key => {
+        Store.set(key, ['notes', n.id, 't'], +a.toFixed(2));
+        Store.set(key, ['notes', n.id, 't2'], b == null ? null : +b.toFixed(2));
+      });
+      App.resume();
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
   },
   // секции голоса (сцены сценария), которые не покрыты юнитами монтажа, и та, которую агент собирает сейчас (video.json → live)
   holes(d, M) {
@@ -246,10 +333,25 @@ const Montage = {
     const r = $('.mt-rows').getBoundingClientRect();
     return Math.max(0, (ev.clientX - r.left - MT_LABEL) / MT.zoom);
   },
+  // перемотка (линейка или сам ползунок): позиция мыши применяется раз в кадр — раньше каждое движение мыши слало видео новую перемотку,
+  // они копились, и ползунок «залипал»; на время протаскивания воспроизведение на паузе, таймлайн не перерисовывается (Workspace.holding)
   scrub(ev) {
-    const move = e => { MT.t = +this.xToT(e).toFixed(2); this.playhead(); MontagePreview.seek(MT.t); };
-    move(ev);
-    const up = () => { removeEventListener('mousemove', move); removeEventListener('mouseup', up); };
+    if (ev.button !== 0) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const ws = typeof Workspace !== 'undefined' && App.route.page === 'v';
+    if (ws && WS.playing) Workspace.pause();
+    let x = ev, raf = 0;
+    const apply = () => { raf = 0; MT.t = +this.xToT(x).toFixed(2); this.playhead(); MontagePreview.seek(MT.t); };
+    const move = e => { x = e; if (!raf) raf = requestAnimationFrame(apply); };
+    document.body.classList.add('mt-scrubbing');
+    apply();
+    const up = e => {
+      removeEventListener('mousemove', move); removeEventListener('mouseup', up);
+      if (raf) cancelAnimationFrame(raf);
+      x = e; apply();
+      document.body.classList.remove('mt-scrubbing');
+      App.resume();
+    };
     addEventListener('mousemove', move); addEventListener('mouseup', up);
   },
   playhead() {
@@ -328,6 +430,7 @@ const Montage = {
 
   // ---------------- свойства выбранного
   props(d, M) {
+    if (TLSel.kind === 'clips') return MSnd.props(d, M);           // S23: выбранные звуки
     const S = MT.sel, list = S && M[S.list], it = list && list.find(x => x.id === S.id);
     if (!it) return h('p.dim.small', 'Клик по полосе — свойства. Тяни полосу — сдвиг, край — длина; линейка — перемотка; маркер сцены ⚑ тяни на слово голоса.');
     const set = (path, v) => { const N = this.clone(M), x = N[S.list].find(y => y.id === it.id); let o = x; for (const p of path.slice(0, -1)) o = o[p] = o[p] || {}; o[path[path.length - 1]] = v; this.save(N); };
@@ -395,53 +498,218 @@ const MTA = {
     }).catch(() => null);
     return this.bufs[url];
   },
+  // S23: сигналы живого звука = те же, что пишет генератор (montage_api.generate): плашки с in / out / dur / loop / фейдами, громкость и mute дорожек,
+  // solo (только здесь — в экспорт не идёт), приглушение музыки по словам голоса (MSnd.duckRuns), уровни шин как в audio.py (музыка 0.5, звуки 0.4).
   cues(d) {
-    const M = Montage.M(d), map = this.map || { srcs: {}, scenes: {}, voice: [] }, out = [];
-    const lay = (src, t, gain, extra) => { for (const L of map.srcs[src] || []) out.push(Object.assign({ url: L.url, t: t + (L.at || 0), gain: gain * (L.gain == null ? 1 : L.gain), lib: L.lib, peak: L.peak, off: L.off || 0, dur: L.len || null }, extra)); };
-    if ((M.voice || {}).on) for (const v of map.voice || []) out.push({ url: v.url, t: v.at, gain: 1, off: 0, dur: null, voice: true });
+    const M = this.override || Montage.M(d), map = this.map || { srcs: {}, scenes: {}, voice: [] }, out = [];
+    const T = MSnd.tracks(M), solo = T.some(t => t.solo);
+    const tg = t => (!t || t.mute || (solo && !t.solo)) ? 0 : Math.pow(10, (+t.gain || 0) / 20);
+    const lay = (src, t, gain, x, kind, tr) => {
+      const L = map.srcs[src] || [], c = x ? MSnd.clipOf(x, kind === 'music') : null;
+      for (const l of L) {
+        const lc = MSnd.layerClip(c, l.at || 0, L.length); if (!lc) continue;
+        out.push({ url: l.url, t: t + lc[0], gain: gain * (l.gain == null ? 1 : l.gain), lib: l.lib, peak: l.peak, off: l.off || 0, dur: l.len || null, clip: lc[1],
+          align: (x && x.align) || '', kind, sfx: kind === 'sfx', music: kind === 'music', duck: kind === 'music' && !((M.duck || {}).off || []).includes(tr && tr.id) });
+      }
+    };
+    const vt = T.find(t => t.kind === 'voice'), vg = tg(vt);
+    if ((M.voice || {}).on && vg) for (const v of map.voice || []) out.push({ url: v.url, t: v.at, gain: vg, off: 0, dur: null, voice: true, kind: 'voice' });
     for (const u of M.units || []) {
       const P = Montage.pairs(d, u), a = u.at || 0, b = a + (u.len || 0);
-      for (const s of map.scenes[u.scene] || []) { const tv = Montage.s2v(P, s.t); if (tv >= a - 0.05 && tv < b) lay(s.src, tv, s.gain, { align: s.align, sfx: true, cut: b }); }
+      for (const s of map.scenes[u.scene] || []) {
+        const tv = Montage.s2v(P, s.t); if (tv < a - 0.05 || tv >= b) continue;
+        const tr = MSnd.trackOf(T, s.track, 'sfx'), g = tg(tr); if (!g) continue;
+        lay(s.src, tv, s.gain * g, s, 'sfx', tr);
+      }
     }
-    for (const x of M.sfx || []) lay(x.src, x.at || 0, x.gain == null ? 1 : x.gain, { align: x.align || '', sfx: true });
-    for (const x of M.music || []) lay(x.src, x.at || 0, x.gain == null ? 1 : x.gain, { off: x.from || 0, dur: x.dur || null, fadeIn: x.fadeIn || 0, fadeOut: x.fadeOut || 0, music: true });
+    for (const x of M.sfx || []) { const tr = MSnd.trackOf(T, x.track, 'sfx'), g = tg(tr); if (g) lay(x.src, x.at || 0, (x.gain == null ? 1 : x.gain) * g, x, 'sfx', tr); }
+    for (const x of M.music || []) { const tr = MSnd.trackOf(T, x.track, 'music'), g = tg(tr); if (g) lay(x.src, x.at || 0, (x.gain == null ? 1 : x.gain) * g, x, 'music', tr); }
     return out;
   },
   warm(d) { this.load(d).then(() => { for (const c of this.cues(d)) this.buf(c.url); }); },
   now() { return this.on ? this.t0 + (this.ctx.currentTime - this.c0) : MT.t; },
-  stop() { for (const n of this.nodes) { try { n.stop(); } catch (e) {} } this.nodes = []; this.on = false; },
-  async play(d, t) {
+  stop() { for (const n of this.nodes) { try { n.stop(); } catch (e) {} } this.nodes = []; this.on = false; clearTimeout(this.pvTimer); },
+  bus(level) { const g = this.ac().createGain(); g.gain.value = level; g.connect(this.out()); this.nodes.push({ stop: () => g.disconnect() }); return g; },
+  async play(d, t, force) {
     const my = (this.playId = (this.playId || 0) + 1);
     this.stop();
     const ctx = this.ac(); if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (e) {} }
     await this.load(d);
     const C = this.cues(d);
     await Promise.all(C.map(c => this.buf(c.url)));      // обычно уже в кэше (warm); первый раз — подождать декод
-    if (my !== this.playId || !MT.playing) return;
-    t = MT.t != null ? MT.t : t;                          // за время загрузки кадры могли уйти вперёд
+    if (my !== this.playId || !(MT.playing || force)) return;
+    if (!force) t = MT.t != null ? MT.t : t;              // за время загрузки кадры могли уйти вперёд
     const c0 = ctx.currentTime + 0.04;
     this.t0 = t; this.c0 = c0; this.on = true;
+    const M = this.override || Montage.M(d), at = s => c0 + (s - t);   // время ролика -> время звука
+    // шины как в audio.py: голос × 1, звуки × 0.4, музыка × 0.5 (под ней — приглушение по словам, duck_words)
+    const B = { voice: this.bus(1), sfx: this.bus(0.4), music: this.bus(0.5), duck: this.bus(0.5) };
+    const D = Object.assign({ on: true, depth: -6, attack: 0.15, release: 0.4 }, M.duck || {});
+    if (D.on && (M.voice || {}).on) {
+      const low = 0.5 * Math.pow(10, D.depth / 20), g = B.duck.gain;
+      const lvl = x => { let k = 0; for (const [a, b] of MSnd.duckRuns(d)) k = Math.max(k, Math.min(Math.max(0, Math.min(1, (x - (a - D.attack)) / D.attack)), Math.max(0, Math.min(1, ((b + D.release) - x) / D.release)))); return 0.5 - (0.5 - low) * k; };
+      g.setValueAtTime(lvl(t), c0);
+      for (const [a, b] of MSnd.duckRuns(d)) {
+        const a0 = a - D.attack, b1 = b + D.release;
+        if (b1 <= t) continue;
+        if (a0 > t) { g.setValueAtTime(0.5, at(a0)); g.linearRampToValueAtTime(low, at(a)); }
+        if (b > t) { g.setValueAtTime(low, at(b)); g.linearRampToValueAtTime(0.5, at(b1)); }
+      }
+    }
     for (const c of C) {
       const b = await this.bufs[c.url]; if (!b) continue;
-      const inf = this.info[c.url] || {};
+      const inf = this.info[c.url] || {}, dest = c.voice ? B.voice : c.music ? (c.duck ? B.duck : B.music) : B.sfx;
+      const base = c.gain * (c.sfx ? inf.norm || 1 : 1);   // audio.py нормирует звуки (file: и lib:) к пику 0.9; музыку и голос — нет
+      if (c.clip) { this.playClip(ctx, b, inf, c, base, t, at, dest); continue; }
       let start = c.t;
       if (c.align === 'peak') start -= (c.peak != null && c.off === 0 ? c.peak : inf.peak - c.off) || 0;
       const avail = Math.max(0, b.duration - c.off);
-      const len = Math.min(c.dur || avail, avail, c.cut != null ? Math.max(0, c.cut + 0.6 - start) : 1e9);
+      const len = Math.min(c.dur || avail, avail);
       const end = start + len;
       if (end <= t || len <= 0.01) continue;
       const skip = Math.max(0, t - start), when = c0 + Math.max(0, start - t);
       const src = ctx.createBufferSource(); src.buffer = b;
-      const g = ctx.createGain(), base = c.gain * (c.lib ? inf.norm || 1 : 1);
-      const at = s => c0 + (s - t);                        // время ролика -> время звука
+      const g = ctx.createGain();
       g.gain.setValueAtTime(base, when);
-      if (c.fadeIn && skip < c.fadeIn) { g.gain.setValueAtTime(base * (skip / c.fadeIn), when); g.gain.linearRampToValueAtTime(base, at(start + c.fadeIn)); }
-      const fo = c.music ? c.fadeOut : c.sfx ? Math.min(1.2, Math.max(0.12, (end - Math.max(start, start + (inf.peak || 0) - c.off)) * 0.5)) : 0;
+      const fo = c.sfx ? Math.min(1.2, Math.max(0.12, (end - Math.max(start, start + (inf.peak || 0) - c.off)) * 0.5)) : 0;
       if (fo > 0 && end - fo > t) { g.gain.setValueAtTime(base, at(end - fo)); g.gain.linearRampToValueAtTime(0.0001, at(end)); }
-      src.connect(g).connect(this.out());
+      src.connect(g).connect(dest);
       src.start(when, c.off + skip, Math.max(0.01, len - skip));
       this.nodes.push(src);
     }
+  },
+  // S23: плашка — куски файла (MSnd.pieces), швы цикла — равномощный кроссфейд, фейды плашки; fadeOut null у звука — авто-затухание после пика (fade_out в audio.py)
+  playClip(ctx, b, inf, c, base, t, at, dest) {
+    const off0 = c.off || 0, srcLen = Math.max(0.02, c.dur || (b.duration - off0));   // срез lib:id|с|длина — окно файла
+    const cl = c.clip, P = MSnd.pieces(cl, srcLen), total = Math.max(...P.map(p => p[0] + p[2]));
+    const pk = (c.lib && c.peak != null && !off0 ? c.peak : (inf.peak || 0) - off0) - (cl.in || 0);
+    let start = c.t;
+    if (c.align === 'peak' && pk > 0) start -= pk;
+    const end = start + total;
+    if (end <= t || total <= 0.01) return;
+    const fo = cl.fadeOut == null ? (c.sfx ? Math.min(1.2, Math.max(0.12, (total - Math.max(0, pk)) * 0.5)) : 0) : +cl.fadeOut;
+    const fi = +cl.fadeIn || 0;
+    const env = x => { let k = 1; if (fi > 0 && x < fi) k = Math.min(k, x / fi); if (fo > 0 && x > total - fo) k = Math.min(k, (total - x) / fo); return Math.max(0.0001, k * base); };
+    const g = ctx.createGain(); g.connect(dest);
+    const s0 = Math.max(t, start);
+    g.gain.setValueAtTime(env(s0 - start), at(s0));
+    if (fi > 0 && s0 - start < fi) g.gain.linearRampToValueAtTime(env(fi), at(start + fi));
+    if (fo > 0) { if (end - fo > s0) g.gain.setValueAtTime(env(total - fo), at(end - fo)); g.gain.linearRampToValueAtTime(0.0001, at(end)); }
+    const N = 32, curve = (fn, x0, len) => { const arr = new Float32Array(N); for (let i = 0; i < N; i++) arr[i] = Math.max(0.0001, fn(x0 + (i / (N - 1)) * len)); return arr; };
+    for (const [pt, poff, plen, xi, xo] of P) {
+      const a = start + pt, e = a + plen;
+      if (e <= t) continue;
+      const skip = Math.max(0, t - a), when = at(Math.max(a, t));
+      const src = ctx.createBufferSource(); src.buffer = b;
+      const pg = ctx.createGain();
+      if (xi > 0 && skip < xi) pg.gain.setValueCurveAtTime(curve(x => Math.sin(Math.min(1, x / xi) * Math.PI / 2), skip, xi - skip), when, xi - skip);
+      else pg.gain.setValueAtTime(1, when);
+      if (xo > 0) { const x0 = Math.max(skip, plen - xo, xi); if (plen - x0 > 0.005) pg.gain.setValueCurveAtTime(curve(x => Math.cos(Math.min(1, Math.max(0, (x - (plen - xo)) / xo)) * Math.PI / 2), x0, plen - x0), at(a + x0), plen - x0); }
+      src.connect(pg).connect(g);
+      src.start(when, off0 + poff + skip, Math.max(0.01, plen - skip));
+      this.nodes.push(src);
+    }
+  },
+  // S23: прослушать кусок ролика с другим монтажом (замена звука «на месте»): from — секунда ролика, len — сколько
+  async preview(d, M2, from, len) {
+    this.override = M2;
+    try { await this.play(d, Math.max(0, from), true); } finally { this.override = null; }
+    clearTimeout(this.pvTimer); this.pvTimer = setTimeout(() => { if (!MT.playing) this.stop(); }, len * 1000 + 80);
+  },
+};
+
+// Множественное выделение на таймлайне — общее для дорожек. Дорожка подключается адаптером TLSel.ADAPT[kind]:
+//   items(d) -> [{id, a, b|null}] (b = null — «точка»), apply(edits:[{id, a, b}], label) — сохранить сдвиг пачкой (с Ctrl+Z),
+//   del(ids, label) — удалить пачкой, sel: CSS-селектор полос дорожки с data-id. Сейчас подключены правки (notes); сцены, звуки, музыка, надписи — следующими.
+// Ctrl / Shift + клик — добавить / убрать, рамка по пустому месту дорожки, перетаскивание выделенной полосы — вся группа, Delete — удалить, Esc — снять, Ctrl+A — все.
+const TLSel = {
+  kind: null, ids: new Set(), ADAPT: {},
+  has(kind, id) { return this.kind === kind && this.ids.has(id); },
+  set(kind, ids) { this.kind = ids.length ? kind : null; this.ids = new Set(ids); this.mark(); },
+  toggle(kind, id) {
+    if (this.kind !== kind) this.set(kind, [id]);
+    else { this.ids.has(id) ? this.ids.delete(id) : this.ids.add(id); if (!this.ids.size) this.kind = null; this.mark(); }
+  },
+  clear() { if (this.kind) this.set(null, []); },
+  barText() { const A = this.ADAPT[this.kind] || {}; return A.bar ? A.bar(this.ids.size) : `Выделено: ${this.ids.size} · тяните — двигать вместе · Delete — удалить · Esc — снять`; },
+  mark() {                                                    // подсветка без перерисовки таймлайна
+    for (const [k, A] of Object.entries(this.ADAPT)) $$(A.sel).forEach(el => el.classList.toggle('sel', this.has(k, el.dataset.id)));
+    const n = this.kind ? this.ids.size : 0, bar = $('.mt-selbar');
+    if (bar) { bar.hidden = n < 2; bar.textContent = n > 1 ? this.barText() : ''; }
+    const A = this.kind && this.ADAPT[this.kind]; if (A && A.onSel) A.onSel();
+  },
+  // перетаскивание группы: grab — полоса, за которую взяли; snap — к ползунку по любому краю любого выделенного
+  drag(ev, d, kind, grabId, el0) {
+    const A = this.ADAPT[kind], Z = MT.zoom, x0 = ev.clientX, all = A.items(d), group = all.filter(x => this.has(kind, x.id));
+    const total = Math.max(Montage.M(d).len || 0, Montage.autoLen(d, Montage.M(d)));
+    const lo = Math.min(...group.map(g => g.a)), hi = Math.max(...group.map(g => (g.b != null ? g.b : g.a + 0.4)));
+    let dt = 0, moved = false;
+    const els = new Map(group.map(g => [g.id, document.querySelector(`${A.sel}[data-id="${CSS.escape(g.id)}"]`)]));
+    const tip = h('div.mt-note-tip'); document.body.append(tip);
+    const mv = e => {
+      if (!moved && Math.abs(e.clientX - x0) < 3) return;
+      moved = true; document.body.classList.add('mt-dragging');
+      dt = Math.max(-lo, Math.min(total - hi, (e.clientX - x0) / Z));
+      let best = null;                                        // прилипание: ближайший край группы к ползунку (8 px)
+      for (const g of group) for (const t of [g.a, g.b != null ? g.b : null]) if (t != null) { const k = MT.t - (t + dt); if (Math.abs(k * Z) < 8 && (best == null || Math.abs(k) < Math.abs(best))) best = k; }
+      if (best != null) dt += best;
+      for (const g of group) { const el = els.get(g.id); if (el) el.style.left = (MT_LABEL + (g.a + dt) * Z) + 'px'; }
+      tip.textContent = `${group.length} шт. · ${dt >= 0 ? '+' : '−'}${Math.abs(dt).toFixed(2)} с`; tip.style.left = e.clientX + 12 + 'px'; tip.style.top = e.clientY - 30 + 'px';
+    };
+    const up = e => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up); tip.remove(); document.body.classList.remove('mt-dragging');
+      if (!moved) { App.resume(); return A.click && A.click(e, grabId); }
+      A.apply(group.map(g => ({ id: g.id, a: +(g.a + dt).toFixed(2), b: g.b != null ? +(g.b + dt).toFixed(2) : null })), `сдвиг ${group.length} правок`);
+      App.resume();
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  },
+  // рамка по пустому месту дорожки: выделить задетые полосы (Ctrl / Shift — добавить к выделенному)
+  marquee(ev, kind, lane) {
+    if (ev.button !== 0 || ev.target !== lane) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const A = this.ADAPT[kind], add = ev.ctrlKey || ev.metaKey || ev.shiftKey, base = add && this.kind === kind ? new Set(this.ids) : new Set();
+    const R = lane.getBoundingClientRect(), x0 = ev.clientX, y0 = ev.clientY;
+    const box = h('div.mt-marquee'); lane.append(box);
+    document.body.classList.add('mt-dragging');
+    let moved = false;
+    const mv = e => {
+      const l = Math.min(x0, e.clientX), r = Math.max(x0, e.clientX), t = Math.min(y0, e.clientY), b = Math.max(y0, e.clientY);
+      if (!moved && r - l < 4 && b - t < 4) return;
+      moved = true;
+      Object.assign(box.style, { left: l - R.left + 'px', top: t - R.top + 'px', width: r - l + 'px', height: b - t + 'px' });
+      const hit = [...lane.querySelectorAll(A.sel)].filter(el => { const q = el.getBoundingClientRect(); return q.right >= l && q.left <= r && q.bottom >= t && q.top <= b; }).map(el => el.dataset.id);
+      this.set(kind, [...new Set([...base, ...hit])]);
+    };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up); box.remove(); document.body.classList.remove('mt-dragging');
+      if (!moved && !add) this.clear();
+      App.resume();
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  },
+  remove() {
+    if (!this.kind || !this.ids.size) return false;
+    const A = this.ADAPT[this.kind], ids = [...this.ids];
+    A.del(ids, ids.length > 1 ? `удаление ${ids.length} ${A.many || 'правок'}` : 'удаление ' + (A.one || 'правки'));
+    this.set(null, []);
+    UI.toast(`🗑 Удалено: ${ids.length} · Ctrl+Z — вернуть`);
+    return true;
+  },
+};
+// правки (пометки на кадре) — первая дорожка с множественным выделением
+TLSel.ADAPT.notes = {
+  sel: '.mt-note',
+  items(d) { return (typeof Workspace !== 'undefined' ? Workspace.notesOpen(d) : []).map(n => ({ id: n.id, a: n.t, b: n.t2 != null ? n.t2 : null })); },
+  apply(edits, label) {
+    Workspace.noteEdit(label, key => { for (const x of edits) { Store.set(key, ['notes', x.id, 't'], x.a); Store.set(key, ['notes', x.id, 't2'], x.b); } });
+  },
+  del(ids, label) { Workspace.noteEdit(label, key => { for (const id of ids) Store.del(key, ['notes'], id, false); }); },
+  click(e, id) {                                              // клик без сдвига: Ctrl / Shift — в выделение; иначе — выделить одну и открыть правку
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return TLSel.toggle('notes', id);
+    TLSel.set('notes', [id]);
+    const n = Workspace.notesOpen(MT.d).find(x => x.id === id);
+    if (n) Workspace.editPin(n);
   },
 };
 
@@ -455,7 +723,7 @@ const MontagePreview = {
     if (!want) return;
     this.id = want;
     const vid = want.split('|')[0], clean = want.endsWith('|v');
-    if (d.locations && clean) return this.openClips(vid);      // S13.4: видео на локациях — плейбек готовых клипов сцен
+    if ((d.locations || d.fast) && clean) return this.openClips(vid);   // S13 / быстрый монтаж: плейбек готового видео      // S13.4: видео на локациях — плейбек готовых клипов сцен
     this.host = h('div.mt-preview', { class: clean ? 'clean' : '' }, h('p.dim.small', h('span.spin'), ' запускаю предпросмотр…'));
     document.body.append(this.host);
     api('POST', '/api/studio/project', { id: vid, page: 'preview' }).then(r => {
@@ -473,9 +741,9 @@ const MontagePreview = {
     const r = slot.getBoundingClientRect();
     Object.assign(this.host.style, { display: 'block', left: r.left + 'px', top: Math.max(r.top, 8) + 'px', width: r.width + 'px', height: r.height + 'px' });
   },
-  close() { if (this.host) this.host.remove(); clearInterval(this.cpoll); this.host = this.frame = this.id = this.url = this.video = null; this.clips = null; },
+  close() { document.querySelectorAll('.pv-card').forEach(p => p.remove()); if (this.host) this.host.remove(); clearInterval(this.cpoll); this.host = this.frame = this.id = this.url = this.video = this.live = null; this.clips = null; },
   post(m) {
-    if (this.video) return this.videoPost(m);
+    if (this.video && !this.live) return this.videoPost(m);
     try { this.frame && this.frame.contentWindow.postMessage(m, '*'); } catch (e) {}
   },
   // ---- S13.4: плейбек клипов (видео без звука; звук — Web Audio окна, как раньше)
@@ -491,31 +759,75 @@ const MontagePreview = {
       if (document.hidden || !this.video || this.cvid !== vid) return;
       let st; try { st = await api('GET', '/api/clips/state?video=' + vid); } catch { return; }
       this.clips = st; MT.clips = st;
+      if (st.fast) { this.video.muted = false; MTA.mute(true); }   // быстрый ролик: звук — из самого видео (голос, звуки, музыка уже сведены)
       if (st.playback && st.stamp !== this.stamp) {               // новая склейка — подменить источник на том же месте
         this.stamp = st.stamp; const t = MT.t, was = !this.video.paused;
         this.video.src = `/api/clips/playback?video=${encodeURIComponent(vid)}&s=${st.stamp}`;
         this.video.addEventListener('loadedmetadata', () => { try { this.video.currentTime = t; if (was) this.video.play().catch(() => {}); } catch {} }, { once: true });
         this.empty.hidden = true;
       }
-      if (!st.playback) this.empty.hidden = false;
       const n = (st.stale || []).length;
-      this.badge.hidden = !(st.job || n);
-      this.badge.textContent = st.job ? '⟳ ' + (st.job.summary || 'обновляю клипы') : n ? `⟳ ждут обновления: ${n}` : '';
-      if (n && !st.job && Date.now() - this.kick > 8000) { this.kick = Date.now(); api('POST', '/api/clips/render', { video: vid }).catch(() => {}); }   // устарело — в рендер сами
-      if (window.Montage && Montage.redraw) Montage.redraw();
+      this.liveFast(vid, st);
+      if (!st.playback) { this.empty.hidden = !!this.live; this.empty.lastChild.textContent = st.fast ? (st.agent ? ' Claude пишет ролик — шаги в панели справа…' : st.job ? ' ' + (st.job.summary || 'собираю ролик…') : ' ролик ещё не собран') : ' собираю клипы сцен…'; }
+      this.badge.hidden = !(st.job || n || st.agent || this.live);
+      const np = (st.parts || []).length;
+      this.badge.textContent = this.live ? `⚡ вживую · написано сцен: ${np}` + (st.agent ? ' · Claude сводит (панель справа)' : st.job ? ' · ' + (st.job.summary || '') : '') : st.fast && st.agent ? '⚡ Claude делает ролик — шаги в панели справа' : st.job ? '⟳ ' + (st.job.summary || 'обновляю') : n ? (st.fast ? '⟳ код новее ролика — пересоберу' : `⟳ ждут обновления: ${n}`) : '';
+      if (n && !st.job && !st.agent && (!st.fast || st.playback) && Date.now() - this.kick > 8000) { this.kick = Date.now(); api('POST', '/api/clips/render', { video: vid, auto: true }).catch(() => {}); }   // устарело — в рендер сами (auto: упавшую сборку сервер не повторяет)
+      // таймлайн — только если в плейбеке правда что-то поменялось (раньше перерисовывался каждые 3 с: мигал и сбивал перетаскивание правок)
+      const sig = JSON.stringify([st.stale, st.job && st.job.id, !!st.agent, !!st.playback, st.stamp, (st.parts || []).length, (st.segments || []).map(x => x.unit + (x.fresh ? '+' : '-'))]);
+      if (sig !== this.tlSig) { this.tlSig = sig; if (window.Montage && Montage.redraw) Montage.redraw(); }
     };
     poll(); this.cpoll = setInterval(poll, 3000);
     this.place();
   },
+  // ⚡ быстрый монтаж ещё идёт (или ролик не собран), а сцены уже написаны: превью играет код проекта вживую (index.html?preview),
+  // недописанные сцены — тёмный кадр «Claude пишет…»; новые файлы сцен -> перезагрузка не чаще раза в 8 с. Ролик собран и задача кончилась — снова видео.
+  liveFast(vid, st) {
+    const want = !!(st.fast && (st.parts || []).length && (!st.playback || (st.job && st.job.kind === 'fastmontage')));
+    if (!want) {
+      if (this.live) { this.live.remove(); this.live = this.frame = this.url = null; this.video.hidden = false; }
+      return;
+    }
+    this.video.hidden = true; if (!this.video.paused) this.video.pause();
+    if (!this.live) {
+      this.live = h('div.clip-live', h('p.dim.small', h('span.spin'), ' запускаю живой предпросмотр сцен…'));
+      this.host.insertBefore(this.live, this.badge);
+      this.liveStamp = st.partsStamp; this.liveAt = Date.now();
+      api('POST', '/api/studio/project', { id: vid, page: 'preview' }).then(r => {
+        if (!this.live || this.cvid !== vid) return;
+        this.url = r.url + '&clean';
+        this.frame = h('iframe', { src: this.url + '#t=' + (+MT.t || 0).toFixed(2), title: 'Живой предпросмотр сцен' });
+        this.live.replaceChildren(this.frame);
+      }).catch(e => { if (this.live) this.live.replaceChildren(h('div.badline', '⚠ ' + e.message)); });
+      return;
+    }
+    if (this.frame && st.partsStamp !== this.liveStamp && Date.now() - this.liveAt > 8000 && !MT.playing) {   // писатель дописал сцену — показать
+      this.liveStamp = st.partsStamp; this.liveAt = Date.now();
+      this.frame.src = this.url + '#t=' + (+MT.t || 0).toFixed(2) + '&r=' + Date.now();
+    }
+  },
+  // быстрый ролик (видео со своим звуком) играет: часы окна берут время из самого видео — без рывков от подгоняющих перемоток
+  master() {
+    const v = this.video;
+    return v && !this.live && v.src && this.clips && this.clips.fast && !v.paused && v.readyState >= 2 ? v : null;
+  },
+  vSeek(t) {
+    const v = this.video; if (!v) return;
+    if (v.seeking) { this.want = t; return; }
+    if (Math.abs(v.currentTime - t) > 0.008) v.currentTime = t;
+  },
   videoPost(m) {
     const v = this.video; if (!v || m.seek == null || !v.src) return;
+    if (!v.dataset.seekq) { v.dataset.seekq = '1'; v.addEventListener('seeked', () => { if (this.want != null) { const w = this.want; this.want = null; this.vSeek(w); } }); }
     const t = m.seek;
+    const W = typeof WS !== 'undefined' ? WS : null;            // WS — const окна видео, на window его нет (было window.WS — звук и скорость не доходили до видео)
+    if (this.clips && this.clips.fast) v.muted = !!(W && W.muted);   // быстрый ролик звучит сам — кнопка звука окна глушит его
     try {
-      v.playbackRate = (window.WS && WS.rate) || 1;
+      v.playbackRate = (W && W.rate) || 1;
       if (MT.playing) {
-        if (v.paused) { v.currentTime = t; v.play().catch(() => {}); }
-        else if (Math.abs(v.currentTime - t) > 0.25) v.currentTime = t;
-      } else { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - t) > 0.01) v.currentTime = t; }
+        if (v.paused) { this.vSeek(t); v.play().catch(() => {}); }
+        else if (!this.master() && Math.abs(v.currentTime - t) > 0.25) this.vSeek(t);   // видео ведёт часы само (master) — не дёргаем его перемотками
+      } else { if (!v.paused) v.pause(); this.vSeek(t); }
     } catch (e) {}
   },
   seek(t) { if (MT.driven) return Workspace.seek(t); this.post({ seek: t }); if (MT.playing && MT.d) MTA.play(MT.d, t); },
@@ -524,7 +836,7 @@ const MontagePreview = {
     this.post({ play: on }); MT.playing = on;
     if (on && MT.d) MTA.play(MT.d, MT.t); else MTA.stop();
   },
-  reload(t) { if (this.video) return; if (this.frame && this.url) { this.frame.src = 'about:blank'; setTimeout(() => { if (this.frame) this.frame.src = this.url + '#t=' + (+t || 0).toFixed(2) + '&r=' + Date.now(); }, 30); } },
+  reload(t) { if (this.video && !this.live) return; if (this.frame && this.url) { this.frame.src = 'about:blank'; setTimeout(() => { if (this.frame) this.frame.src = this.url + '#t=' + (+t || 0).toFixed(2) + '&r=' + Date.now(); }, 30); } },
 };
 addEventListener('message', ev => {
   const m = ev.data || {};

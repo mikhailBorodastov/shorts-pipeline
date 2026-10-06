@@ -56,6 +56,7 @@ const ctxA = bufA.getContext('2d'), ctxB = bufB.getContext('2d');
 function drawScene(c, k, T) {
   c.save();
   c.clearRect(0, 0, W, H);
+  if (typeof WT_SCENE !== 'undefined') WT_SCENE = k;   // S22: промах WT() — с номером сцены
   if (SCENES[k]) SCENES[k].draw(c, T - B[k], B[k + 1] - B[k], T);   // секций голоса больше, чем сцен (свежий проект, шаблонные сцены) — пустой кадр, а не ошибка
   c.restore();
 }
@@ -238,7 +239,8 @@ function renderFrame(T) {
     }
   }
   if (!handled) drawScene(ctx, k, T);
-  vignette(ctx, 0.45);
+  vignette(ctx, LOOKV('post.vignette', 0.45));   // визуал канала (window.LOOK из format.js) — виньетка и цвет кадра
+  lookPost(ctx);
   drawCaptions(T);
   ctx.restore();
 }
@@ -248,7 +250,7 @@ function buildSFX() {
   const ev = [];
   // add(t, 'pop' | 'lib:whoosh/15-quick-a', gain, 'peak'?) — 'peak' puts the library sound's loudest point at t
   let scene = 0;   // which scene is adding cues (0-based) — the review UI shows it and Claude uses it to find the cue
-  const add = (t, type, gain = 1, align) => ev.push(Object.assign({ t: +Math.max(0, t).toFixed(3), type, gain, scene }, align ? { align } : {}));
+  const add = (t, type, gain = 1, align, clip) => ev.push(Object.assign({ t: +Math.max(0, t).toFixed(3), type, gain, scene }, align ? { align } : {}, clip ? { clip } : {}));   // clip — S23: плашка монтажа {in, out, dur, loop, fadeIn, fadeOut}
   for (let k = 1; k < SCENES.length; k++) {   // automatic transition whooshes (origin 'transition'; scene.noWhoosh turns one off)
     scene = k;
     if (SCENES[k].trans === 'cut' || SCENES[k].noWhoosh) continue;
@@ -257,7 +259,8 @@ function buildSFX() {
     else if (typeof TRANS_WHOOSH !== 'undefined') add(B[k], TRANS_WHOOSH, 0.5, 'peak'); else add(B[k] - 0.45, 'whoosh', 0.9);
     ev[ev.length - 1].origin = 'transition';
   }
-  SCENES.forEach((s, k) => { scene = k; s.sfx && s.sfx(add, B[k], B[k + 1]); });
+  SCENES.forEach((s, k) => { scene = k; if (typeof WT_SCENE !== 'undefined') WT_SCENE = k; s.sfx && s.sfx(add, B[k], B[k + 1]); });
+  if (typeof WT_SCENE !== 'undefined') WT_SCENE = null;
   return ev.sort((a, b) => a.t - b.t);
 }
 

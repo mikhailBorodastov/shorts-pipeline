@@ -129,6 +129,13 @@
         "hide": {
           "type": "boolean"
         },
+        "life": {
+          "description": "S21: как объект появляется и уходит на ключах hide — {in, out: popUp|pop|drop|cut, d, dOut} или false (жёстко)",
+          "type": [
+            "object",
+            "boolean"
+          ]
+        },
         "locked": {
           "type": "boolean"
         },
@@ -337,6 +344,59 @@
             "minimum": 0
           },
           "note": {
+            "type": "string"
+          },
+          "align": {
+            "type": "string",
+            "enum": [
+              "",
+              "peak"
+            ]
+          },
+          "in": {
+            "type": "number",
+            "minimum": 0
+          },
+          "out": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "dur": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "loop": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "xf": {
+                "type": "number"
+              }
+            }
+          },
+          "fadeIn": {
+            "type": "number",
+            "minimum": 0
+          },
+          "fadeOut": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "track": {
+            "type": "string"
+          },
+          "by": {
             "type": "string"
           }
         }

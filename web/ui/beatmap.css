@@ -1,0 +1,89 @@
+/* S16 «📐 Карта подачи» — вкладка окна «Сценарий» (ui/beatmap.js) */
+.sw-pane.bm { max-width: 1240px; }
+.bm-top { display: grid; grid-template-columns: 200px 1fr; gap: 18px; margin-bottom: 16px; }
+.bm-video { width: 200px; aspect-ratio: 9 / 16; background: #000; border-radius: 12px; object-fit: contain; }
+.bm-novid { width: 200px; aspect-ratio: 9 / 16; border-radius: 12px; background: var(--panel2); display: flex; align-items: center; justify-content: center; text-align: center; padding: 12px; font-size: 12px; }
+.bm-info { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.bm-sum { margin: 0; font-size: 15px; line-height: 1.45; }
+.bm-sum b { color: var(--key, #ffcc33); }
+.bm-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.bm-chip { background: var(--panel2); border: 1px solid var(--line-strong); border-radius: 20px; padding: 2px 10px; font-size: 12px; }
+.bm-chip i { font-style: normal; color: var(--text-mute, #8b8b96); }
+.bm-empty { padding: 20px 0; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.bm-ok { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: rgba(61, 220, 151, .1); border: 1px solid rgba(61, 220, 151, .35); color: #9ff0c9; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.bm-pickref { margin-top: 8px; gap: 10px; }
+
+.bm-table { width: 100%; border-collapse: collapse; }
+.bm-table th { text-align: left; font-weight: 600; font-size: 12px; color: var(--text-mute, #8b8b96); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.bm-table td { vertical-align: top; padding: 10px; border-bottom: 1px solid var(--line); }
+.bm-table tr.locked .bm-ours textarea { border-color: rgba(61, 220, 151, .45); }
+.bm-tc { width: 96px; white-space: nowrap; }
+.bm-tc a { color: var(--acc); text-decoration: none; font-variant-numeric: tabular-nums; }
+.bm-tc a:hover { text-decoration: underline; }
+.bm-our, .bm-n { display: block; color: var(--text-mute, #8b8b96); font-size: 11px; margin-top: 4px; }
+.bm-their { width: 42%; }
+.bm-fn { font-weight: 600; }
+.bm-dev { color: #c9b0ff; font-size: 12px; margin-top: 2px; }
+.bm-q { margin-top: 5px; line-height: 1.4; }
+.bm-orig { display: block; color: var(--text-mute, #8b8b96); font-size: 12px; margin-top: 2px; }
+.bm-scr { display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 800; background: #000; color: #fff; padding: 2px 7px; border-radius: 4px; border: 1px solid #444; letter-spacing: .02em; }
+.bm-arrow { width: 20px; color: var(--text-mute, #8b8b96); padding-top: 24px; text-align: center; }
+.bm-ours { min-width: 280px; }
+.bm-ours textarea, .bm-ours input.box { width: 100%; background: var(--field); }
+.bm-ours textarea { resize: vertical; min-height: 44px; }
+.bm-scrin { font-weight: 700; font-size: 12px; }
+.bm-lbl { font-size: 11px; color: var(--text-mute, #8b8b96); margin: 4px 0 3px; display: flex; gap: 6px; align-items: center; }
+.bm-lock { color: #3ddc97; }
+.bm-wc { margin-left: auto; }
+.bm-wc.bad { color: #ff9f43; }
+.bm-src { color: var(--text-mute, #8b8b96); font-size: 11px; margin-top: 5px; }
+.bm-src.warn { color: #ff9f43; font-size: 12px; }
+.bm-pinnote, .bm-note { margin-top: 6px; font-size: 12px; background: rgba(255, 204, 51, .09); border: 1px solid rgba(255, 204, 51, .32); border-radius: 8px; padding: 3px 4px 3px 8px; color: #ffd866; display: flex; align-items: center; gap: 6px; }
+.bm-note { display: inline-flex; margin: 0 6px 6px 0; }
+.bm-pinnote .icon, .bm-note .icon { margin-left: auto; padding: 0 4px; }
+.bm-noteinp { margin-top: 6px; }
+.bm-noteinp.small { font-size: 12px; padding: 4px 8px; opacity: .75; }
+.bm-noteinp.small:focus { opacity: 1; }
+.bm-pin { width: 4px; padding: 0; }
+.bm-foot { position: sticky; bottom: -40px; margin-top: 14px; padding: 12px 0 16px; background: var(--bg, #0e0e10); border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.bm-gen .bm-noteinp { width: 100%; }
+
+/* бриф: референс подачи */
+.ref.base { border-color: rgba(180, 140, 255, .55); background: rgba(180, 140, 255, .06); }
+.refbase-tag { font-size: 11px; background: rgba(180, 140, 255, .3); color: #fff; border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+
+/* поп-ап «Новое видео»: похожие темы по референсу */
+.nv-base { display: flex; gap: 8px; align-items: center; }
+.nv-base input.box { flex: 1; }
+.nv-topics { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.nv-topics .about { font-size: 12.5px; color: var(--text-mute, #8b8b96); line-height: 1.45; }
+.nv-topics .about b { color: var(--text); }
+.nv-topic { text-align: left; white-space: normal; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
+.nv-topic:hover { border-color: var(--line-strong); }
+.nv-topic.sel { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
+.nv-topic b { font-size: 14px; }
+.nv-topic .t { font-size: 13px; }
+.nv-topic .a, .nv-topic .f { font-size: 12px; color: var(--text-mute, #8b8b96); }
+.nv-topic .a i { font-style: normal; color: #c9b0ff; }
+.nv-topics details summary { cursor: pointer; }
+
+/* режимы карты (длинное ↔ шортс) и главы */
+.bm-mode { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bm-mode .seg button { font-size: 12px; }
+.bm-stale { font-size: 12px; color: #ff9f43; }
+.bm-table tr.bm-ch td { padding: 14px 10px 6px; font-weight: 700; font-size: 13px; color: #c9b0ff; border-bottom: 1px solid rgba(180, 140, 255, .35); }
+.bm-mode .seg { flex-wrap: wrap; height: auto; }
+
+/* поп-ап «Новое видео»: пути «Есть идея» / «🔎 Ресерч по референсу» */
+.nv-flow { align-self: flex-start; flex: none; }   /* колонка с прокруткой сжимала переключатель по высоте */
+.nv-flow button { font-size: 12.5px; }
+.nv-rintro { margin: 0; }
+.nv-topic.drafted { border-color: rgba(61, 220, 151, .4); }
+.nv-tact { margin-top: 4px; gap: 8px; }
+.nv-tact .ok { color: #3ddc97; }
+
+/* вопросы Claude: варианты ответа кликом (idea.js → Plan.qRow) */
+.qopts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+.qopt { white-space: normal; text-align: left; font-size: 12.5px; padding: 4px 10px; border-radius: 14px; background: var(--panel2); border: 1px solid var(--line-strong); color: var(--text); }
+.qopt:hover { border-color: #6b6b78; }
+.qopt.on { background: rgba(90, 169, 255, .16); border-color: var(--acc); color: #fff; }

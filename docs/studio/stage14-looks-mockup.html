@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Визуалы — макет S14</title>
+<style>
+  :root { --bg:#0e0e10; --panel:#18181b; --panel2:#202024; --panel3:#2a2a2f; --field:#121214; --line:#2a2a30; --line-strong:#3a3a42;
+    --text:#ececf0; --mute:#8b8b96; --acc:#5aa9ff; --ok:#3ddc97; --key:#ffcc33; --agent:#b48cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  .page { max-width:1240px; margin:0 auto; padding:28px 28px 60px; }
+  h1 { font-size:30px; margin:0 0 4px; } h2 { font-size:22px; margin:0; } h3 { margin:0; font-size:15px; }
+  .mute { color:var(--mute); } .small { font-size:12px; }
+  .note { border:1px dashed var(--line-strong); border-radius:10px; padding:8px 12px; color:var(--mute); font-size:12px; margin:10px 0 18px; }
+  .note b { color:var(--key); font-weight:600; }
+  /* вкладки */
+  .tabs { display:inline-flex; gap:2px; padding:4px; background:var(--panel); border:1px solid var(--line); border-radius:12px; margin:18px 0 22px; flex-wrap:wrap; }
+  .tabs a { padding:7px 14px; border-radius:9px; color:var(--mute); text-decoration:none; cursor:pointer; user-select:none; }
+  .tabs a:hover { color:var(--text); background:var(--panel2); }
+  .tabs a.sel { background:#f2f2f2; color:#111113; font-weight:600; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .sp { flex:1; }
+  .seg { display:inline-flex; padding:3px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+  .seg button { background:none; border:0; color:var(--mute); padding:5px 12px; border-radius:7px; cursor:pointer; font:inherit; }
+  .seg button.sel { background:var(--panel3); color:#fff; }
+  button.b { background:var(--panel2); color:var(--text); border:1px solid var(--line-strong); border-radius:9px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button.b:hover { border-color:#55555f; } button.pri { background:#f2f2f2; color:#111; border-color:#f2f2f2; font-weight:600; }
+  button.claude { background:linear-gradient(90deg,#3b2a63,#2a3a63); border-color:#5b4a8f; }
+  /* техники */
+  .techs { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; margin-top:16px; }
+  .tech { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; cursor:pointer; }
+  .tech:hover { border-color:var(--line-strong); }
+  .tech.sel { border-color:#3a8f6a; background:#14211b; }
+  .tech .cnt { margin-left:auto; color:var(--mute); font-size:13px; }
+  .tech p { margin:6px 0 0; color:var(--mute); font-size:13px; }
+  .tech.add { border-style:dashed; display:flex; align-items:center; justify-content:center; color:var(--mute); min-height:86px; }
+  .techdesc { margin:16px 0 18px; color:#c8c8d0; max-width:900px; }
+  .lbl { letter-spacing:.08em; text-transform:uppercase; font-size:11px; color:var(--mute); margin:0 0 10px; }
+  /* луки */
+  .looks { display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
+  .tiles { display:flex; flex-direction:column; gap:10px; }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px; cursor:pointer; }
+  .tile.sel { border-color:var(--line-strong); background:var(--panel2); }
+  .tile canvas { width:100%; aspect-ratio:16/9; border-radius:8px; display:block; background:#222; }
+  .tile .nm { font-weight:600; margin:8px 2px 2px; display:flex; gap:6px; align-items:center; }
+  .tile .ds { color:var(--mute); font-size:12px; margin:0 2px; }
+  .tag { font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line-strong); color:var(--mute); font-weight:400; }
+  .tag.mod { color:var(--key); border-color:#6b5a1f; }
+  .hov { position:relative; } .hov .play { position:absolute; left:8px; bottom:8px; font-size:11px; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px; color:#fff; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px 20px; }
+  .ph { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  .field { background:var(--field); border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:#d8d8de; margin:6px 0 16px; }
+  .live { display:grid; grid-template-columns:240px 1fr; gap:18px; align-items:start; }
+  .live .stand { background:#000; border-radius:10px; overflow:hidden; position:relative; }
+  .live .stand canvas { width:100%; aspect-ratio:9/16; display:block; }
+  .live .bar { display:flex; gap:8px; align-items:center; margin-top:6px; font-size:12px; color:var(--mute); }
+  .live .bar input { flex:1; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; column-gap:28px; }
+  .grp { grid-column:1/-1; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); margin:12px 0 2px; }
+  .ctl { display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--line); min-height:58px; }
+  .ctl .t { flex:1; } .ctl .t b { font-weight:500; } .ctl .t div { color:var(--mute); font-size:12px; }
+  .ctl.dim { opacity:.4; }
+  .ctl .dot { width:6px; height:6px; border-radius:50%; background:var(--key); display:inline-block; margin-left:6px; vertical-align:middle; }
+  .ctl input[type=range] { width:150px; accent-color:#bbb; }
+  .ctl .v { color:var(--mute); font-size:12px; width:34px; text-align:right; }
+  .tg { width:40px; height:22px; border-radius:99px; background:#3a3a42; position:relative; cursor:pointer; flex:none; }
+  .tg::after { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#888; transition:.15s; }
+  .tg.on { background:#4b4b55; } .tg.on::after { left:21px; background:#e8e8ee; }
+  select { background:var(--field); color:var(--text); border:1px solid var(--line-strong); border-radius:8px; padding:6px 8px; font:inherit; }
+  .heroes { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 6px; }
+  .hero { display:flex; align-items:center; gap:8px; background:var(--panel2); border:1px solid var(--line-strong); border-radius:12px; padding:6px 10px 6px 6px; }
+  .hero .av { width:34px; height:34px; border-radius:8px; background:#555; display:grid; place-items:center; font-size:18px; }
+  .hero .x { color:var(--mute); cursor:pointer; margin-left:4px; }
+  .empty { color:var(--mute); font-size:13px; padding:10px 12px; border:1px dashed var(--line-strong); border-radius:10px; }
+  .pal { display:flex; gap:8px; margin:8px 0 16px; } .pal span { width:34px; height:34px; border-radius:8px; border:1px solid rgba(255,255,255,.12); }
+  .sec { margin-top:20px; } .sec > .row { margin-bottom:6px; }
+  hr.big { border:0; border-top:1px solid var(--line); margin:44px 0 30px; }
+  /* мастер */
+  .steps { display:flex; gap:8px; margin:14px 0 16px; } .steps span { padding:5px 12px; border-radius:99px; background:var(--panel); border:1px solid var(--line); color:var(--mute); font-size:13px; }
+  .steps span.sel { background:#f2f2f2; color:#111; border-color:#f2f2f2; font-weight:600; }
+  .shelf { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .ref { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; font-size:12px; }
+  .ref .im { aspect-ratio:1; border-radius:6px; margin-bottom:6px; }
+  .ref .tc { display:flex; gap:4px; margin-top:4px; } .ref .tc input { width:50%; }
+  .ref input { width:100%; background:var(--field); border:1px solid var(--line); color:var(--text); border-radius:6px; padding:3px 6px; font:12px inherit; }
+  .ref.add { border-style:dashed; display:flex; flex-direction:column; gap:6px; justify-content:center; }
+  .qa { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-top:10px; }
+  .qa .ans { background:var(--field); border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-top:8px; color:#d0d0d8; }
+  .att { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; } .att span { font-size:12px; padding:3px 8px; border-radius:7px; background:var(--panel2); border:1px solid var(--line-strong); color:var(--mute); }
+  @media (max-width:900px) { .looks, .live, .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="note"><b>Макет S14</b> — не настоящий экран. Кликается: вкладки, техники, плитки (наведение — превью играет), тумблеры и ползунки (живое превью слева в панели реагирует). ТЗ — stage14-looks.md.</div>
+
+  <h1>🦔 Доедать будешь — стиль канала</h1>
+  <div class="tabs" id="tabs">
+    <a>Обзор</a><a>Подачи</a><a class="sel">Визуалы</a><a>Голос и субтитры</a><a>Стайл-гайд</a><a>Правила</a><a>Интервью</a>
+  </div>
+
+  <div class="row"><h2>Визуалы</h2><span class="sp"></span>
+    <div class="seg"><button class="sel">Все</button><button>Встроенные</button><button>Свои</button></div>
+    <button class="b pri" onclick="document.getElementById('wiz').scrollIntoView({behavior:'smooth'})">+ Новый визуал</button></div>
+  <p class="mute" style="margin:6px 0 0">Как выглядит ролик. Техника — чем рисуется кадр; лук — её настройки, палитра и герои. Ручки лука применяются к ролику при сборке.</p>
+
+  <div class="techs" id="techs">
+    <div class="tech sel" data-t="paper"><div class="row"><span>✂️</span><h3>Бумажная аппликация</h3><span class="cnt">3 лука</span></div><p>2D-коллаж: рваная бумага, вырезки фото, тетрадные плашки</p></div>
+    <div class="tech" data-t="diorama"><div class="row"><span>🧊</span><h3>3D-диорама</h3><span class="cnt">2 лука</span></div><p>Бумажный макет в 3D: карточки героев, мини-локации, камера</p></div>
+    <div class="tech add">+ своя техника — через «Новый визуал»</div>
+  </div>
+  <div class="techdesc" id="techdesc">Кадр рисуется 2D-тулкитом paper.js: вырезки с рваной белой кромкой, зерно, тени, фон всё время чуть плывёт. Фото и логотипы вклеиваются вырезками, надписи — на тетрадных листках. Сильна в новостях и объяснялках.</div>
+
+  <div class="lbl">Луки в технике</div>
+  <div class="looks">
+    <div class="tiles" id="tiles"></div>
+
+    <div class="panel">
+      <div class="ph"><h2 id="lname">Тетрадь и крафт</h2><span class="tag">встроенный</span><span class="tag mod" id="modtag">изменён</span><span class="sp"></span>
+        <span class="mute small">7 видео</span><button class="b">↺ к заводским</button><button class="b">⧉ Дублировать</button><button class="b">🗑</button></div>
+
+      <div class="mute small">Описание — уходит Claude в бриф</div>
+      <div class="field" id="ldesc">Клетчатая тетрадь и крафт, вырезки с белой рваной кромкой, мягкие тени, тёплый свет. Фото — вклейками с обводкой.</div>
+
+      <div class="live">
+        <div>
+          <div class="stand"><canvas id="live" width="270" height="480"></canvas></div>
+          <div class="bar"><span>⏸</span><input type="range" min="0" max="6" step="0.01" id="tl"><span id="tt">0.0 с</span></div>
+          <div class="mute small" style="margin-top:6px">Живое превью — стенд с демо-сценой; mp4 для плиток переснимется сам через пару секунд после правок.</div>
+        </div>
+        <div>
+          <div class="grid" id="ctls"></div>
+        </div>
+      </div>
+
+      <div class="sec"><div class="row"><h3>Герои</h3><span class="mute small">встают в демо-сцену и уходят Claude в бриф; ★ — главный</span><span class="sp"></span>
+          <button class="b">+ из библиотеки</button><button class="b">+ описать нового</button></div>
+        <div class="heroes" id="heroes">
+          <div class="hero"><div class="av">🦔</div><div><b>Ёжик-герой</b> ★<div class="mute small">lib · v1</div></div><span class="x">×</span></div>
+          <div class="hero"><div class="av">🦔</div><div><b>Жена ёжика</b><div class="mute small">lib · v4</div></div><span class="x">×</span></div>
+        </div>
+        <div class="mute small">Убери всех — будет «без героя: персонажи по сюжету ролика».</div>
+      </div>
+
+      <div class="sec"><div class="row"><h3>Палитра лука</h3><span class="sp"></span><button class="b">+ цвет</button></div>
+        <div class="pal"><span style="background:#f3f0e6"></span><span style="background:#c9a57a"></span><span style="background:#7d8590"></span><span style="background:#1d1b22"></span><span style="background:#c8202b"></span><span style="background:#ffd23f"></span></div></div>
+
+      <div class="sec"><div class="row"><h3>Референсы лука</h3><span class="mute small">4 картинки · 1 видео · интервью лука — 6 ответов</span></div></div>
+    </div>
+  </div>
+
+  <hr class="big">
+
+  <div id="wiz">
+    <h2>+ Новый визуал</h2>
+    <div class="steps"><span class="sel">1 · Референсы</span><span>2 · Интервью</span><span>3 · ✨ Собрать</span></div>
+    <div class="row" style="margin-bottom:10px"><span class="mute">Кидай картинки (Ctrl+V, перетащить), ссылки на видео с куском «с–по», или ищи картинки здесь же.</span><span class="sp"></span>
+      <button class="b">🔎 Найти картинки</button><button class="b">⬆ Файлы</button></div>
+    <div class="shelf">
+      <div class="ref"><div class="im" style="background:linear-gradient(135deg,#3b6b4a,#a8d08d)"></div><input value="такой мягкий свет"></div>
+      <div class="ref"><div class="im" style="background:linear-gradient(135deg,#232845,#e86a5c)"></div><input value="контур как тут"><div class="mute small" style="margin-top:4px">🔎 Яндекс · artstation.com</div></div>
+      <div class="ref"><div class="im" style="background:#111;display:grid;place-items:center;color:#888">🎬 youtube.com/…</div><input value="движение камеры"><div class="tc"><input value="02:10"><input value="02:25"></div></div>
+      <div class="ref add"><button class="b">+ картинка</button><input placeholder="ссылка на видео — Enter"></div>
+    </div>
+
+    <div class="steps" style="margin-top:26px"><span>1 · Референсы</span><span class="sel">2 · Интервью</span><span>3 · ✨ Собрать</span></div>
+    <div class="row"><span class="mute">Claude посмотрел полку и спрашивает про этот вид.</span><span class="sp"></span><button class="b">+ ещё вопросы</button></div>
+    <div class="qa"><b>Контур у предметов толстый и тёмный, как на рефе 2, или тоньше и цветной?</b><div class="mute small">зачем: толщина и цвет обводки</div>
+      <div class="ans">Как на рефе 2, но чуть тоньше. И вот так на персонажах:</div>
+      <div class="att"><span>🖼 скрин.png</span><span>🎬 youtube … 00:41–00:48</span><span>🔎 найти картинку</span><span>📎 приложить</span></div></div>
+    <div class="qa"><b>Нужен постоянный герой? Если да — кто из библиотеки или новый?</b><div class="mute small">зачем: герои лука</div>
+      <div class="ans">Без героя, персонажи под историю.</div></div>
+
+    <div class="steps" style="margin-top:26px"><span>1 · Референсы</span><span>2 · Интервью</span><span class="sel">3 · ✨ Собрать</span></div>
+    <div class="panel">
+      <div class="row"><button class="b claude">✨ Собрать визуал</button><span class="mute small">Opus, 3–8 минут: техника, ручки (+ свои), код примера сцены, палитра, герои → превью</span></div>
+      <div class="field" style="margin-top:14px"><b>Claude:</b> это новая техника, а не лук аппликации — нужен объём и контур по глубине. Сделал «3D с контуром» (движок 3D-диорамы + своя обводка),
+        первый лук «Мягкий вечер». Свои ручки: толщина контура, цвет контура, пикселизация, постеризация.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+document.querySelectorAll('#tabs a').forEach(a => a.onclick = () => { document.querySelectorAll('#tabs a').forEach(x => x.classList.toggle('sel', x === a)); });
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => b.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('sel', x === b)));
+
+const TECH = {
+  paper: { desc: $('#techdesc').textContent, looks: [
+    { n: 'Тетрадь и крафт', d: 'Клетчатая тетрадь и крафт, белая рваная кромка, мягкие тени.', bg: '#f3f0e6', c: ['#c9a57a', '#7d8590', '#c8202b'], mod: true, P: { edge: 1, shadow: 1, grain: 0.8, drift: 1, vig: 0.35, sat: 0, warm: 0.2 } },
+    { n: 'Газетный коллаж', d: 'Сильное зерно, грубая кромка, приглушённый цвет.', bg: '#e6e1d3', c: ['#2b2b2b', '#a9a39a', '#b8342c'], P: { edge: 1.8, shadow: 0.6, grain: 1.4, drift: 0.5, vig: 0.45, sat: -0.5, warm: 0 } },
+    { n: 'Нуар', d: 'Без цвета, жёсткие тени, один акцент.', bg: '#1a1a1e', c: ['#dcdcdc', '#555', '#c8202b'], P: { edge: 1.2, shadow: 1.8, grain: 1, drift: 0.6, vig: 0.8, sat: -1, warm: -0.3 } }] },
+  diorama: { desc: 'Кадр — 3D-сцена three.js: бумажные карточки героев и предметов в макете, свет, камера, пост-эффекты. Сильна в историях с местом действия и пролётами камеры.', looks: [
+    { n: 'Paper Mario: тёплый макет', d: 'Мягкий свет, белая кромка карточек, без размытия.', bg: '#9fd0e8', c: ['#7bbf6a', '#f4e3b5', '#e8784a'], P: { bloom: 0.6, dof: 0, tilt: 0, vig: 0.3, sat: 0.2, warm: 0.3 } },
+    { n: 'Octopath HD-2D', d: 'Свечение, тилт-шифт, глубина резкости, зерно.', bg: '#2a3157', c: ['#ffcf6b', '#6b8fd6', '#3a2a4a'], P: { bloom: 1.8, dof: 1, tilt: 1, vig: 0.55, sat: 0.1, warm: 0.1 } }] },
+};
+const CTL = {
+  paper: [['Бумага'], ['edge', 'Рваная кромка', 'Насколько неровно оторваны края вырезок.', 0, 2, 0.05], ['shadow', 'Тени вырезок', 'Глубина и мягкость теней под бумагой.', 0, 2, 0.05],
+    ['grain', 'Зерно бумаги', 'Фактура поверх заливок.', 0, 1.5, 0.05], ['drift', 'Движение фона', 'Фон всё время чуть плывёт.', 0, 2, 0.05],
+    ['Цвет'], ['vig', 'Виньетка', 'Темнее к краям кадра.', 0, 1, 0.01], ['sat', 'Насыщенность', '−1 — чёрно-белое.', -1, 1, 0.05], ['warm', 'Тёплый / холодный', 'Сдвиг цвета всего кадра.', -1, 1, 0.05],
+    ['tint', 'Тонировка', 'Один цвет поверх кадра (нуар — красный).', 'color']],
+  diorama: [['Свет и эффекты'], ['bloomOn', 'Свечение', 'Яркое светится (лампы, окна).', 'toggle'], ['bloom', 'Сила свечения', '', 0, 2.5, 0.05], ['dof', 'Глубина резкости', 'Фон и передний план размыты.', 'toggle'],
+    ['tilt', 'Тилт-шифт', 'Кадр как макет: размыт верх и низ.', 'toggle'], ['facing', 'Карточки к камере', 'Paper Mario: персонажи поворачиваются к зрителю.', 'toggle'],
+    ['Цвет'], ['vig', 'Виньетка', '', 0, 1, 0.01], ['sat', 'Насыщенность', '', -1, 1, 0.05], ['warm', 'Тёплый / холодный', '', -1, 1, 0.05],
+    ['Предметы'], ['style3d', 'Материал предметов', 'Как выглядят 3D-пропсы.', 'select', ['бумага', 'игрушка', 'плоский', 'low-poly', 'игровой']]],
+};
+let tech = 'paper', cur = TECH.paper.looks[0];
+
+// мини-сцена: бумажный фон, вырезки, «ёжик», эффекты по P
+function scene(g, w, h, L, T) {
+  const P = L.P, s = w / 270;
+  g.save(); g.clearRect(0, 0, w, h);
+  g.fillStyle = L.bg; g.fillRect(0, 0, w, h);
+  const dr = (P.drift ?? 1) * 6 * s;
+  for (let i = 0; i < 5; i++) { g.save(); g.globalAlpha = 0.35; g.fillStyle = L.c[i % 3]; g.translate(Math.sin(T * 0.6 + i) * dr, Math.cos(T * 0.5 + i) * dr);
+    g.beginPath(); const x = (i * 71 % 270) * s, y = (i * 113 % 480) * s * h / (480 * s); g.moveTo(x - 40 * s, -20); g.lineTo(x + 60 * s, -20); g.lineTo(x + 90 * s, h + 20); g.lineTo(x - 10 * s, h + 20); g.fill(); g.restore(); }
+  const blob = (cx, cy, r, col, seed) => {
+    const e = (P.edge ?? 1) * 3 * s, sh = (P.shadow ?? 1);
+    g.save(); if (sh > 0) { g.shadowColor = `rgba(0,0,0,${Math.min(0.8, 0.3 * sh)})`; g.shadowBlur = 10 * s * sh; g.shadowOffsetY = 5 * s * sh; }
+    g.beginPath(); for (let a = 0; a <= 40; a++) { const t = a / 40 * Math.PI * 2, rr = r + e * Math.sin(t * 9 + seed) * Math.cos(t * 5 + seed * 2); g.lineTo(cx + Math.cos(t) * rr, cy + Math.sin(t) * rr * 1.15); }
+    g.fillStyle = '#f7f5ef'; g.fill(); g.shadowColor = 'transparent';
+    g.beginPath(); for (let a = 0; a <= 40; a++) { const t = a / 40 * Math.PI * 2, rr = r - 4 * s + e * Math.sin(t * 7 + seed); g.lineTo(cx + Math.cos(t) * rr, cy + Math.sin(t) * rr * 1.15); }
+    g.fillStyle = col; g.fill(); g.restore(); };
+  const bob = Math.sin(T * 2.4) * 6 * s;
+  blob(80 * s, 150 * s * h / (480 * s), 34 * s, L.c[2], 1);
+  blob(200 * s, 120 * s * h / (480 * s), 26 * s, L.c[0], 3);
+  blob(135 * s, h * 0.62 + bob, 62 * s, '#8a8a92', 5);           // «ёжик»
+  g.fillStyle = '#1d1b22'; g.beginPath(); g.arc(120 * s, h * 0.6 + bob, 7 * s, 0, 7); g.arc(152 * s, h * 0.6 + bob, 7 * s, 0, 7); g.fill();
+  if (P.bloom) { g.globalCompositeOperation = 'lighter'; const r = g.createRadialGradient(200 * s, h * 0.25, 0, 200 * s, h * 0.25, 90 * s * P.bloom); r.addColorStop(0, 'rgba(255,220,150,.55)'); r.addColorStop(1, 'rgba(255,220,150,0)'); g.fillStyle = r; g.fillRect(0, 0, w, h); g.globalCompositeOperation = 'source-over'; }
+  if (P.tilt) { g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(0, 0, w, h * 0.18); g.fillRect(0, h * 0.82, w, h * 0.18); }
+  if (P.grain) { g.globalAlpha = 0.06 * P.grain; for (let i = 0; i < 500; i++) { g.fillStyle = i % 2 ? '#000' : '#fff'; g.fillRect((i * 97 + T * 300) % w, (i * 53) % h, 1.5 * s, 1.5 * s); } g.globalAlpha = 1; }
+  g.restore();
+  // цвет кадра
+  if (P.sat || P.warm || P.tint) { const f = []; if (P.sat) f.push(`saturate(${Math.max(0, 1 + P.sat)})`);
+    const c = g.canvas, tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h; tmp.getContext('2d').drawImage(c, 0, 0);
+    g.clearRect(0, 0, w, h); g.filter = f.join(' ') || 'none'; g.drawImage(tmp, 0, 0); g.filter = 'none';
+    if (P.warm) { g.globalAlpha = Math.abs(P.warm) * 0.3; g.globalCompositeOperation = 'soft-light'; g.fillStyle = P.warm > 0 ? '#ff9a3c' : '#3c8cff'; g.fillRect(0, 0, w, h); }
+    if (P.tint) { g.globalAlpha = 0.35; g.globalCompositeOperation = 'multiply'; g.fillStyle = P.tint; g.fillRect(0, 0, w, h); }
+    g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; }
+  if (P.vig) { const v = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.75); v.addColorStop(0, 'rgba(5,3,25,0)'); v.addColorStop(1, `rgba(5,3,25,${P.vig})`); g.fillStyle = v; g.fillRect(0, 0, w, h); }
+}
+
+function tiles() {
+  const box = $('#tiles'); box.innerHTML = '';
+  TECH[tech].looks.forEach(L => {
+    const t = document.createElement('div'); t.className = 'tile' + (L === cur ? ' sel' : '');
+    t.innerHTML = `<div class="hov"><canvas width="320" height="180"></canvas><span class="play">наведи — играет</span></div><div class="nm">${L.n} <span class="tag">встроенный</span>${L.mod ? '<span class="tag mod">изменён</span>' : ''}</div><div class="ds">${L.d}</div>`;
+    const cv = t.querySelector('canvas'), g = cv.getContext('2d'); let raf = 0, t0 = 0;
+    scene(g, 320, 180, L, 0.8);
+    t.onmouseenter = () => { t0 = performance.now(); t.querySelector('.play').style.display = 'none'; const loop = () => { scene(g, 320, 180, L, (performance.now() - t0) / 1000); raf = requestAnimationFrame(loop); }; loop(); };
+    t.onmouseleave = () => { cancelAnimationFrame(raf); scene(g, 320, 180, L, 0.8); t.querySelector('.play').style.display = ''; };
+    t.onclick = () => { cur = L; tiles(); panel(); };
+    box.append(t);
+  });
+}
+function panel() {
+  $('#lname').textContent = cur.n; $('#ldesc').textContent = cur.d; $('#modtag').style.display = cur.mod ? '' : 'none';
+  const box = $('#ctls'); box.innerHTML = '';
+  for (const c of CTL[tech]) {
+    if (c.length === 1) { const g = document.createElement('div'); g.className = 'grp'; g.textContent = c[0]; box.append(g); continue; }
+    const [k, label, hint, a, b, st] = c, el = document.createElement('div'); el.className = 'ctl';
+    el.innerHTML = `<div class="t"><b>${label}</b>${k === 'edge' && cur.mod ? '<span class="dot" title="изменено"></span>' : ''}<div>${hint}</div></div>`;
+    if (a === 'toggle') { const tg = document.createElement('div'); const key = k === 'bloomOn' ? 'bloom' : k; tg.className = 'tg' + (cur.P[key] ? ' on' : ''); tg.onclick = () => { cur.P[key] = cur.P[key] ? 0 : (key === 'bloom' ? 1 : 1); tg.classList.toggle('on'); panel(); }; el.append(tg); }
+    else if (a === 'select') { const s = document.createElement('select'); b.forEach(o => s.add(new Option(o))); el.append(s); }
+    else if (a === 'color') { const i = document.createElement('input'); i.type = 'color'; i.value = cur.P.tint || '#c8202b'; const tg = document.createElement('div'); tg.className = 'tg' + (cur.P.tint ? ' on' : '');
+      tg.onclick = () => { cur.P.tint = cur.P.tint ? 0 : i.value; tg.classList.toggle('on'); }; i.oninput = () => { if (cur.P.tint) cur.P.tint = i.value; }; el.append(i, tg); }
+    else { const r = document.createElement('input'); r.type = 'range'; r.min = a; r.max = b; r.step = st; r.value = cur.P[k] ?? 0; const v = document.createElement('span'); v.className = 'v'; v.textContent = (+r.value).toFixed(2);
+      if (k === 'bloom' && !cur.P.bloom) el.classList.add('dim');
+      r.oninput = () => { cur.P[k] = +r.value; v.textContent = (+r.value).toFixed(2); }; el.append(r, v); }
+    box.append(el);
+  }
+}
+document.querySelectorAll('.tech[data-t]').forEach(t => t.onclick = () => { tech = t.dataset.t; cur = TECH[tech].looks[0];
+  document.querySelectorAll('.tech').forEach(x => x.classList.toggle('sel', x === t)); $('#techdesc').textContent = TECH[tech].desc; tiles(); panel(); });
+const live = $('#live'), lg = live.getContext('2d'), tl = $('#tl'); let lt0 = performance.now();
+(function loop() { const T = ((performance.now() - lt0) / 1000) % 6; tl.value = T; $('#tt').textContent = T.toFixed(1) + ' с'; scene(lg, 270, 480, cur, T); requestAnimationFrame(loop); })();
+tiles(); panel();
+</script>
+</body>
+</html>

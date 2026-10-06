@@ -10,6 +10,7 @@
   @font-face { font-family: "Caveat"; src: url("/fonts/Caveat.ttf"); font-weight: 400 700; }
   html, body { margin: 0; background: #222; }
   canvas { display: block; }
+  body.lookplay { overflow: hidden; background: #000; } body.lookplay canvas { width: 100vw; height: 100vh; object-fit: contain; }
   /* ?view=1 — просмотр: сцена играет, камеру можно крутить мышью; &edit=1 — ещё и расстановка объектов */
   #vui, #vpanel { display: none; }
   body.view { background: #0b0a1f; height: 100vh; overflow: hidden; display: flex; flex-direction: column; align-items: center; color: #ece9ff; font: 13px "Rubik", system-ui, sans-serif; }
@@ -202,6 +203,8 @@
     await load(url);
     const def = PROPS3D[url.replace(/[?#].*$/, '')] || PROP3D_LAST;
     if (!def) throw new Error('prefab.js не вызвал prop3d(): ' + url);
+    for (const n of def.needs || []) await load(n);                // персонаж (character): костюмы, rig.json частей, эмоции, хваты — как scene.js
+    if ((def.extrasUrl || def.rigUrl || def.gripsUrl) && typeof rigLoadExtras === 'function') await rigLoadExtras(def);
     PROP.def = def;
     let params = {};
     try { params = JSON.parse(q.get('params') || '{}'); } catch (e) {}
@@ -261,8 +264,11 @@
       draw(ctx, T) { WORLD.draw(ctx, T, 4, T); if (WORLD.S) drawSceneOverlays(WORLD.S, ctx, T); } };
   }
 
+  if (q.get('lookj')) { try { window.LOOK = JSON.parse(q.get('lookj')); } catch (e) { console.error('lookj: ' + e.message); } }   // S14: визуал канала до загрузки сцены
+  const LOOKF = q.get('lookf') ? fetch(q.get('lookf') + (q.get('lookf').includes('?') ? '&' : '?') + 'v=' + Date.now()).then(r => r.json()).then(j => { window.LOOK = j; }).catch(e => console.error('lookf: ' + e.message)) : null;   // …или файлом look.json (✨ сборка визуала)
   window.READY = (async () => {
     await window.THREE_READY;
+    if (LOOKF) await LOOKF;
     if (q.get('stage')) await stageScene(q.get('stage'));
     else if (q.get('model')) modelScene(q.get('model'));
     else if (q.get('prop')) await propScene(q.get('prop'));
@@ -703,7 +709,23 @@
     ui(); panel(); requestAnimationFrame(frame);
   }
 
-  if (VIEW) READY.then(startView).catch(e => { $('vload').textContent = '⚠ ' + e.message; });
+  // S14 превью визуала: ?lookj=<window.LOOK>&play=1 — петля ELEMENT.len в окошке «Стиль → Визуалы»; ручки приходят postMessage({look}) без перезагрузки
+  function lookPlay(is3d) {
+    document.body.classList.add('lookplay');
+    let t0 = performance.now(), paused = false, at = 0;
+    const loop = () => { if (!paused) { at = ((performance.now() - t0) / 1000) % (+ELEMENT.len || 5); paint(at); } requestAnimationFrame(loop); };
+    window.addEventListener('message', e => {
+      const m = e.data || {};
+      if (m.look) { window.LOOK = Object.assign({}, m.look, { palette: (window.LOOK || {}).palette, heroes: (window.LOOK || {}).heroes });
+        if (is3d) for (const w of X3.worlds) { try { w.comp && w.comp.dispose(); } catch (er) {} w._post(); }
+        if (paused) paint(at); }
+      if (m.pause != null) { paused = !!m.pause; t0 = performance.now() - at * 1000; }
+      if (m.seek != null) { at = +m.seek; t0 = performance.now() - at * 1000; paint(at); }
+    });
+    requestAnimationFrame(loop);
+  }
+  if (q.get('play') === '1') READY.then(() => lookPlay(true));
+  else if (VIEW) READY.then(startView).catch(e => { $('vload').textContent = '⚠ ' + e.message; });
   else if (!navigator.webdriver) READY.then(() => shot('element', q.get('t') != null ? +q.get('t') : null));
 </script>
 </body>

@@ -104,7 +104,8 @@ const ExportDlg = {
       body.push(h('div.ex-prog', h('div.pbar', h('i', { style: { width: (run.status === 'queued' ? 0 : pct || 3) + '%' } })),
         h('div.dim.small', run.status === 'queued' ? 'в очереди — дождётся другого рендера' : run.total ? `${run.done} / ${run.total} кадров · ${run.fpsr || 0} fps · ≈ ${fmtT(run.eta)} осталось · ${run.phase}` : run.phase + '…')));
     }
-    this.el.replaceChildren(h('div.nv-box',
+    const el = this.el, saved = ScrollKeep.save(el);
+    el.replaceChildren(h('div.nv-box',
       h('div.nv-head', h('h3', 'Экспорт видео'), h('span.dim.small', d.name), h('span.sp'), h('button.icon', { onclick: () => this.close(), title: 'Закрыть (Esc)' }, Icon('x', 16))),
       h('div.nv-body', body),
       h('div.nv-foot',
@@ -113,6 +114,7 @@ const ExportDlg = {
           h('button.primary', { disabled: true }, h('span.spin'), ' Экспорт')]
           : [h('span.sp'), h('button', { onclick: () => this.close() }, 'Закрыть'),
             h('button.primary', { onclick: () => this.go() }, Icon('download', 15), 'Экспорт')])));
+    ScrollKeep.restore(el, saved);
   },
   async go() {
     try {

@@ -61,16 +61,25 @@ D:\work\Animations\                        рабочая папка (перее
 { "schema": 1, "id": "doedat", "name": "Доедать будешь", "icon": "🦔", "lang": "ru",
   "formats": ["short", "long"], "style": "style/style-guide.md", "toolkit": "style/toolkit.js",
   "rules": { "paperFacing": true, "facingMaxDeg": 35, "hero": "lib:characters/hog" },
-  "models": { "text": "sonnet", "visual": "claude-opus-5-5" } }
+  "models": { "text": "sonnet", "visual": "claude-opus-5-5" },
+  "youtube": { "id": "UC…", "handle": "@…", "title": "…", "thumb": "…", "linkedAt": 0 } }
 ```
+`youtube` — S17, привязанный YouTube-канал; кэш аналитики — `<канал>/analytics/` (вне git: channel.json, videos.json, v/<ytid>.json, ideas.json, links.json), вход Google — `.studio/youtube/<UC…>.json` (youtube_api.py, stage17-youtube.md).
 
 ### 3.2 Видео `video.json`
 Заменяет нынешний план штурма. Поля — как у плана пути «Есть идея», без удалённых частей.
 ```
 id, name, mode (short|long), status (draft|prod|out|archived), stage (последний открытый этап),
-idea, context (markdown), refs[], qa[], titles { angles[], finalists[], chosen },
-engine ('3d' по умолчанию для канала «Доедать будешь»), elements[] (препродакшен, как сейчас + dim: '2d'|'3d' у char/prop),
+idea, context (markdown), refs[] (S16: role 'base' — референс подачи, parse.base — ритм по словам, кадры с таймкодом, склейки), qa[], titles { angles[], finalists[], chosen },
+beatmap { ref, status: draft|ok, v, lenRef, lenOur, rhythm, summary, beats[{id, t0, t1, ot0, ot1, fn, device, vo, voRu, screen, words, our{vo, screen, note}, lock, fx}] } — S16, карта подачи (refbase_api.py, stage16-refbase.md),
+refTopics { ref, about, trick, items[{id, title, topic, angle, why, facts, risk, pick}] } — S16, «💡 Похожие темы»,
+engine ('3d' по умолчанию для канала «Доедать будешь»), elements[] (препродакшен, как сейчас + dim: '2d'|'3d' у char/prop;
+  S15: libMatch { state: wait|found|none, found[{ref, score, why, diff, suggest, name, img, audio, video, videoName, src, own}], at,
+  pick{how: as-is|base|new, ref, from, rid?, own?} } — «Уже было», reuse_api.py, stage15-reuse.md;
+  S18: variantOf — id основного образа: вариация того же персонажа / пропса, одна карточка в препродакшене — stage18-variants.md;
+  S19: dimBy {by: 'claude', why} — 2D / 3D предложил Claude при «Накидать»), preNotes { <kind>: текст } — комментарий автора к категории препродакшена,
 scenes[] { id, name, el (элемент-сцена), file: 'scenes/<id>/scene.json' },
+yt { id, url, linkedAt, by: author|auto } — S17, ролик YouTube этого видео (привязка из раздела «YouTube»; ставит status out),
 montage { … раздел 3.8 }, review { notes[] }, packaging { cover, titles, descriptions, tags, rights }
 ```
 Удаляются: `ideas`, `chosen`, `beats`, `q7`, `meanings`, `images`, `thumbs` (переезжает в `packaging`), `structure`, `retro`, `reaction`, `stats`, `genre`, `web` (остаётся как флаг у кнопок).
@@ -275,6 +284,7 @@ studio.py scene convert <video>/<scene>          старый element.js (+ layo
 studio.py lib list [--kind …] | show <id> | publish <video>/<element> [--as new|<id>]
 studio.py anim create <character> "чешет затылок, 1.5 с" | skeleton propose <character>
 studio.py montage build <video>                  монтаж → src/scenes.js, audio → build.sh
+studio.py yt status | login | channels | select UC… | sync | show [ytid] | link ytid <video> | learn | review ytid ["вопрос"]   S17: YouTube
 ```
 
 ## 8. Хоткеи

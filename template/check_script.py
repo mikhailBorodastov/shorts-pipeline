@@ -10,6 +10,10 @@
 
 Длинное видео (S12.12, prompts/longform.md) определяется само: кадр 16:9 в src/format.js или «длина:» в шапке больше 3 минут —
 тогда нормы на минуту, главы «## Глава N. …» (3+, каждая ≥ 1 мин), длина — по «длина: м:сс» (±25 %) или 6–20 мин.
+
+По референсу (S16, docs/studio/stage16-refbase.md): строка «по референсу: <ссылка>» в шапке — нормы гайда только справкой (ℹ),
+проверяется сверка с картой подачи refs/beatmap.json (пишет студия при утверждении карты и перед montage check):
+голос и текст на экране каждого бита есть в сценарии и идут в том же порядке, длина фраз и темп — как у референса, длина — как в брифе.
 """
 import json, os, re, sys
 
@@ -17,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tts import parse_script  # noqa: E402
 
 WPS = 2.65
+BEATMAP_CHECK = 3                              # S16: версия сверки с картой подачи (студия обновляет check_script.py проекта, если она старее)
 
 
 def long_info(path):
@@ -43,6 +48,75 @@ NUM = re.compile(r"\d[\d.,]*|(?<![а-яё])(одн|два|две|три|четы
 TURN = re.compile(r"(но|однако|тем не менее|хотя|а вот)[ ,:]", re.I)
 YOU = re.compile(r"(?<![а-яё])(вы|вам|вас|ваш[а-яё]*)(?![а-яё])", re.I)
 CTA = re.compile(r"подпиш|подпис[ыа]|лайк|колокольч|пишите в коммент|напишите в коммент", re.I)
+
+
+def ref_base(path):
+    """(ссылка, карта) — если сценарий «по референсу» (S16), иначе (None, None)."""
+    try:
+        head = re.split(r"^#{2,3}\s", open(path, encoding="utf-8").read(), maxsplit=1, flags=re.M)[0]
+    except OSError:
+        return None, None
+    m = re.search(r"^\s*по референсу\s*:\s*(\S*)", head, re.M | re.I)
+    if not m:
+        return None, None
+    d = os.path.dirname(os.path.abspath(path))
+    try:
+        bm = json.load(open(os.path.join(d, "refs", "beatmap.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        bm = {}
+    return m.group(1) or "(ссылка не указана)", bm
+
+
+def stems(t):
+    return [w[:5] for w in re.findall(r"[а-яёa-z0-9]+", (t or "").lower()) if len(w) > 2]
+
+
+def beat_checks(path, bm, sections, sents, speech, wps, real):
+    """S16: сверка сценария с картой подачи -> [(название, значение, ok)]."""
+    beats = [b for b in bm.get("beats") or [] if (b.get("our") or {}).get("vo") or (b.get("our") or {}).get("screen")]
+    raw = open(path, encoding="utf-8").read().lower()
+    vo_text = " ".join(s.get("text") or "" for s in sections).lower()
+    vo_st = stems(vo_text)
+    pos, hit, miss = [], 0, []
+    for i, b in enumerate(beats, 1):
+        st = stems((b.get("our") or {}).get("vo"))
+        if not st:
+            continue
+        need, win = max(1, round(len(st) * 0.6)), len(st) + 4
+        best = max(range(max(1, len(vo_st))), key=lambda k: (len(set(st) & set(vo_st[k:k + win])), -k), default=0)   # где в голосе этот бит: окно с наибольшим совпадением
+        if len(set(st) & set(vo_st[best:best + win])) >= min(need, len(set(st))):
+            hit += 1
+            pos.append(best)
+        else:
+            miss.append(str(i))
+    with_vo = sum(1 for b in beats if stems((b.get("our") or {}).get("vo")))
+    scr = [b for b in beats if ((b.get("our") or {}).get("screen") or "").strip()]
+    scr_hit = sum(1 for b in scr if all(w in raw for w in re.findall(r"[а-яёa-z0-9]{3,}", b["our"]["screen"].lower())[:3]))
+    R = bm.get("rhythm") or {}
+    phr = sum(len(x.split()) for x in sents) / max(1, len(sents))
+    n_sc = len(sections)
+    out = [
+        (f"голос битов карты в сценарии ≥ 80 % (нет: {', '.join(miss) or '—'})", f"{hit} из {with_vo}", hit >= with_vo * 0.8),
+        ("биты идут в том же порядке", "да" if pos == sorted(pos) else "переставлены", pos == sorted(pos)),
+        (f"сцен — не больше битов ({len(bm.get('beats') or [])}) и не меньше 60 % (биты можно сливать)", n_sc, len(bm.get("beats") or []) * 0.6 <= n_sc <= len(bm.get("beats") or []) + 1),
+    ]
+    if scr:
+        out.append(("текст на экране там, где он был у референса", f"{scr_hit} из {len(scr)}", scr_hit >= len(scr) * 0.8))
+    if R.get("phrase"):
+        out.append((f"средняя фраза как у референса ({R['phrase']} ±25 %)", f"{phr:.1f}", abs(phr - R["phrase"]) <= R["phrase"] * 0.25 + 0.5))
+    if R.get("wps") and real:
+        out.append((f"темп как у референса ({R['wps']} сл/с ±20 %)", f"{wps:.2f}", abs(wps - R["wps"]) <= R["wps"] * 0.2))
+    chs = []                                   # главы карты (длинное видео) — столько же «## Глава N» в сценарии
+    for b in bm.get("beats") or []:
+        if b.get("chapter") and b["chapter"] not in chs:
+            chs.append(b["chapter"])
+    if chs:
+        got = len({s.get("chapter") for s in sections if s.get("chapter")})
+        out.append((f"глав как в карте ({len(chs)} ±1)", got, abs(got - len(chs)) <= 1))
+    if bm.get("lenOur"):
+        L = float(bm["lenOur"])
+        out.append((f"длина как в брифе ({L:.0f} с ±25 %)", f"{speech:.0f} с", L * 0.75 <= speech <= L * 1.25))
+    return out
 
 
 def sentences(text):
@@ -146,6 +220,21 @@ def main(path="script.md"):
         ]
     if first_start is not None:
         checks.insert(0, ("первое слово ≤ 0,7 с", f"{first_start:.2f} с", first_start <= 0.7))
+    ref, bm = ref_base(path)
+    if ref:                                    # S16: по референсу — нормы гайда справкой, главное — сверка с картой подачи
+        print(f"{path}: ПО РЕФЕРЕНСУ {ref} — нормы стайл-гайда справкой (ℹ), проверяется сверка с картой подачи refs/beatmap.json")
+        for name, val, ok in checks:
+            print(f"ℹ {name}: {val}")
+        if not bm:
+            print("❌ нет refs/beatmap.json — утверди карту подачи в студии (окно «Сценарий» → «📐 Карта подачи») или montage check из студии")
+            return 1
+        bad = 0
+        print(f"\nСверка с картой подачи v{bm.get('v', 1)} ({len(bm.get('beats') or [])} битов):")
+        for name, val, ok in beat_checks(path, bm, sections, sents, speech, wps, bool(timing)):
+            bad += not ok
+            print(f"{'✅' if ok else '❌'} {name}: {val}")
+        print("\nВручную: приём каждого бита узнаётся (хук, ложная догадка, перечисление, поворот, кода), связки и обороты референса на месте.")
+        return 1 if bad else 0
 
     print(f"{path}: {'ДЛИННОЕ 16:9 · ' if is_long else ''}сцен с голосом {len(voiced)}, фраз {len(sents)}; время — {src}")
     print("длины фраз:", " ".join(map(str, lens)))

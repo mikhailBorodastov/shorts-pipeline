@@ -1,6 +1,6 @@
 """S12.2 — страница «Видео» и поп-ап «Новое видео» (docs/studio/stage12-redesign.md §3–4).
 
-GET  /api/videos/extra            -> {id: {scenes, len, ready, cover, outs}}   карточки: сцены, длина, есть ли рендер, обложка
+GET  /api/videos/extra            -> {id: {scenes, len, ready, cover, outs, step, work}}   карточки: сцены, длина, есть ли рендер, обложка
 GET  /api/videos/cover?id=…       -> картинка карточки: обложка (out/thumbnail_1) | первый кадр ролика (ffmpeg, кэш) | кадр первой сцены
 POST /api/videos/open             <- {id, sub?}       открыть папку видео в проводнике (только внутри папки видео)
 POST /api/videos/create           <- {name, mode, delivery, look, len, topic, script, direction, refs[]}  -> {id}
@@ -52,7 +52,29 @@ def extra(A, d):
     scenes = len(mt.get("units") or []) or len(els) or (_script_scenes(vdir) if vdir else 0)
     outs = _outs(vdir) if vdir else []
     return {"scenes": scenes, "len": mt.get("len") or 0, "ready": bool(outs), "outs": len(outs),
-            "cover": bool(vdir and _cover_src(A, d, vdir)), "step": _step(A, d, vdir, mt)}
+            "cover": bool(vdir and _cover_src(A, d, vdir)), "step": _step(A, d, vdir, mt), "work": work(A, d["id"])}
+
+
+WORK_JOB = {"fastmontage": "Монтаж идёт", "automontage": "Монтаж идёт", "montagebuild": "Сборка", "clips": "Сборка", "render": "Обложка",
+            "voicetts": "Озвучка", "voicesplit": "Озвучка"}
+WORK_AGENT = {"montage": "Claude правит", "fast": "Монтаж идёт", "build": "Claude собирает", "script": "Сценарий пишется", "chat": "Claude правит"}
+
+
+def work(A, vid):
+    """Что с видео происходит прямо сейчас (таблетка карточки вместо «Готово»): задача Studio или Claude в чате видео. Ничего — None."""
+    jobs = [j for j in A.JOBS.values() if j.key == "plan:" + vid and j.status in ("running", "queued")]
+    for k in WORK_JOB:                                          # монтаж и сборка важнее черновиков препродакшена
+        if any(j.kind == k for j in jobs):
+            return WORK_JOB[k]
+    try:
+        s = A.agapi().SESS.get(vid)
+        if s and s.busy and s.alive():
+            return WORK_AGENT.get(s.mode, "Claude правит")
+    except Exception:
+        pass
+    if jobs:
+        return "Препродакшен" if any(j.kind in ("element", "make3d", "charparts", "charmodel", "sound", "assets", "elements") for j in jobs) else "Claude работает"
+    return None
 
 
 def _step(A, d, vdir, mt):
@@ -177,8 +199,12 @@ def brief_text(A, b, cid=None):
     L = []
     if dl and dl["key"] != "auto":
         L.append(f"Подача: {dl['label']} — {dl['desc']}")
-    if lk:
+    lines = A.lkapi().brief_lines(A, b, c["id"]) if lk and c and lk.get("tech") else []   # S14: техника / лук, ручки, герои
+    if lines:
+        L += lines
+    elif lk:
         L.append(f"Визуал: {lk['label']} — {lk.get('desc', '')}")
+    if lk:
         refs = [(r.get("url") or ("<канал>/" + r["img"])) + (f" ({r['note']})" if r.get("note") else "") for r in lk.get("refs") or [] if r.get("img") or r.get("url")]
         if refs and c:
             L.append("Референсы визуала: " + "; ".join(x.replace("<канал>", c["dir"].replace(chr(92), "/")) for x in refs))
@@ -210,28 +236,122 @@ def create(A, body, channel=None):
         ops.append({"op": "set", "path": ["engine"], "value": look["engine"]})
         if look["engine"] == "3d":                              # S13: 3D — локации в препродакшене, сцены на монтаже
             ops.append({"op": "set", "path": ["locations"], "value": True})
-    for u in body.get("refs") or []:
-        u = (u or "").strip()
-        if re.match(r"https?://", u):
-            kind = "video" if re.search(r"youtu\.?be|vimeo|tiktok|rutube|vk\.com/video|\.mp4\b", u) else "link"
-            ops.append({"op": "add", "path": ["refs"], "item": {"id": "r" + uuid.uuid4().hex[:6], "kind": kind, "url": u, "note": ""}})
     A.apply_ops("plan:" + d["id"], ops)
+    refs = " ".join(u for u in body.get("refs") or [] if u)
+    if refs.strip():                                         # ссылки брифа -> референсы; видео сразу разбираются (кадры + расшифровка) в фоне
+        A.rapi().add(A, "plan:" + d["id"], refs)
+    rc = body.get("refCopy") or {}
+    if not (rc.get("video") and rc.get("ref") and copy_ref(A, rc["video"], rc["ref"], d["id"])):   # S16: черновик из ресерча — готовый разбор, без нового скачивания
+        set_base_url(A, "plan:" + d["id"], body.get("refBase"))
+    A.rapi().autoparse(A, "plan:" + d["id"])
     return {"id": d["id"]}
 
 
+def copy_ref(A, src_vid, rid, dst_vid):
+    """Разобранный референс другого видео -> в это видео (папка files/<id>/ref_<rid> копией, пути в parse — на новое видео), роль base. -> True, если вышло."""
+    import shutil
+    r = A._by_id(A.load("plan:" + src_vid).get("refs"), rid)
+    src = os.path.join(P.files(src_vid), "ref_" + rid)
+    if not r or (r.get("parse") or {}).get("status") != "done" or not os.path.isdir(src):
+        return False
+    dst = os.path.join(P.files(dst_vid), "ref_" + rid)
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+    it = json.loads(json.dumps(r, ensure_ascii=False).replace(f"files/{src_vid}/", f"files/{dst_vid}/")
+                    .replace(json.dumps(src.replace("\\", "/"))[1:-1], json.dumps(dst.replace("\\", "/"))[1:-1])
+                    .replace(json.dumps(src)[1:-1], json.dumps(dst)[1:-1]))
+    if it.get("parse", {}).get("video", "").startswith(src) or not os.path.isfile(it.get("parse", {}).get("video") or ""):
+        v = os.path.join(dst, os.path.basename((r.get("parse") or {}).get("video") or ""))
+        if os.path.isfile(v):
+            it["parse"]["video"] = v
+    it["role"] = "base"
+    A.apply_ops("plan:" + dst_vid, [{"op": "add", "path": ["refs"], "item": it}])
+    return True
+
+
+def set_base_url(A, key, url):
+    """S16: «📐 Референс подачи» из поп-апа — ссылка -> референс (или уже добавленный такой же) с ролью base."""
+    url = (url or "").strip()
+    if not re.match(r"https?://", url):
+        return None
+    R = A.rapi()
+    clean = R.clean_url(R.split_src(url)[0])
+    r = next((x for x in A.load(key).get("refs") or [] if R.clean_url(x.get("url") or "") == clean), None)
+    if not r:
+        items = R.add(A, key, clean, kinds="video")
+        r = items[0] if items else None
+    if r and r.get("role") != "base":
+        R.set_base(A, key, r["id"], True)
+    return r
+
+
+GEN_LINES = ("Подача:", "Визуал:", "Настройки лука", "Герои:", "Референсы визуала:", "Ориентировочная длина:")
+
+
+def _patch_topic(old, fresh, b_old, b_new):
+    """«Контекст» после смены основы: служебные строки (подача, визуал, длина) — новые, на своих местах; всё, что автор дописал руками, — как было.
+    Указания автора и свой сценарий меняются только своим куском текста."""
+    old = old or ""
+    own = {"Подача:": "delivery", "Визуал:": "look", "Настройки лука": "look+lookOver", "Герои:": "look+lookOver", "Референсы визуала:": "look", "Ориентировочная длина:": "len"}
+    changed = {p for p in GEN_LINES if any(b_old.get(k) != b_new.get(k) for k in own[p].split("+"))}   # строку, которую автор правил руками, меняем, только если сменился её параметр
+    new_lines = {p: next((ln for ln in fresh.split("\n") if ln.startswith(p)), None) for p in GEN_LINES}
+    out, seen = [], set()
+    for ln in old.split("\n"):
+        p = next((p for p in GEN_LINES if ln.startswith(p)), None)
+        if p is None or p not in changed:
+            out.append(ln)
+        elif p not in seen:
+            seen.add(p)
+            if new_lines[p]:
+                out.append(new_lines[p])
+    missing = [new_lines[p] for p in GEN_LINES if p in changed and p not in seen and new_lines[p]]
+    t = "\n".join(missing + out)
+    for k, label in (("direction", "Указания автора: "), ("script", "Свой сценарий автора — это текст голоса: НЕ переписывай его, только разложи по сценам (картинка, VO):\n")):
+        o, n = (b_old.get(k) or "").strip(), (b_new.get(k) or "").strip()
+        if o != n:
+            if o and o in t:
+                t = t.replace(o, n, 1)
+            elif n:
+                t += ("\n" if t else "") + label + n
+    return t
+
+
 def set_brief(A, vid, body):
+    """Поправить бриф / основу видео (подача, визуал, длина, формат) до монтажа. Контекст не затирается — меняются только служебные строки."""
     key = "plan:" + vid
     d = A.load(key)
-    b = dict(d.get("brief") or {})
-    for k in ("delivery", "look", "len", "topic", "script", "direction", "voice"):
+    b0 = dict(d.get("brief") or {})
+    b = dict(b0)
+    for k in ("delivery", "look", "len", "topic", "script", "direction", "voice", "lookOver"):   # lookOver (S14): ручки и герои лука только для этого видео
         if k in body:
             b[k] = int(body[k] or 0) if k == "len" else body[k]
+    units = (d.get("montage") or {}).get("units") or []
+    changes_base = any(k in body and b[k] != b0.get(k) for k in ("delivery", "look", "len")) or ("mode" in body and body["mode"] != d.get("mode"))
+    if changes_base and units and not body.get("force"):
+        raise ValueError("монтаж уже начат — основу видео менять поздно (или подтверди force)")
     cid = P.index()["videos"].get(vid, {}).get("channel")
-    ops = [{"op": "set", "path": ["brief"], "value": b}, {"op": "set", "path": ["topic"], "value": brief_text(A, b, cid)}]
+    ops = [{"op": "set", "path": ["brief"], "value": b},
+           {"op": "set", "path": ["topic"], "value": _patch_topic(d.get("topic"), brief_text(A, b, cid), b0, b)}]
     look = next((x for x in _lists(A, cid)[1] if x.get("key") == b.get("look")), None)
-    if look and look.get("engine"):
-        ops.append({"op": "set", "path": ["engine"], "value": look["engine"]})
-    return A.apply_ops(key, ops)
+    eng = (look or {}).get("engine")
+    if eng:
+        ops.append({"op": "set", "path": ["engine"], "value": eng})
+        scenes = [e for e in d.get("elements") or [] if e.get("kind") == "scene" and e.get("status") != "drop"]
+        if not scenes and eng != d.get("engine"):            # S13: 3D — локации; сцен в препродакшене ещё нет — схему можно сменить вместе с движком
+            ops.append({"op": "set", "path": ["locations"], "value": eng == "3d"})
+    mode = body.get("mode")
+    if mode in ("short", "long") and mode != d.get("mode"):
+        ops.append({"op": "set", "path": ["mode"], "value": mode})
+    res = A.apply_ops(key, ops)
+    if d.get("project"):                                     # проект уже есть — кадр (формат) и визуал (window.LOOK) в src/format.js
+        A.lkapi().write_format(A, A.load(key), cid=cid)
+    refs = " ".join(u for u in body.get("refs") or [] if u)
+    if refs.strip():                                         # новые ссылки из поп-апа (дубли отсеются) -> референсы + разбор
+        A.rapi().add(A, key, refs)
+    set_base_url(A, key, body.get("refBase"))
+    A.rapi().autoparse(A, key)
+    res = dict(res or {})
+    res["script"] = bool(A.ideas_claude.script_of(A.load(key)))   # сценарий уже написан — страница предложит переписать под новую основу
+    return res
 
 
 def save_voice(A, vid, name, data):

@@ -1,7 +1,8 @@
 """⚙ Настройки приложения (S9+): токены и ключи сервисов, путь к Blender, модели Claude. Хранятся в .studio (вне git каналов и студии).
 
 - секреты — .studio/secrets.json { sketchfab, meshy, tripo } (Sketchfab ещё и в .studio/sketchfab_token.txt — его читает assets.py); страница видит их только замаскированными;
-- путь к Blender — state.json → blender (paths.blender); модели — state.json → models { text, visual, effort } (переменные окружения IDEAS_* важнее).
+- путь к Blender — state.json → blender (paths.blender); модели — state.json → models { text, visual, effort } (переменные окружения IDEAS_* важнее);
+- локальные обложки FLUX.2 [klein] — state.json → flux { url, weights_dir, model, allow9b, timeout, steps } (server/flux2.py): GET/POST /api/flux, POST /api/flux/setup.
 """
 import json, os
 
@@ -44,6 +45,7 @@ def get(A):
     return {"secrets": {k: {"set": bool(s.get(k)), "mask": mask(s.get(k, "")), "label": lbl} for k, lbl in SECRETS.items()},
             "blender": {"path": P.state_get("blender") or "", "found": P.blender() or ""},
             "jobs": {"max": A.max_jobs(), "default": A.MAX_JOBS},
+            "chime": P.state_get("chime") != "0",
             "models": {"text": m.get("text") or A.TEXT_MODEL, "visual": m.get("visual") or A.VISUAL_MODEL, "effort": m.get("effort") or A.VISUAL_EFFORT or "",
                        "env": {k: bool(os.environ.get(k)) for k in ("IDEAS_TEXT_MODEL", "IDEAS_VISUAL_MODEL", "IDEAS_VISUAL_EFFORT")}}}
 
@@ -81,6 +83,8 @@ def save(A, body):
         if p and not os.path.isfile(p):
             raise ValueError("нет такого файла: " + p)
         P.state_set("blender", p or None)
+    if "chime" in body:                                    # звук «готово» (сервер, Windows)
+        P.state_set("chime", None if body["chime"] else "0")
     if "jobs" in body:                                     # S12.13: сколько задач Claude одновременно (остальные ждут в очереди)
         n = int((body["jobs"] or {}).get("max") or 0)
         P.state_set("max_jobs", max(1, min(8, n)) if n else None)
@@ -110,6 +114,9 @@ def handle_get(A, h, p, q):
         h._json(get(A)); return True
     if p == "/api/local3d":
         h._json(local3d()); return True
+    if p == "/api/flux":
+        import flux2
+        h._json(flux2.status()); return True
     return False
 
 
@@ -119,4 +126,11 @@ def handle_post(A, h, p, body):
     if p == "/api/local3d/stop":                       # освободить видеопамять: ComfyUI Studio поднимется сам при следующей лепке
         import comfy3d as C
         C.stop(); h._json(local3d()); return True
+    if p == "/api/flux":                               # 🖼 настройки локальных обложек
+        import flux2
+        h._json(flux2.save_config(body)); return True
+    if p == "/api/flux/setup":                         # ⬇ веса FLUX.2 [klein]: 4b | 9b (+ энкодер) — та же задача установки, что у локальной 3D
+        groups = [g for g in (body.get("groups") or ["4b"]) if g in ("4b", "9b-te", "9b")]
+        j = A.start_job("comfysetup", "", "fluxsetup", {"flux": groups})
+        h._json({"job": j.info()}); return True
     return False

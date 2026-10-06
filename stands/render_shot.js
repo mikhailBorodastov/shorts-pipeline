@@ -5,6 +5,12 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+// свой профиль Chrome на каждый запуск: общий '.render_profile' ронял параллельные снимки («The browser is already running»)
+const PROF_ROOT = path.join(os.tmpdir(), 'studio_shot');
+const PROFILE = path.join(PROF_ROOT, `${process.pid}_${Date.now()}`);
+const dropProfile = d => { try { fs.rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch (e) {} };
+try { for (const d of fs.readdirSync(PROF_ROOT)) { const f = path.join(PROF_ROOT, d); if (Date.now() - fs.statSync(f).mtimeMs > 3600e3) dropProfile(f); } } catch (e) {}   // хвосты упавших запусков
 
 const BROWSERS = [
   process.env.CHROME,
@@ -22,7 +28,7 @@ const BROWSERS = [
   if (!exe) { console.error('Не найден Chrome/Edge (CHROME=путь)'); process.exit(2); }
   fs.mkdirSync(dir, { recursive: true });
   const errors = [];
-  const browser = await puppeteer.launch({ executablePath: exe, headless: true, userDataDir: path.join(__dirname, '.render_profile'),
+  const browser = await puppeteer.launch({ executablePath: exe, headless: true, userDataDir: PROFILE,
     args: ['--force-device-scale-factor=1', '--disable-gpu-vsync', '--enable-unsafe-swiftshader'] });
   try {
     const page = await browser.newPage();
@@ -45,6 +51,7 @@ const BROWSERS = [
     }
   } finally {
     await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
+    dropProfile(PROFILE);
   }
   if (errors.length) { console.log(errors.join('\n')); process.exit(1); }
   console.log('ok');

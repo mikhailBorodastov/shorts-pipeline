@@ -19,8 +19,7 @@ export REVIEW_PORT=$PORT
 trap '[ -n "$STARTED" ] && kill $STARTED 2>/dev/null || true' EXIT
 
 [ "$1" = "tts" ] && python tts.py
-node render.js sfx
-python audio.py
+node render.js audio   # S22: список звуков и сведение — только если менялись их входы (иначе готовый build/mix.wav)
 [ "$1" = "audio" ] && { echo "OK -> build/mix.wav"; exit 0; }
 node render.js frames ${FPS:-60} ${WORKERS:-6}
 mkdir -p out

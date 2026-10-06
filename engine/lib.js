@@ -206,18 +206,27 @@ function vignette(ctx, a = 0.55) {
 // word timing helpers
 function secOf(i) { return VO.sections[i]; }
 // absolute time of the k-th word (or first word matching a substring) in section i
+// S22: промахи (нет слова / нет секции — сценарий переписали, подстрока с ошибкой) копятся в WT_MISS со сценой, которая спросила (WT_SCENE ставит main.js);
+// проверка сборки (render.js frames / check) показывает их ❌, а не молчит. Нет секции — конец ролика, а не падение страницы.
+const WT_MISS = {};
+let WT_SCENE = null;
+function wtMiss(i, key, why) {
+  const m = WT_MISS[i + '|' + key] || (WT_MISS[i + '|' + key] = { i, key: String(key), why, scenes: [] });
+  if (WT_SCENE != null && !m.scenes.includes(WT_SCENE)) m.scenes.push(WT_SCENE);
+}
 function WT(i, key, which = 't') {
   const s = VO.sections[i];
+  if (!s) { wtMiss(i, key, 'секции нет'); return VO.total || 0; }
   let w;
   if (typeof key === 'number') w = s.words[Math.min(key, s.words.length - 1)];
-  else w = s.words.find(x => x.w.toLowerCase().includes(key.toLowerCase()));
-  if (!w) { console.warn('word not found', i, key); return s.start; }
+  else w = s.words.find(x => x.w.toLowerCase().includes(String(key).toLowerCase()));
+  if (!w) { wtMiss(i, key, 'слова нет'); return s.start; }
   return s.start + (which === 'end' ? w.t + w.d : w.t);
 }
 
 // SFX event registry (collected once, exported for the audio mix)
-const SFX = [];
-function sfx(time, type, gain = 1) { SFX.push({ t: +time.toFixed(3), type, gain }); }
+const SFX_LOG = [];                                  // не SFX: это имя сцены берут под свой словарь звуков (const SFX = {…}) — двойное объявление валило страницу
+function sfx(time, type, gain = 1) { SFX_LOG.push({ t: +time.toFixed(3), type, gain }); }
 
 // ---------- more shared helpers ----------
 function starShape(ctx, x, y, R, r, fill, rot = 0) {
@@ -268,4 +277,30 @@ function imgFit(ctx, im, cx, cy, w, h) {
   const iw = im.naturalWidth || im.width || 1, ih = im.naturalHeight || im.height || 1;
   const s = Math.min(w / iw, h / ih);
   ctx.drawImage(im, cx - iw * s / 2, cy - ih * s / 2, iw * s, ih * s);
+}
+
+// ---------- визуал канала (S14, docs/studio/stage14-looks.md) ----------
+// window.LOOK — настройки визуала видео: src/format.js проекта (монтаж) или превью визуала на стенде. Ключи — пути с точкой:
+//   2D: paper.grain / paper.edge / paper.shadow / paper.drift (множители тулкита, 1 = как было), post.vignette, post.sat, post.tint + post.tintA, post.warm;
+//   3D: fx.* поверх fx мира (stage3d.js, lookFx), относительно сцены: fx.bloom.on / .k, fx.dof.on / .k, fx.tilt.on, fx.grade.contrast (+), fx.caK, fx.noise.
+// В LOOK только то, что отличается от умолчаний ручек (looks_api.look_obj). Нет LOOK — всё как раньше.
+function LOOKV(path, def) {
+  let v = typeof window !== 'undefined' ? window.LOOK : null;
+  for (const k of String(path).split('.')) { if (v == null || typeof v !== 'object') return def; v = v[k]; }
+  return v == null ? def : v;
+}
+// цвет кадра после сцены: насыщенность, тонировка (multiply), тёплый / холодный сдвиг. Виньетка — vignette(ctx, LOOKV('post.vignette', …))
+function lookPost(ctx) {
+  const sat = LOOKV('post.sat', 0), tint = LOOKV('post.tint', ''), ta = LOOKV('post.tintA', 0), warm = LOOKV('post.warm', 0);
+  if (!sat && !(tint && ta) && !warm) return;
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  if (sat) {
+    const c = lookPost.c || (lookPost.c = document.createElement('canvas'));
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = c.getContext('2d'); g.clearRect(0, 0, W, H); g.drawImage(ctx.canvas, 0, 0);
+    ctx.filter = `saturate(${Math.max(0, 1 + sat)})`; ctx.drawImage(c, 0, 0); ctx.filter = 'none';
+  }
+  if (tint && ta) { ctx.globalAlpha = clamp(ta); ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = tint; ctx.fillRect(0, 0, W, H); }
+  if (warm) { ctx.globalAlpha = Math.min(0.35, Math.abs(warm) * 0.35); ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = warm > 0 ? '#ff9a3c' : '#3c8cff'; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
 }

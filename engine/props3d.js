@@ -27,7 +27,7 @@
 
 const PROPS3D = {};                                 // url файла (без ?v=) -> определение
 const PROP_MODELS = {};                             // ключ 'p3:<n>:<k>' -> url glb (stage3d.loadModels3 читает)
-let PROP_STYLE = 'paper';
+let PROP_STYLE = (typeof LOOKV === 'function' && LOOKV('style3d', '')) || 'paper';   // визуал канала (S14) задаёт стиль, стенд — ?style=
 let PROP3D_LAST = null, _p3n = 0;
 
 function prop3d(def) {

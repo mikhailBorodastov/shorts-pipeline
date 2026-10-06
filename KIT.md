@@ -10,6 +10,11 @@
 
 - `kitCutFlash(ctx, lt, times, {d, a, color})` — тёплая вспышка на жёстких склейках · «Про металлические штуки» (Доедать будешь)
 - `kitUnderwater(ctx, k, {tint, cy})` — «звук глохнет»: холодная вуаль + виньетка, герой выпал из мира · «Про металлические штуки»
+- `kitPhoneRing(ctx, x, y, size, {t, ring, color, wave})` — звонящая бумажная трубка с витым шнуром и красными дугами звонка, нужен paper.js · «Какого это работать в Valve»
 - `kitWhiteVoid(ctx, T, k, {shapes, colors})` — белая бумажная пустота с мутными силуэтами (свет из проёма, «тот свет»), нужен paper.js · «Про металлические штуки»
 
 ## 3D
+
+- `kitMoveCardWalk(c, lt, t0, t1, from[x,z], to[x,z], {ease, stride, idle})` — бумажный герой-карточка (artCard) идёт из точки в точку: шаг, поза walk→idle, подпрыгивание · «Какого это работать в Valve»
+- `life3(obj, lt, {in, out, enter, exit, dIn, dOut, at, from, to})` — вход и уход без рывка (popUp / pop / drop / slide / cut на склейке; по умолчанию персонаж — popUp, предмет — pop); `enter3` / `exit3` — один конец · S21 «Сторож монтажа»
+- `w.touch('A', 'B')`, `w.guard('Имя', {pop:false, stuck:false})` — пометки для сторожа: касание или рывок задуман · S21

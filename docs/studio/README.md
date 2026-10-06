@@ -14,7 +14,9 @@
 | stage2…stage9 | ТЗ и «как сделано» этапов S2–S9 (студия, пропсы, персонажи, анимации, монтаж, агент, ревью и упаковка, новый канал) |
 | [stage10-workshop.md](stage10-workshop.md) | S10 — мастерская: скелет и анимации, предметы в руках, живые пропсы и экраны |
 | [stage11-flow.md](stage11-flow.md) | **S11 — нынешний порядок производства**: сценарий → препродакшен (почти финал) → голос → монтаж с ревью |
+| [stage17-youtube.md](stage17-youtube.md) | S17 — «📈 YouTube»: аналитика канала, удержание по сценам, разборы Claude и уроки в «Память» |
 | [local3d.md](local3d.md) | локальная 3D: TRELLIS.2 / Pixal3D в ComfyUI Studio |
+| [local-thumbs.md](local-thumbs.md) | локальные обложки: FLUX.2 [klein] 4B / 9B в том же ComfyUI Studio |
 | [kickoff.md](kickoff.md) | готовый текст задания для нового чата с реализатором |
 
 Подробная спецификация нынешнего препродакшена — [../preproduction.md](../preproduction.md), сервиса «Штурм» — [../shturm.md](../shturm.md).

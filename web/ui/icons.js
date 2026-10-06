@@ -57,6 +57,7 @@ const ICONS = {
   clip: '<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l8.6-8.6a4 4 0 0 1 5.7 5.7l-8.6 8.6a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.8 9.8 0 0 1 6.7 2.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.8 9.8 0 0 1-6.7-2.7L3 16"/><path d="M8 16H3v5"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/>',
   alert: '<path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   checkcircle: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
   type: '<path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/>',
@@ -92,7 +93,9 @@ const ICONS = {
   skipfwd: '<path d="M6.5 5.2A1 1 0 0 0 5 6.1v11.8a1 1 0 0 0 1.5.9L16 13a1.2 1.2 0 0 0 0-2Z"/><path d="M19 5v14"/>',
   chevl: '<path d="m15 18-6-6 6-6"/>',
   chevr: '<path d="m9 18 6-6-6-6"/>',
+  chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m7 14 4-4 4 3 5-6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
 };
 
 function Icon(name, size = 16, cls = '') {
@@ -107,7 +110,7 @@ function Icon(name, size = 16, cls = '') {
 
 // S12.13: эмодзи в начале текста кнопок, заголовков и подписей (старые экраны писали «🎨 Черновик», «✨ Написать») -> контурная иконка, как в референсе.
 // Вызывает h() из core.js для строк-детей; поля ввода, <option>, <pre>/<code> и сам текст в середине строки не трогаются.
-const EMOJI_ICON = {'⚠': 'alert', '✨': 'sparkles', '🎬': 'clapper', '🧊': 'cube', '📦': 'package', '📝': 'filetext', '🔎': 'search', '🔍': 'search', '🎞': 'film', '🎨': 'palette', '💾': 'save', '⬇': 'download', '✏': 'pencil', '🔊': 'volume', '⬆': 'upload', '🤖': 'bot', '📚': 'library', '✋': 'hand', '🎙': 'mic', '💡': 'bulb', '⏳': 'hourglass', '📌': 'pin', '📺': 'monitor', '✂': 'scissors', '📄': 'file', '🗑': 'trash', '⚙': 'settings', '🖼': 'image', '🔗': 'link', '🧬': 'copy', '⏱': 'timer', '🎤': 'mic', '🦸': 'user', '💬': 'message', '🖥': 'monitor', '📎': 'clip', '📼': 'video', '🔄': 'refresh', '🎚': 'sliders', '🦴': 'bone', '🕘': 'clock', '✅': 'checkcircle', '🔤': 'type', '⏹': 'stop', '🗄': 'archive', '📍': 'mappin', '⚡': 'zap', '➕': 'plus', '✍': 'pencil', '📷': 'camera', '🗣': 'message', '🧌': 'user', '🎮': 'gamepad', '🔑': 'key', '🪣': 'brush', '🧽': 'eraser', '🎲': 'dice', '🧱': 'bricks', '🎧': 'headphones', '⚑': 'flag', '🎛': 'sliders', '🎵': 'music', '🔨': 'hammer', '❓': 'help', '🎯': 'target', '👀': 'eye', '🎥': 'video', '🛠': 'wrench', '🧑': 'user', '📖': 'book', '🐾': 'paw', '🔇': 'mute', '⏮': 'skipback', '⏭': 'skipfwd', '🔁': 'repeat', '🌐': 'globe', '🚀': 'rocket', '📤': 'upload', '📥': 'download', '🖌': 'brush', '📋': 'filetext', '📹': 'video', '🎼': 'music', '🔈': 'volume', '🔉': 'volume', '📁': 'folder', '📂': 'folder', '🗂': 'folder', '🧹': 'eraser'};
+const EMOJI_ICON = {'🛡': 'shield', '🔔': 'bell', '⚠': 'alert', '📊': 'chart', '📈': 'chart', '🚪': 'x', '⛓': 'link', '✨': 'sparkles', '🎬': 'clapper', '🧊': 'cube', '📦': 'package', '📝': 'filetext', '🔎': 'search', '🔍': 'search', '🎞': 'film', '🎨': 'palette', '💾': 'save', '⬇': 'download', '✏': 'pencil', '🔊': 'volume', '⬆': 'upload', '🤖': 'bot', '📚': 'library', '✋': 'hand', '🎙': 'mic', '💡': 'bulb', '⏳': 'hourglass', '📌': 'pin', '📺': 'monitor', '✂': 'scissors', '📄': 'file', '🗑': 'trash', '⚙': 'settings', '🖼': 'image', '🔗': 'link', '🧬': 'copy', '⏱': 'timer', '🎤': 'mic', '🦸': 'user', '💬': 'message', '🖥': 'monitor', '📎': 'clip', '📼': 'video', '🔄': 'refresh', '🎚': 'sliders', '🦴': 'bone', '🕘': 'clock', '✅': 'checkcircle', '🔤': 'type', '⏹': 'stop', '🗄': 'archive', '📍': 'mappin', '⚡': 'zap', '➕': 'plus', '✍': 'pencil', '📷': 'camera', '🗣': 'message', '🧌': 'user', '🎮': 'gamepad', '🔑': 'key', '🪣': 'brush', '🧽': 'eraser', '🎲': 'dice', '🧱': 'bricks', '🎧': 'headphones', '⚑': 'flag', '🎛': 'sliders', '🎵': 'music', '🔨': 'hammer', '❓': 'help', '🎯': 'target', '👀': 'eye', '🎥': 'video', '🛠': 'wrench', '🧑': 'user', '📖': 'book', '🐾': 'paw', '🔇': 'mute', '⏮': 'skipback', '⏭': 'skipfwd', '🔁': 'repeat', '🌐': 'globe', '🚀': 'rocket', '📤': 'upload', '📥': 'download', '🖌': 'brush', '📋': 'filetext', '📹': 'video', '🎼': 'music', '🔈': 'volume', '🔉': 'volume', '📁': 'folder', '📂': 'folder', '🗂': 'folder', '🧹': 'eraser'};
 const EMOJI_RE = /^([\u2190-\u21FF\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF]|[\uD83C-\uD83E][\uDC00-\uDFFF])\uFE0F?\s*/;
 function emojiIcon(str) {
   const m = EMOJI_RE.exec(str);

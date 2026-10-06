@@ -85,7 +85,8 @@ const Memory = {
         r.scope === 'video' && r.video ? h('a', { href: '#/v/' + r.video }, this.scopeLabel(r)) : this.scopeLabel(r)),
       h('span', fmtDate(r.created)),
       h('span', r.by === 'claude' ? 'предложил Claude' : 'добавили вы'),
-      r.from && r.from.video && r.scope !== 'video' && h('a', { href: '#/v/' + r.from.video }, 'из «' + (r.from.name || r.from.video) + '»'));
+      r.from && r.from.video && r.scope !== 'video' && h('a', { href: '#/v/' + r.from.video }, 'из «' + (r.from.name || r.from.video) + '»'),
+      r.from && r.from.kind === 'yt' && h('a', { href: '#/yt', title: 'Урок из статистики канала (S17)' }, '📊 из статистики YouTube'));
     const body = ed
       ? h('div.grow', h('textarea.box.mem-ta', { key: 'mem|e|' + r.id, rows: 2 }, r.text), h('input.box.mem-why', { key: 'mem|w|' + r.id, value: r.why || '', placeholder: 'почему (необязательно)' }),
         h('div.mem-edit-row',

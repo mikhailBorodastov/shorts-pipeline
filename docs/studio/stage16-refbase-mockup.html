@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Карта подачи — макет S16</title>
+<style>
+  :root { --bg:#0e0e10; --panel:#18181b; --panel2:#202024; --panel3:#2a2a2f; --field:#121214; --line:#2a2a30; --line-strong:#3a3a42;
+    --text:#ececf0; --mute:#8b8b96; --acc:#5aa9ff; --ok:#3ddc97; --key:#ffcc33; --agent:#b48cff; --warn:#ff9f43; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  .page { max-width:1280px; margin:0 auto; padding:24px 24px 60px; }
+  h1 { font-size:26px; margin:0 0 4px; } .mute { color:var(--mute); } .small { font-size:12px; }
+  .note { border:1px dashed var(--line-strong); border-radius:10px; padding:8px 12px; color:var(--mute); font-size:12px; margin:10px 0 18px; }
+  .note b { color:var(--key); font-weight:600; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .sp { flex:1; }
+  button.b { background:var(--panel2); color:var(--text); border:1px solid var(--line-strong); border-radius:9px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button.pri { background:#f2f2f2; color:#111; border-color:#f2f2f2; font-weight:600; }
+  button.claude { background:linear-gradient(90deg,#3b2a63,#2a3a63); border-color:#5b4a8f; }
+  .win { background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .head { display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .seg { display:inline-flex; padding:3px; background:var(--field); border:1px solid var(--line); border-radius:10px; }
+  .seg button { background:none; border:0; color:var(--mute); padding:5px 12px; border-radius:7px; font:inherit; cursor:pointer; }
+  .seg button.sel { background:var(--panel3); color:#fff; }
+  .top { display:grid; grid-template-columns:180px 1fr; gap:16px; padding:14px; border-bottom:1px solid var(--line); }
+  .phone { aspect-ratio:9/16; background:linear-gradient(160deg,#2b2b33,#15151a); border-radius:12px; position:relative; display:flex; align-items:center; justify-content:center; color:var(--mute); font-size:12px; }
+  .phone .cap { position:absolute; top:16%; left:8%; right:8%; text-align:center; font-weight:800; color:#fff; background:#000a; padding:4px; border-radius:4px; font-size:11px; }
+  .phone .t { position:absolute; bottom:8px; left:8px; font-size:11px; }
+  .sum { font-size:15px; } .sum b { color:var(--key); }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .chip { background:var(--panel2); border:1px solid var(--line-strong); border-radius:20px; padding:3px 10px; font-size:12px; }
+  .chip i { font-style:normal; color:var(--mute); }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-weight:600; font-size:12px; color:var(--mute); padding:8px 12px; border-bottom:1px solid var(--line); }
+  td { vertical-align:top; padding:10px 12px; border-bottom:1px solid var(--line); }
+  td.tc { width:92px; white-space:nowrap; }
+  .tc a { color:var(--acc); text-decoration:none; font-variant-numeric:tabular-nums; }
+  .tc .our { display:block; color:var(--mute); font-size:11px; margin-top:4px; }
+  .fn { font-weight:600; } .dev { color:var(--agent); font-size:12px; }
+  .q { margin-top:4px; } .q .orig { color:var(--mute); font-size:12px; display:block; }
+  .scr { display:inline-block; margin-top:5px; font-size:11px; font-weight:800; background:#000; color:#fff; padding:2px 6px; border-radius:4px; border:1px solid #444; }
+  .arrow { width:24px; color:var(--mute); text-align:center; padding-top:22px; }
+  .ours textarea, .ours input { width:100%; background:var(--field); color:var(--text); border:1px solid var(--line-strong); border-radius:8px; padding:6px 8px; font:inherit; resize:vertical; }
+  .ours input { margin-top:5px; font-size:12px; font-weight:700; }
+  .ours .lbl { font-size:11px; color:var(--mute); margin:2px 0 3px; display:flex; gap:8px; }
+  .lock { color:var(--ok); } .wc { margin-left:auto; } .wc.bad { color:var(--warn); }
+  .nopair { color:var(--warn); font-size:12px; margin-top:5px; }
+  .src { color:var(--mute); font-size:11px; margin-top:4px; }
+  .pin { width:34px; text-align:center; padding-top:20px; } .pin span { cursor:pointer; opacity:.6; } .pin .on { opacity:1; }
+  .pinnote { margin-top:6px; font-size:12px; background:#ffcc3318; border:1px solid #ffcc3355; border-radius:8px; padding:5px 8px; color:var(--key); }
+  .foot { display:flex; gap:10px; align-items:center; padding:12px 14px; border-top:1px solid var(--line); background:var(--panel2); }
+  .foot textarea { flex:1; background:var(--field); color:var(--text); border:1px solid var(--line-strong); border-radius:8px; padding:6px 8px; font:inherit; height:36px; }
+  .side { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:22px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .card h3 { margin:0 0 8px; font-size:14px; }
+  .fld { background:var(--field); border:1px solid var(--line-strong); border-radius:8px; padding:7px 9px; color:var(--mute); margin-top:6px; }
+  .fld.base { border-color:#5b4a8f; color:var(--text); }
+  .refrow { display:flex; gap:10px; align-items:center; padding:8px; border:1px solid var(--line); border-radius:10px; margin-top:8px; }
+  .refrow.base { border-color:#5b4a8f; background:#5b4a8f18; }
+  .tag { font-size:11px; background:#5b4a8f; color:#fff; border-radius:6px; padding:1px 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>📐 Карта подачи</h1>
+  <div class="mute">Макет S16. Окно «Сценарий», первая вкладка, если в брифе есть референс подачи.</div>
+  <div class="note">Пример выдуман для макета: референс — англоязычный TikTok «Why airplane lights dim before landing» (34 с), наша тема — «Почему клавиатура ЙЦУКЕН», в брифе 45 с.
+    <b>Слева</b> — что Claude вынул из референса: биты, приёмы, цитаты, текст на экране. <b>Справа</b> — наш бит, его правишь ты (правленое помечается 🔒 и при «Переразложить» не трогается).</div>
+
+  <div class="win">
+    <div class="head">
+      <b>Сценарий</b><span class="mute">Почему клавиатура ЙЦУКЕН</span>
+      <div class="seg"><button class="sel">📐 Карта подачи</button><button>Раскадровка</button><button>Ресерч и источники</button><button>Версии</button></div>
+      <span class="sp"></span><span class="mute small">черновик карты · 7 битов</span>
+    </div>
+
+    <div class="top">
+      <div class="phone"><div class="cap">WAIT FOR IT 🤯</div>▶ референс<span class="t">0:00 / 0:34</span></div>
+      <div>
+        <div class="sum"><b>Фишка подачи:</b> вопрос, который все задавали себе в самолёте → «вы думаете X — нет» → три слоя объяснения, каждый короче → поворот «и на самом деле это про вас» → призыв проверить на следующем рейсе.</div>
+        <div class="chips">
+          <span class="chip"><i>темп</i> 3,1 слова/с</span>
+          <span class="chip"><i>фраза</i> ~7 слов</span>
+          <span class="chip"><i>пауз</i> 2 (перед поворотом)</span>
+          <span class="chip"><i>текст на экране</i> в 4 битах из 7</span>
+          <span class="chip"><i>длина</i> 0:34 → наша 0:45 (×1,32)</span>
+          <span class="chip"><i>язык</i> английский → переведено</span>
+        </div>
+        <div class="row" style="margin-top:12px"><a class="small" style="color:var(--acc)">Ссылка на TikTok</a><span class="mute small">· разобран: whisper со словами, 68 кадров, 9 склеек</span></div>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>время</th><th>их бит</th><th></th><th>наш бит</th><th></th></tr></thead>
+      <tbody>
+      <tr>
+        <td class="tc"><a>0:00–0:03</a><span class="our">наш 0:00–0:04</span></td>
+        <td><div class="fn">Хук-вопрос</div><div class="dev">«вы когда-нибудь замечали…» + бытовая ситуация</div>
+          <div class="q">«Вы замечали, что перед посадкой в самолёте гасят свет?»<span class="orig">Ever noticed they dim the lights before landing?</span></div>
+          <span class="scr">WAIT FOR IT 🤯</span></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl">голос<span class="wc">8 слов · у них 7</span></div>
+          <textarea rows="2">Вы замечали, что буквы на клавиатуре стоят как попало?</textarea>
+          <div class="lbl">текст на экране</div><input value="ЖДИ КОНЦОВКУ 🤯"></td>
+        <td class="pin"><span>📌</span></td>
+      </tr>
+      <tr>
+        <td class="tc"><a>0:03–0:07</a><span class="our">наш 0:04–0:09</span></td>
+        <td><div class="fn">Ложная догадка</div><div class="dev">«Вы думаете X. Нет.» — две короткие фразы</div>
+          <div class="q">«Думаете, экономят электричество. Нет.»<span class="orig">You think it's to save power. Nope.</span></div></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl"><span class="lock">🔒 правил ты</span>голос<span class="wc">5 слов · у них 6</span></div>
+          <textarea rows="2">Думаете, по алфавиту не влезло. Нет.</textarea>
+          <div class="lbl">текст на экране</div><input value="" placeholder="— у них не было —"></td>
+        <td class="pin"><span>📌</span></td>
+      </tr>
+      <tr>
+        <td class="tc"><a>0:07–0:13</a><span class="our">наш 0:09–0:17</span></td>
+        <td><div class="fn">Причина 1</div><div class="dev">факт + цифра + бытовое сравнение</div>
+          <div class="q">«Глазам нужно 10 минут, чтобы привыкнуть к темноте…»<span class="orig">Your eyes need about 10 minutes to adjust…</span></div>
+          <span class="scr">REASON #1</span></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl">голос<span class="wc bad">15 слов · у них 11</span></div>
+          <textarea rows="3">Самые частые русские буквы — О, Е, А — собрали под указательными пальцами, в самом центре.</textarea>
+          <div class="lbl">текст на экране</div><input value="ПРИЧИНА №1">
+          <div class="src">источник: research.md [2]</div>
+          <div class="pinnote">📌 твоя заметка: «сократи, и добавь сравнение с QWERTY»</div></td>
+        <td class="pin"><span class="on">📌</span></td>
+      </tr>
+      <tr>
+        <td class="tc"><a>0:13–0:18</a><span class="our">наш 0:17–0:24</span></td>
+        <td><div class="fn">Причина 2</div><div class="dev">короче первой, тот же шаблон</div>
+          <div class="q">«А если эвакуация — вы уже видите выход.»<span class="orig">And if there's an evacuation, you can already see.</span></div>
+          <span class="scr">REASON #2</span></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl">голос<span class="wc">8 слов · у них 8</span></div>
+          <textarea rows="2">А редкие Ъ и Ё отправили на самый край.</textarea>
+          <div class="lbl">текст на экране</div><input value="ПРИЧИНА №2"></td>
+        <td class="pin"><span>📌</span></td>
+      </tr>
+      <tr>
+        <td class="tc"><a>0:18–0:21</a><span class="our">наш 0:24–0:28</span></td>
+        <td><div class="fn">Причина 3</div><div class="dev">самая короткая, одно слово-добивка</div>
+          <div class="q">«И ещё. Шторки. Открыты.»<span class="orig">Also. Window shades. Up.</span></div></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl">голос<span class="wc">—</span></div>
+          <textarea rows="2" placeholder="—"></textarea>
+          <div class="nopair">⚠ нет пары: третьей причины в теме нет. Вариант: «И ещё. Пишущие машинки. Тысяча девятьсот первый.» — или убрать бит.</div></td>
+        <td class="pin"><span>📌</span></td>
+      </tr>
+      <tr>
+        <td class="tc"><a>0:21–0:29</a><span class="our">наш 0:28–0:38</span></td>
+        <td><div class="fn">Поворот на себя</div><div class="dev">пауза 0,8 с → «но самое интересное — …»</div>
+          <div class="q">«Но самое интересное — после этого вы будете замечать это на каждом рейсе.»<span class="orig">But the crazy part — you'll notice it on every flight now.</span></div></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl">голос<span class="wc">11 слов · у них 12</span></div>
+          <textarea rows="2">Но самое интересное — теперь вы будете видеть это каждый раз, когда печатаете.</textarea>
+          <div class="lbl">текст на экране</div><input value="" placeholder="— у них не было —"></td>
+        <td class="pin"><span>📌</span></td>
+      </tr>
+      <tr>
+        <td class="tc"><a>0:29–0:34</a><span class="our">наш 0:38–0:45</span></td>
+        <td><div class="fn">Призыв</div><div class="dev">CTA: «проверь и напиши в комментах»</div>
+          <div class="q">«Проверьте на следующем рейсе и напишите, заметили ли.»<span class="orig">Check it on your next flight and tell me.</span></div>
+          <span class="scr">FOLLOW FOR MORE ✈️</span></td>
+        <td class="arrow">→</td>
+        <td class="ours"><div class="lbl">голос<span class="wc">9 слов · у них 9</span></div>
+          <textarea rows="2">Посмотрите сейчас на свою клавиатуру и напишите, что заметили.</textarea>
+          <div class="lbl">текст на экране</div><input value="ПОДПИШИСЬ ⌨️"></td>
+        <td class="pin"><span>📌</span></td>
+      </tr>
+      </tbody>
+    </table>
+
+    <div class="foot">
+      <textarea placeholder="Правки в целом: Enter — новый пункт…">Тон чуть ироничнее, как у нас обычно</textarea>
+      <button class="b claude">✨ Переразложить (2 правки)</button>
+      <button class="b pri">✓ Утвердить карту и написать сценарий</button>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h3>Попап «новое видео»</h3>
+      <div class="mute small">Тема</div><div class="fld">Почему клавиатура ЙЦУКЕН, а не по алфавиту</div>
+      <div class="mute small" style="margin-top:10px">Референсы — материал и факты</div><div class="fld">https://youtu.be/…</div>
+      <div class="mute small" style="margin-top:10px">📐 Референс подачи — расскажем нашу историю в его подаче</div>
+      <div class="fld base">https://www.tiktok.com/@…/video/…</div>
+    </div>
+    <div class="card">
+      <h3>Бриф → Референсы</h3>
+      <div class="refrow base">📼 <div><b>Why airplane lights dim…</b> <span class="tag">📐 основа подачи</span><div class="mute small">TikTok · 0:34 · ✓ разобран</div></div><span class="sp"></span><button class="b">снять</button></div>
+      <div class="refrow">📼 <div><b>История раскладки ЙЦУКЕН</b><div class="mute small">YouTube · 12:40 · ✓ разобран</div></div><span class="sp"></span><button class="b">📐 За основу</button></div>
+      <div class="mute small" style="margin-top:10px">Шаг «Сценарий» в окне видео: пока карта не утверждена — кнопка «📐 Разложить референс».</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

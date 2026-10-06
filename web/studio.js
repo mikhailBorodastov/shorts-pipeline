@@ -39,6 +39,20 @@ Object.assign(Plan, {
       Plan.voiceJob(d, '/api/voice/split', { video: d.id, file: r.file }, '✂ Режу запись по сценам и сверяю слова — минута-две');
     } catch (e) { UI.toast(e.message, 'err'); }
   },
+  // 🎤 текст для диктора на стороне (GET /api/voice/text): скопировать / скачать .txt, запись потом — в «🎙 Голос» одним файлом
+  async actorText(d) {
+    if (!d.project) return UI.toast('Текст озвучки появится, когда будет сценарий', 'err');
+    let r;
+    try { r = await api('GET', '/api/voice/text?video=' + encodeURIComponent(d.id)); } catch (e) { return UI.toast(e.message, 'err'); }
+    const ta = h('textarea.box.vo-actor', { readonly: true, rows: 22, value: r.text });
+    const save = () => { const a = h('a', { href: URL.createObjectURL(new Blob([r.text], { type: 'text/plain;charset=utf-8' })), download: `Озвучка — ${d.name || d.id}.txt` }); a.click(); URL.revokeObjectURL(a.href); };
+    const close = UI.modal('🎤 Текст озвучки', h('div.vo-actorbox',
+      h('p.dim.small', `${r.scenes} сцен · ${r.words} слов${r.dur ? ` · ≈ ${Math.round(r.dur)} с` : ''} — текст из сценария вместе с подсказками диктору (темп, произношение, паузы, как записать).`),
+      ta,
+      h('div.row', h('button.primary', { onclick: () => UI.copy(r.text) }, '📋 Скопировать'), h('button', { onclick: save }, '⬇ Скачать .txt'), h('span.sp'),
+        h('button', { title: 'Запись диктора одним файлом — нарежется по сценам сама, слова сверятся со сценарием', onclick: () => { close(); go(`#/v/${d.id}/voice`); } }, '⬆ Загрузить запись'))), { wide: true });
+    ta.focus(); ta.select();
+  },
   voice(d, key) {
     if (!d.project) return [h('section.card', h('h3', '🎙 Голос'), h('p', 'Голос появится, когда будет сценарий: шаг «Сценарий» в пайплайне слева.'),
       h('button', { onclick: () => ScriptWin.open(d) }, '→ к сценарию')), Plan.talkBox(d)];
@@ -63,6 +77,7 @@ Object.assign(Plan, {
             if (src.kind === 'rec' && !confirm('Сейчас голос — запись диктора. Заменить её черновым голосом нейросети? (запись останется в «Записи» — нарежешь снова)')) return;
             Plan.voiceJob(d, '/api/voice/tts', { video: d.id }, '🔊 Озвучиваю сценарий нейросетью…');
           } }, src.kind === 'rec' ? '🤖 вернуть черновой голос' : voiced.some(x => x.file) ? '🔊 переозвучить черновой' : '🔊 черновой голос'),
+          voiced.length > 0 && h('button', { title: 'Текст для диктора: скопировать или скачать, чтобы отправить', onclick: () => Plan.actorText(d) }, '🎤 Текст озвучки'),
           h('button', { onclick: () => Plan.voiceLoad(d, true), title: 'Обновить' }, '↻')),
         job ? h('p.dim', h('span.spin'), ' ', job.summary || 'работаю…') : voiced.length ? drop : null,
         (r.recordings || []).length > 0 && h('details.vo-recs', h('summary.dim.small', `Записи (${r.recordings.length})`),

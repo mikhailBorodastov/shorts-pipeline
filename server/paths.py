@@ -145,10 +145,106 @@ def state_set(key, value):
     except (OSError, ValueError):
         s = {}
     s[key] = value
-    tmp = p + ".tmp"
+    write_atomic(p, json.dumps(s, ensure_ascii=False, indent=1))
+
+
+def tool_env(env=None):
+    """S22: окружение для build.sh / render.js / audio.py / ffmpeg. У окна-приложения Studio (ярлык) PATH бывает урезан:
+    «python: command not found» (71 упавшая сборка) и Git-утилиты build.sh (rm, seq, sleep, cat, head) не находятся.
+    Первыми в PATH — Python сервера, утилиты Git Bash, node и ffmpeg (где их нашёл сервер)."""
+    import shutil
+    import sys
+    env = dict(os.environ if env is None else env)
+    path = env.get("PATH", "")
+    py = os.path.dirname(sys.executable)
+    dirs = [py, os.path.join(py, "Scripts")]
+    for git in (r"C:\Program Files\Git", r"C:\Program Files (x86)\Git"):
+        if os.path.isdir(git):
+            dirs += [os.path.join(git, "usr", "bin"), os.path.join(git, "bin"), os.path.join(git, "mingw64", "bin")]
+            break
+    for exe in ("node", "ffmpeg", "ffprobe"):
+        w = shutil.which(exe, path=path) or shutil.which(exe)
+        if w:
+            dirs.append(os.path.dirname(w))
+    if os.path.isdir(r"C:\Program Files\nodejs"):
+        dirs.append(r"C:\Program Files\nodejs")
+    reg = []
+    if os.name == "nt":                                       # настоящий PATH пользователя и системы (реестр) — node через nvm, ffmpeg через winget
+        try:
+            import winreg
+            for root, sub in ((winreg.HKEY_CURRENT_USER, r"Environment"),
+                              (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+                try:
+                    with winreg.OpenKey(root, sub) as k:
+                        reg += [os.path.expandvars(x) for x in str(winreg.QueryValueEx(k, "Path")[0]).split(";")]
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+    seen, out = set(), []
+    for d in dirs + path.split(os.pathsep) + reg:
+        k = os.path.normcase(d.rstrip("\\/"))
+        if d and k not in seen:
+            seen.add(k)
+            out.append(d)
+    env["PATH"] = os.pathsep.join(out)
+    env.setdefault("PYTHON", sys.executable)                 # render.js audio зовёт audio.py этим Python
+    return env
+
+
+def kill_tree(proc_or_pid, names=None):
+    """S22: остановить процесс СО ВСЕМИ детьми (claude.exe -> Blender / node / Chrome; build.sh -> render.js -> Chrome).
+    proc.kill() убивал только родителя — дети висели и жгли лимит / видеокарту. names — только если имя процесса из списка
+    (для pid из прошлого запуска Studio: Windows переиспользует номера). -> True, если было что останавливать."""
+    import subprocess
+    pid = getattr(proc_or_pid, "pid", proc_or_pid)
+    if not pid:
+        return False
+    if os.name == "nt":
+        cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if names:
+            r = subprocess.run(["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"], capture_output=True, text=True, errors="replace", creationflags=cf)
+            img = (r.stdout.split(",")[0].strip().strip('"').lower() if r.stdout.startswith('"') else "")
+            if not img or not any(img.startswith(n) for n in names):
+                return False
+        r = subprocess.run(["taskkill", "/T", "/F", "/PID", str(int(pid))], capture_output=True, text=True, errors="replace", creationflags=cf)
+        return r.returncode == 0
+    try:
+        if hasattr(proc_or_pid, "kill"):
+            proc_or_pid.kill()
+        else:
+            os.kill(int(pid), 9)
+        return True
+    except OSError:
+        return False
+
+
+def write_atomic(p, text, tries=40):
+    """Записать файл через временный и подменить. На Windows os.replace падает с WinError 5 / 32,
+    пока файл держит открытым другой процесс (CLI, задача Claude, антивирус) — повторяем ~4 с.
+    Временный файл у каждого писателя свой: общий .tmp ломал одновременные сохранения.
+    Тот же текст не пишется: время изменения остаётся, и кэш кадров / клипов не считает файл новым."""
+    try:
+        with open(p, encoding="utf-8") as f:            # тот же текстовый режим, что у записи (\r\n <-> \n на Windows)
+            if f.read() == text:
+                return
+    except (OSError, UnicodeDecodeError):
+        pass
+    tmp ="%s.%d.%d.tmp" % (p, os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(s, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+        f.write(text)
+    for i in range(tries):
+        try:
+            os.replace(tmp, p)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.05 + 0.01 * i)
 
 
 def channel(cid=None):

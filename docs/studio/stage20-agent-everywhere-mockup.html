@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>S20 — Claude везде (макет)</title>
+<style>
+:root { --bg:#16161a; --pan:#1e1e24; --card:#25252d; --line:#33333d; --tx:#e9e7f0; --dim:#9a97a8; --acc:#8b7cf6; --ok:#2fbf71; --warn:#e8a33d; --err:#e5584f; }
+* { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--tx); font:14px/1.45 system-ui,Segoe UI,sans-serif; }
+.app { display:grid; grid-template-columns:64px 1fr 360px; height:100vh; min-width:1100px; }
+.side { background:var(--pan); border-right:1px solid var(--line); display:flex; flex-direction:column; align-items:center; gap:14px; padding:14px 0; }
+.ico { width:38px; height:38px; border-radius:10px; display:grid; place-items:center; color:var(--dim); position:relative; font-size:18px; }
+.ico.on { background:#2d2840; color:#fff; outline:1px solid var(--acc); }
+.badge { position:absolute; top:-4px; right:-6px; background:var(--err); color:#fff; font-size:11px; font-weight:700; border-radius:9px; padding:0 5px; }
+.main { padding:18px 22px; overflow:auto; }
+h2 { margin:0 0 4px; font-size:18px; } .dim { color:var(--dim); } .small { font-size:12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:12px; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.btn { background:#2f2f39; border:1px solid var(--line); color:var(--tx); border-radius:8px; padding:6px 11px; font-size:13px; }
+.btn.p { background:var(--acc); border-color:var(--acc); color:#fff; }
+.hl { box-shadow:0 0 0 2px var(--acc), 0 0 24px #8b7cf655; }
+.steve { width:150px; height:190px; border-radius:10px; background:#e6dfd1; display:grid; place-items:center; color:#555; font-size:12px; }
+.chat { background:var(--pan); border-left:1px solid var(--line); display:flex; flex-direction:column; }
+.chat header { padding:12px 14px; border-bottom:1px solid var(--line); font-weight:600; }
+.msgs { flex:1; overflow:auto; padding:12px 14px; display:flex; flex-direction:column; gap:10px; }
+.you { align-self:flex-end; background:#2d2840; border-radius:12px 12px 2px 12px; padding:8px 11px; max-width:85%; }
+.cl { background:var(--card); border-radius:12px 12px 12px 2px; padding:9px 11px; max-width:92%; }
+.cl ol { margin:6px 0; padding-left:18px; } .choice { display:flex; gap:6px; margin-top:8px; }
+.step { font-size:12px; color:var(--dim); } .step b { color:var(--ok); font-weight:600; }
+.inp { border-top:1px solid var(--line); padding:10px 12px; }
+.chip { display:inline-flex; gap:6px; align-items:center; background:#2a2638; border:1px solid #4a3f7a; border-radius:20px; padding:3px 10px; font-size:12px; margin-bottom:7px; }
+.chip i { font-style:normal; color:var(--dim); cursor:pointer; }
+textarea { width:100%; background:var(--bg); color:var(--tx); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; resize:none; }
+.feed { position:fixed; left:72px; top:60px; width:400px; background:var(--pan); border:1px solid var(--line); border-radius:12px; box-shadow:0 18px 50px #0009; }
+.feed header { display:flex; align-items:center; gap:8px; padding:11px 14px; border-bottom:1px solid var(--line); }
+.seg { display:flex; background:var(--bg); border-radius:8px; padding:2px; font-size:12px; } .seg span { padding:3px 9px; border-radius:6px; } .seg .s { background:#2f2f39; }
+.grp { padding:8px 14px 2px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); }
+.it { display:flex; gap:10px; padding:9px 14px; border-left:3px solid transparent; cursor:pointer; }
+.it:hover { background:#25252d; } .it.new { border-left-color:var(--acc); background:#211f2b; }
+.k { width:28px; height:28px; border-radius:8px; display:grid; place-items:center; flex:none; font-size:15px; }
+.k.job { background:#1d3a2b; } .k.ask { background:#3a2f12; } .k.err { background:#3d1d1d; } .k.ren { background:#1d2a3d; } .k.yt { background:#3d1d26; }
+.it b { font-weight:600; } .t { margin-left:auto; font-size:11px; color:var(--dim); white-space:nowrap; }
+.note { position:fixed; right:380px; bottom:16px; width:300px; font-size:12px; color:var(--dim); background:#1b1b20; border:1px dashed var(--line); border-radius:10px; padding:10px; }
+</style></head><body>
+<div class="app">
+  <nav class="side">
+    <div class="ico">📚</div><div class="ico">🎬</div><div class="ico">✏️</div><div class="ico">🎨</div>
+    <div class="ico on" title="Уведомления">🔔<span class="badge">3</span></div>
+    <div class="ico">🧠</div><div class="ico">📈</div>
+  </nav>
+
+  <main class="main">
+    <div class="dim small">Сутки в Майнкрафте убили бы Стива · Препродакшен</div>
+    <h2>Стив из Майнкрафта</h2>
+    <div class="card hl">
+      <div class="row"><b>🎨 Черновик · 3D</b><span class="btn">2D</span><span class="btn p">3D</span><span class="btn">v1</span><span class="btn">v2</span>
+        <span style="flex:1"></span><span class="btn p">🧊 Покрутить · 📍 пины</span><span class="btn">✨ Сделать 3D заново ▾</span></div>
+      <div class="row" style="margin-top:12px; align-items:flex-start">
+        <div class="steve">v2 — Blender, объёмный</div>
+        <div class="small dim" style="max-width:420px">3D: Blender — автор попросил «по-настоящему объёмного», бумажная карточка (parts) исключена;
+          модель со скелетом hog, клипы «шаг», «помахать» подходят.<br><br>
+          <span style="color:var(--acc)">← подсветка после клика по уведомлению</span></div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="chat">
+    <header>✨ Claude <span class="dim small">· сессия видео</span></header>
+    <div class="msgs">
+      <div class="you">ты сделал персонажей в 2D-карточках, давай сделаем их по-настоящему 3D</div>
+      <div class="cl">Сделаю объёмными трёх персонажей видео — сейчас они бумажные карточки на костях:
+        <ol><li>Стив из Майнкрафта → Blender (~20 мин)</li><li>Стив в скафандре → вариация от нового Стива</li><li>Крипер на пляже → Blender (~15 мин)</li></ol>
+        Черновики старых версий останутся (v1).
+        <div class="choice"><span class="btn p">Делай</span><span class="btn">Изменить</span></div></div>
+      <div class="you">Делай</div>
+      <div class="step"><b>✓</b> act make3d «Стив из Майнкрафта» blender · wish «по-настоящему объёмный»</div>
+      <div class="step"><b>✓</b> act make3d «Крипер на пляже» blender</div>
+      <div class="step">⏳ жду: 2 задачи в очереди</div>
+      <div class="cl">Стив готов (v2, Blender) — посмотри «🧊 Покрутить». Скафандр делать от него же или отдельной моделью?
+        <div class="choice"><span class="btn">От нового Стива</span><span class="btn">Отдельно</span></div></div>
+    </div>
+    <div class="inp">
+      <span class="chip">📍 Препродакшен · Стив из Майнкрафта <i title="не привязывать к элементу">×</i></span>
+      <textarea rows="2" placeholder="Напиши Claude — он видит, где ты"></textarea>
+      <div class="small dim" style="margin-top:4px">Умеет здесь: перерисовать · сделать 3D · вариации · разделить · ассеты · утвердить (по просьбе)</div>
+    </div>
+  </aside>
+</div>
+
+<div class="feed">
+  <header><b>🔔 Уведомления</b><span style="flex:1"></span><div class="seg"><span class="s">Все видео</span><span>Это видео</span></div><span class="small dim">Прочитать все</span></header>
+  <div class="grp">Сегодня</div>
+  <div class="it new"><div class="k ask">❓</div><div><b>Claude спрашивает</b><div class="small dim">Скафандр — от нового Стива или отдельно? · Сутки в Майнкрафте</div></div><span class="t">2 мин</span></div>
+  <div class="it new"><div class="k job">🧊</div><div><b>3D готово: Стив из Майнкрафта</b><div class="small dim">Blender, v2 · Препродакшен</div></div><span class="t">3 мин</span></div>
+  <div class="it new"><div class="k ren">🎞</div><div><b>Ролик собран</b><div class="small dim">Ностальгия · 1:12 · Рендеры</div></div><span class="t">40 мин</span></div>
+  <div class="it"><div class="k err">⚠</div><div><b>Ошибка: звук «Хрип зомби»</b><div class="small dim">yt-dlp не скачал · Сутки в Майнкрафте</div></div><span class="t">1 ч</span></div>
+  <div class="grp">Раньше</div>
+  <div class="it"><div class="k yt">📈</div><div><b>Разбор на 3 дня: «ИИ пузырь»</b><div class="small dim">удержание 61 %, спад на сцене 4 · YouTube</div></div><span class="t">вчера</span></div>
+  <div class="it"><div class="k job">🔊</div><div><b>Звук «лифт» — 4 кандидата</b><div class="small dim">Не жми эту кнопку · Препродакшен</div></div><span class="t">вчера</span></div>
+</div>
+<div class="note">Макет S20. Клик по уведомлению → вкладка и элемент (подсветка 2 с). Чат есть на всех страницах; вне видео — сессия канала.</div>
+</body></html>

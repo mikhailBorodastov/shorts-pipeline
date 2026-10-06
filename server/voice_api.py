@@ -7,7 +7,8 @@
   «✨ поправить сценарий под запись» — агенту (субтитры должны совпасть с голосом).
 Черновой голос: задача voicetts -> tts.py (записи уезжают в build/vo_rec/).
 Сцены без голоса (тихие биты сценария) пропускаются — у них нет файла.
-CLI: voice show VID | voice split VID <файл> | voice tts VID | voice align VID (после правки VO под запись)
+Текст для диктора на стороне (озвучка «на аутсорс»): actor_text -> GET /api/voice/text, кнопка 🎤 в шапке окна видео.
+CLI: voice show VID | voice text VID | voice split VID <файл> | voice tts VID | voice align VID (после правки VO под запись)
 """
 import difflib, glob, importlib.util, json, os, re, shutil, subprocess, sys, time
 
@@ -74,6 +75,57 @@ def state(A, vid):
                     "start": t.get("start"), "file": bool(f), "ext": os.path.splitext(f)[1] if f else ""})
     recs = sorted([os.path.basename(p) for p in glob.glob(os.path.join(pd, "refs", "voice", "*")) if p.lower().endswith(AUDIO)], reverse=True)
     return {"project": True, "sections": out, "total": vo.get("total"), "source": _src(pd), "recordings": recs, "voice": cfg.get("voice"), "rate": cfg.get("rate")}
+
+
+def _scene_notes(T, pd):
+    """Пометки режиссёра у VO каждой сцены — *(шёпотом)* после «**VO:**» и внутри текста (tts.py их выкидывает, диктору они нужны)."""
+    text = open(os.path.join(pd, "script.md"), encoding="utf-8").read()
+    heads = list(T.SCENE_HEAD.finditer(text))
+    out = {}
+    for k, hd in enumerate(heads):
+        block = text[hd.end():heads[k + 1].start() if k + 1 < len(heads) else len(text)]
+        raw = T._voice_of(block)
+        if not raw:
+            continue
+        m = re.search(r"\**VO\**\s*:\**[ \t]*([^\n]*)\n[ \t]*>", block, re.I)
+        lead = re.sub(r"[*_]", "", m.group(1)).strip() if m else ""
+        raw = re.sub(r"\*\(([^)]*)\)\*", r"(\1)", raw)                   # *(с паузой)* -> (с паузой) — прямо в тексте, где стоит
+        raw = re.sub(r"[*_]{1,2}", "", raw)
+        raw = T.PAUSE.sub(lambda p: f"[пауза {p.group(1)} с]", raw)
+        out[hd.group(1).replace("**", "").strip()] = (lead, re.sub(r"\s+", " ", raw).strip().strip("«»\""))
+    return out
+
+
+def actor_text(A, vid):
+    """Текст для диктора (озвучка на стороне): сцены по порядку, как читать, темп, произношение, как записать и прислать.
+    Запись потом кидают в «🎙 Голос» одним файлом — нарежется по сценам сама (split)."""
+    pd = _pd(A, vid)
+    T = _tts(pd)
+    cfg, secs = T.parse_script(os.path.join(pd, "script.md"))
+    notes = _scene_notes(T, pd)
+    vs = (_mn(A).voice(vid) or {}).get("sections") or []
+    voiced = [(i, s) for i, s in enumerate(secs) if not s.get("silence")]
+    words = sum(len(s["text"].split()) for _, s in voiced)
+    total = sum((vs[i] or {}).get("dur") or 0 for i, _ in voiced if i < len(vs))
+    name = os.path.basename(pd.rstrip("\\/"))
+    L = [f"ОЗВУЧКА: {name}", ""]
+    L.append(f"Сцен с голосом: {len(voiced)} · слов: {words} · по времени ≈ {round(total or words / 2.65)} с (темп ≈ 2,6 слова в секунду — бодро, как в шортсах, без растягивания).")
+    if cfg.get("pron"):
+        L += ["", "Как произносить:"] + [f"  • {a} — читать «{b}»" for a, b in cfg["pron"].items()]
+    if cfg.get("rise"):
+        L += ["", "С вопросительной интонацией:"] + [f"  • «{w}»" + (f" (в сцене {n})" if n else "") for w, n in cfg["rise"]]
+    L += ["", "Как записать:",
+          "  • весь текст одним файлом, сцены подряд по порядку; между сценами пауза 1–2 секунды;",
+          "  • [пауза N с] — помолчать столько секунд; в скобках ( ) — как читать, вслух не произносить;",
+          "  • оговорился — перечитай фразу заново, чтобы в файле остался один чистый дубль; слова не меняй — они же субтитры;",
+          "  • тихая комната, без музыки, микрофон в 15–20 см; формат любой: wav, mp3, m4a.",
+          "", "—" * 20]
+    for n, (i, s) in enumerate(voiced, 1):
+        title = re.sub(r"^[\d:.\s–—-]+(?:—\s*)?", "", s["title"]).strip() or s["title"]
+        lead, txt = notes.get(s["title"], ("", s["text"]))
+        dur = (vs[i] or {}).get("dur") if i < len(vs) else None
+        L += ["", f"{n}. {title}" + (f"  (≈ {dur:.0f} с)" if dur else "") + (f"  ({lead.strip('()')})" if lead else ""), txt]
+    return {"text": "\n".join(L) + "\n", "scenes": len(voiced), "words": words, "dur": round(total, 1)}
 
 
 def audio_path(A, vid, i=None, rec=None):
@@ -258,6 +310,8 @@ def cli(A, argv):
     cmd, vid = argv[0], argv[1]
     if cmd == "show":
         print(json.dumps(state(A, vid), ensure_ascii=False, indent=1)); return True
+    if cmd == "text":
+        print(actor_text(A, vid)["text"]); return True
     if cmd == "align":
         print(align(A, vid)); return True
     if cmd in ("split", "tts"):

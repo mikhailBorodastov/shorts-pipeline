@@ -71,6 +71,18 @@ def mode_of(docs, params=None):
     return m if m in MODE else "short"
 
 
+LANGS = {"ru": "русский", "en": "английский", "uk": "украинский", "pl": "польский", "de": "немецкий", "es": "испанский", "fr": "французский", "pt": "португальский"}   # = channel_api.LANGS
+
+
+def lang_rule(docs):
+    """Язык канала (channel.json → lang): с автором — по-русски, всё, что войдёт в ролик, — на языке канала."""
+    l = ((docs or {}).get("channel") or {}).get("lang") or "ru"
+    if l == "ru":
+        return "- Пиши по-русски."
+    return (f"- Язык роликов канала — {LANGS.get(l, l)}. С автором говори по-русски (вопросы, пояснения, why, заметки), а всё, что войдёт в ролик или на YouTube, — "
+            f"названия, хуки, сценарий, VO, надписи в кадре, субтитры, тексты обложек, описания, хэштеги — пиши на языке роликов ({LANGS.get(l, l)}), естественно, как носитель.")
+
+
 def system(docs, mode, genre="news"):
     b = docs["brand"]
     brand = "\n".join(f"- {label}: {b[k].strip()}" for k, label in BRAND if (b.get(k) or "").strip())
@@ -86,7 +98,8 @@ def system(docs, mode, genre="news"):
 {('Память канала — правила, которые автор утвердил по прошлым правкам (соблюдай их, если просьба прямо не говорит иначе):' + chr(10) + docs.get('memory')) if docs.get('memory') else ''}
 
 Как работать:
-- Пиши по-русски, живо и конкретно: узнаваемые вещи и детали (в новостях и реальных историях — ещё имена, годы, цифры). Без канцелярита и общих слов.
+{lang_rule(docs)}
+- Пиши живо и конкретно: узнаваемые вещи и детали (в новостях и реальных историях — ещё имена, годы, цифры). Без канцелярита и общих слов.
 - Правило трёх: варианты должны быть совсем разными по углу, а не перефразами одного.
 - Плохих идей нет: смелые и странные варианты приветствуются. Спрашивай себя «как было бы прикольно?», а не «как правильно?».
 - Факты не выдумывай. Факт, которого нет во вводных и который ты не нашёл в источнике, помечай «проверить».
@@ -117,13 +130,20 @@ def refs_text(plan, limit=6000):
         if r.get("kind") == "image":
             rows.append("- картинка-референс" + (f": {r['note']}" if r.get("note") else ""))
             continue
-        head = f"- {'видео' if r.get('kind') == 'video' else 'ссылка'} «{r.get('title') or ps.get('title') or ''}» {r.get('url') or r.get('path') or ''}".rstrip()
+        ch = r.get("channel") or ps.get("channel")
+        head = f"- {'видео' if r.get('kind') == 'video' else 'ссылка'} «{r.get('title') or ps.get('title') or ''}»" + (f" ({ch})" if ch else "") \
+            + f" {r.get('url') or r.get('path') or ''}".rstrip()
         rows.append(head + (f"\n  Что взять из него (автор): {r['note']}" if r.get("note") else ""))
         if ps.get("status") == "done":
             tx = (ps.get("text") or "").strip()
             cut = tx[:max(0, left)]
             left -= len(cut)
-            rows.append(f"  Длина {ps.get('dur')} с, кадры сеткой 6×5 через каждые {ps.get('step')} с." + (f"\n  Расшифровка:\n{cut}" + (" …(дальше обрезано)" if len(cut) < len(tx) else "") if cut else ""))
+            full = os.path.abspath(P.resolve(ps["transcript"])).replace("\\", "/") if ps.get("transcript") else ""
+            more = len(cut) < len(tx) or (ps.get("chars") or 0) > len(tx)
+            rows.append(f"  Длина {ps.get('dur')} с, кадры сеткой 6×5 через каждые {ps.get('step')} с." + (f" Полная расшифровка: {full}" if full else "")
+                        + (f"\n  Расшифровка:\n{cut}" + (" …(дальше обрезано — полный текст в файле)" if more else "") if cut else ""))
+        elif r.get("kind") == "video":
+            rows.append(f"  (разбор не удался: {(ps.get('err') or '')[:120]})" if ps.get("status") == "error" else "  (ещё разбирается — кадры и расшифровка появятся позже)")
     return "Референсы автора:\n" + "\n".join(rows) if rows else ""
 
 
@@ -337,6 +357,7 @@ src — откуда факт: ссылка, «вводные» или «про�
 - challenge — неудобные вопросы: где идея слабая, что зритель уже видел, почему он досмотрит до конца.
 Каждый вопрос — про ЭТУ идею, одно конкретное предложение; на него можно ответить за 10–30 секунд. Можно давать варианты прямо в вопросе («мама — строгая или рассеянная?»). Не спрашивай то, что уже сказано в идее, контексте или ответах.
 q — вопрос; why — что решит ответ (коротко, для автора); group — тема из списка выше.
+opts — 2–4 коротких варианта ответа (до ~8 слов, разные по сути, конкретные для этой идеи), чтобы автору было понятно, что ты имеешь в виду, и можно было ответить кликом; первый — что предложил бы ты. Без «не знаю» и «другое».
 {('Автор просит: «' + focus + '» — учти это в первую очередь.') if focus else ''}
 {('Это уточняющий раунд ' + str(rnd) + ': опирайся на ответы автора — копай глубже там, где ответ открыл новое или остался размытым; не повторяй заданные вопросы.') if qa else ''}
 {('Кадры референсов можно посмотреть (Read): ' + '; '.join(p.replace(chr(92), '/') for p in read)) if read else ''}
@@ -344,7 +365,21 @@ q — вопрос; why — что решит ответ (коротко, для
 {ctx(plan, 'idea', 'topic', 'refs')}
 
 {qa_text(plan, all_=True) or '(вопросов ещё не было)'}"""
-        schema = S({"questions": ARR(S({"q": STR, "why": STR, "group": {"type": "string", "enum": list(QGROUPS)}}))})
+        schema = S({"questions": ARR(S({"q": STR, "why": STR, "group": {"type": "string", "enum": list(QGROUPS)}, "opts": ARR(STR)}, ["q", "why", "group", "opts"]))})
+
+    elif action == "qopts":                                   # 💡 варианты ответов к уже заданным вопросам (без вариантов, без ответа)
+        todo = [q for q in plan.get("qa") or [] if not q.get("opts") and not (q.get("a") or "").strip() and not q.get("skip")]
+        prompt = f"""Шаг «Вопросы по идее». Автору непонятно, что ты имел в виду в некоторых вопросах. Для каждого вопроса ниже дай варианты ответа.
+opts — 2–4 коротких варианта ответа (до ~8 слов, разные по сути, конкретные для этой идеи), чтобы автору было понятно, что ты имеешь в виду, и можно было ответить кликом; первый — что предложил бы ты. Без «не знаю» и «другое».
+id — id вопроса как в списке.
+
+{ctx(plan, 'idea', 'topic', 'refs')}
+
+{qa_text(plan) or ''}
+
+Вопросы без вариантов:
+""" + "\n".join(f"- id {q['id']}: {q.get('q', '').strip()}" for q in todo)
+        schema = S({"items": ARR(S({"id": STR, "opts": ARR(STR)}, ["id", "opts"]))})
 
     elif action == "challenge":
         bs = [b for b in plan.get("beats", []) if b.get("keep", True)]
@@ -382,6 +417,9 @@ verdict: strong — можно писать сценарий, ok — есть ч
             howmany += ("\nВАЖНО: в этом видео scene — это ЛОКАЦИЯ: место без действия (окружение, мебель, предметы, свет, фоновая жизнь — мерцание, дым, экраны, птицы). "
                         "Персонажей в uses локации НЕ ставь — они появляются в сценах на монтаже; в uses — только пропсы этого места. desc локации — как выглядит место, "
                         "why — какие сцены сценария в нём происходят.")
+        notes = {k: (v or "").strip() for k, v in (plan.get("preNotes") or {}).items() if k in KINDS and (v or "").strip() and (not kind or k == kind)}
+        notes_txt = "\n".join(f"- {KINDS[k]}: «{v}»" for k, v in notes.items())     # S19: комментарий автора к категории («в стиле Майнкрафта»)
+        d3 = plan.get("engine") == "3d"
         prompt = f"""Шаг «Препродакшен». Ролик — бумажная анимация ({engine}), герой — наш бумажный ёжик. Чтобы собрать его, заранее готовим элементы. Составь список того, что понадобится:
 - char — персонажи: наш ёжик в нужном образе и все, кто появляется в кадре;
 - prop — пропсы и реквизит: предметы, надписи и таблички, мебель, свет (лампы), текстуры пола и стен, мелочи эпохи — то, что делает место узнаваемым;
@@ -390,19 +428,30 @@ verdict: strong — можно писать сценарий, ok — есть ч
 - vfx — визуальные эффекты: вспышки, взрывы, дым, искры, пыль, глитч, свои переходы — только там, где они усиливают момент (0–5 на ролик), Claude нарисует их кодом;
 - broll — B-roll: реальные кадры (трейлер, геймплей, хроника, интервью), если сценарий на них опирается (0–5): desc — что именно за кадры и какой момент, q — что искать (название + trailer / gameplay / год).
 name — коротко (2–5 слов); desc — как выглядит или звучит: конкретно и узнаваемо (материал, цвет, эпоха, состояние, размер); why — в каком месте ролика нужен.
+variantOf — только у персонажей и пропсов: если это ТОТ ЖЕ персонаж или предмет в другом образе (Стив в скафандре — вариация Стива из Майнкрафта; ёжик в пижаме и ёжик в кепке — один ёжик),
+впиши точное name основного образа (из этого ответа или уже имеющихся); у основного и у всех остальных — пусто. desc вариации — чем этот образ отличается.
+dim — только у персонажей и пропсов, твоё предположение, каким ассетом его делать (автор может переключить), dimWhy — почему, 3–8 слов:
+{('  3d — объёмный: предмет, который в 3D-сцене стоит в пространстве и виден с разных сторон или крутится (мебель, техника, машины, здания, деревья, блоки), ПЕРСОНАЖ — ВСЕГДА 3d (настоящая объёмная модель со скелетом), если автор в комментариях к категории прямо не просит плоских / бумажных карточек; 2d — плоская бумажная карточка: надписи, таблички, плакаты, логотипы, фото-вырезки, картинки на экранах, мелочь в руках.') if d3 else '  ролик 2D — у всех 2d.'}
+
 Для звуков q — 2–4 английских слова для поиска в библиотеках звуков («elevator door open», «fluorescent light hum»); для B-roll q — что искать на YouTube; для остальных q пустое. uses — только у сцен, у остальных пустой список.
 {howmany}
 {('Автор просит: «' + focus + '» — это в первую очередь.') if focus else ''}
+{('Комментарии автора к категориям — учти в КАЖДОМ элементе этой категории (в name, desc и dim):' + chr(10) + notes_txt) if notes else ''}
 Не повторяй уже имеющееся:
 {have}
 
 {ctx(plan, 'idea', 'topic', 'qa', 'refs') if plan.get('flow') == 'idea' else ctx(plan, 'idea', 'topic', 'qa', 'beats', 'meanings', 'refs')}
 {('Сценарий ролика (script.md проекта):' + chr(10) + scr) if scr else ''}"""
-        schema = S({"elements": ARR(S({"kind": {"type": "string", "enum": list(KINDS)}, "name": STR, "desc": STR, "why": STR, "q": STR, "uses": ARR(STR), "sec": STR},
+        schema = S({"elements": ARR(S({"kind": {"type": "string", "enum": list(KINDS)}, "name": STR, "desc": STR, "why": STR, "q": STR, "uses": ARR(STR), "sec": STR, "variantOf": STR,
+                                       "dim": {"type": "string", "enum": ["2d", "3d", ""]}, "dimWhy": STR},
                                       ["kind", "name", "desc", "why"]))})
 
     elif action == "element":
         return element_spec(docs, params, sysp, genre)
+
+    elif action == "reuse":                                  # S15 «Уже было»: сверка новых элементов с библиотекой и прошлыми видео
+        A = docs_A(docs)
+        return A.rsapi().spec(A, docs, params, sysp)
 
     elif action == "charparts":
         return charparts_spec(docs, params, sysp)
@@ -604,6 +653,9 @@ verdict: continue — гипотеза работает, adjust — коррек
     elif action == "render":
         return render_spec(docs, params, sysp, genre)
 
+    elif action == "thumbprompt":                             # доска «Обложки»: «✨ Промпт по видео» — промпт ноды под выбранную модель
+        prompt, schema, read = thumbprompt_spec(plan, params, mode)
+
     else:
         raise ValueError(f"неизвестное действие: {action}")
     return {"system": sysp, "prompt": prompt, "schema": schema, "web": web, "read": read}
@@ -622,6 +674,79 @@ STYLE = ("Стиль канала — бумажная аппликация (к�
          "спрайты вклеены вырезками с белой обводкой; надписи — на тетрадных листках и от руки (шрифт Caveat) или плашками Rubik 900. "
          "Герой — наш бумажный ёжик (drawHog): серый, из сотен рваных полосок, тёмная маска, большие глаза, светлая мордочка, в духе «Ёжика в тумане». "
          "Круглого ёжика из chars.js не использовать. Палитру и фон подбирай под историю.")
+
+
+def look_of(plan):
+    """Визуал (техника / лук), ручки и герои видео из брифа (S14) — у каждого канала свои; '' если лука нет."""
+    try:
+        import ideas_api
+        return "\n".join(ideas_api.lkapi().brief_lines(ideas_api, plan.get("brief") or {}, P.index()["videos"].get(plan.get("id"), {}).get("channel")))
+    except Exception:
+        return ""
+
+
+def thumbprompt_spec(plan, params, mode):
+    """«✨ Промпт по видео» на доске обложек: Claude читает сценарий, название, бриф (визуал и герои канала), препродакшен
+    и пишет промпт для модели ноды. Стиль и герой — только из канала и брифа: у другого канала свои."""
+    import thumbs_api
+    b, short = plan["id"], mode != "long"
+    model = params.get("model") or ""
+    kind = "claude" if model == "claude" else "flux" if model.startswith("flux:") else "hf"
+    script = script_of(plan) or "(сценария ещё нет — опирайся на идею, контекст и препродакшен)"
+    fin = [t["text"] for t in plan.get("titles") or [] if t.get("star")]
+    best = next((t.get("text") for t in (plan.get("pack") or {}).get("titles") or [] if t.get("best")), "")
+    look = look_of(plan)
+    els = [e for e in plan.get("elements") or [] if e.get("status") != "drop" and e.get("kind") in ("char", "prop", "scene")][:30]   # коротко: лимит токенов
+    els_txt = ("Препродакшен (персонажи, пропсы, места ролика; ✓ — утверждён автором):\n" + "\n".join(
+        f"- [{KINDS.get(e['kind'])}] @[{e.get('name', '')}]{' ✓' if e.get('status') == 'ok' else ''}" + (f" — {' '.join((e.get('desc') or '').split())[:140]}" if e.get("desc") else "")
+        for e in els)) if els else ""
+    refs, read = [], []
+    for i, r in enumerate((params.get("refs") or [])[:8], 1):
+        try:
+            f = thumbs_api.file_path(b, r.get("src", ""))
+        except Exception:
+            continue
+        if os.path.isfile(f):
+            read.append(os.path.abspath(f))
+            refs.append(f"- @img{i} «{r.get('name') or 'картинка'}»: {os.path.abspath(f).replace(chr(92), '/')}")
+    how = {
+        "hf": "Модель — генератор картинок (" + (params.get("label") or model) + "). Промпт пиши ПО-АНГЛИЙСКИ, одним абзацем 60–120 слов: "
+              "главный объект и его эмоция, композиция и крупность, фон (однотонный или простой), свет, стиль рисовки канала словами, "
+              "место под надпись. Надпись на обложке, если нужна, — в кавычках и ровно как писать (кириллицу эти модели пишут неточно — держи её короткой). "
+              "Референсы упоминай как @img1, @img2 … (так их видит модель) и говори, что взять из каждого.",
+        "flux": "Модель — FLUX.2 на своей видеокарте. Промпт ПО-АНГЛИЙСКИ, 40–80 слов: объект, эмоция, композиция, фон, стиль. "
+                "Текста в картинке НЕ проси: надпись (1–3 слова) верни отдельно в title — её наложат шрифтом, и в промпте оставь под неё место. "
+                "Референсы — @img1, @img2 ….",
+        "claude": "Модель — Claude рисует обложку кодом движка канала. Промпт ПО-РУССКИ: концепт обложки — что в кадре, эмоция героя, "
+                  "фон, текст на обложке (если нужен), какие элементы препродакшена взять (@[Название]) и что взять из референсов @img1 ….",
+    }[kind]
+    wish = (params.get("text") or "").strip()
+    prompt = f"""Доска «Обложки»: напиши промпт для {'обложки шортса (9:16)' if short else 'превью длинного видео (16:9)'} ролика «{plan.get('name', '')}».
+
+{how}
+
+Что хочет автор (его черновик промпта — сохрани его мысль, если она есть): {wish or '(пусто — придумай сам по ролику)'}
+
+Название ролика: {best or plan.get('name', '')}{(chr(10) + 'Финалисты названия (★): ' + '; '.join(fin)) if fin else ''}
+{ctx(plan, 'idea', 'topic')}
+{('Визуал канала и герои этого видео:' + chr(10) + look) if look else ''}
+{els_txt}
+
+Сценарий:
+{script[:5000]}
+
+{('Картинки, подключённые к промпту (посмотри их через Read):' + chr(10) + chr(10).join(refs)) if refs else 'Картинок к промпту не подключено.'}
+
+Как думать:
+- Стиль, палитра и герой — только из канала, брифа и картинок выше. Не придумывай героя, которого нет у канала и в ролике; нет постоянного героя — главный образ берёт сам ролик.
+- Обложка — образ ролика без спойлера главного поворота: одна сильная сцена или предмет + реакция, 1–3 образа, без ребуса, читается в маленьком размере.
+- Текст на обложке не повторяет название, а дополняет его (число, сумма, короткое слово); можно и без текста.
+- {'Важное — в зоне y 15–75 % высоты и по центру ширины: низ и правый край шортса закрывает интерфейс.' if short else 'Важное — не в правом нижнем углу (там длительность видео).'}
+- Учитывай память канала из системного промпта: правила автора по прошлым обложкам главнее этих.
+
+Верни: prompt — готовый промпт; title — надпись на обложке (1–3 слова) или пусто; why — одна фраза по-русски: какой образ выбран и почему."""
+    schema = S({"prompt": STR, "title": STR, "why": STR}, ["prompt", "title", "why"])
+    return prompt, schema, read
 
 
 PARTS = {"cover": ("обложка", "COVER"), "frame": ("первый кадр", "FRAME")}
@@ -754,9 +879,15 @@ def render_spec(docs, params, sysp, genre):
         else "- Эскизов нет — композицию строй по описанию."
     edit = fx_prompt(fb, fxs, base, data, wd, v) if base and (fb or fxs) else ""
     what = "обложку и первый кадр шортса (оба 1080×1920)" if short else "превью 16:9 и первый кадр (холст 1080×1920, рисуй в центральной полосе 16:9)"
-    prompt = f"""Задача: отрисовать {what} для ролика «{t.get('text', '')}» нашим движком.
+    look = look_of(plan)
+    style = (f"Визуал канала и герои этого видео (из брифа — главнее всего; у каждого канала свои):\n{look}\n"
+             "Рисуешь 2D-движком (тулкит paper.js): переводи этот визуал в 2D. Героя бери только из этих строк, концепта и препродакшена — "
+             "нет постоянного героя, значит его и не рисуй (drawHog — только если герой канала — бумажный ёжик).") if look else STYLE
+    script = script_of(plan)
+    best = next((x.get("text") for x in (plan.get("pack") or {}).get("titles") or [] if x.get("best")), "")
+    prompt = f"""Задача: отрисовать {what} для ролика «{t.get('text') or best or plan.get('name', '')}» нашим движком.
 
-{STYLE}
+{style}
 
 Концепт от автора (главное — следуй ему):
 - Обложка (полка шортсов, рекомендации, страница канала; статичная, считывается в маленьком размере): {c.get('desc') or '(нет описания)'}
@@ -767,6 +898,7 @@ def render_spec(docs, params, sysp, genre):
 {sketch}
 
 Идея ролика: {(idea_of(plan) or {}).get('text', '')}
+{('Сценарий ролика (обложка — его образ, без спойлера главного поворота):' + chr(10) + script[:5000]) if script else ''}
 
 Картинки автора из «Смыслы в образы» — используй подходящие как вырезки (photo / sticker), посмотреть можно через Read:
 {pic_lines}
@@ -781,13 +913,13 @@ def render_spec(docs, params, sysp, genre):
 2. Запиши в текущую папку файл scene.js (только его) по контракту:
    const PICS = {{ i3: '/files/…png' }};              // нужные картинки -> IMG.i3
    const COVER = {{ draw(ctx) {{ … }} }};              // обложка
-   const FRAME = {{ t: 0.6, draw(ctx, T) {{ … }} }};   // первые ~2 с ролика, T — секунды: лёгкое движение (дыхание ёжика t: T, дрейф фона, popIn/slam); к T=0.6 кадр уже цепляет
+   const FRAME = {{ t: 0.6, draw(ctx, T) {{ … }} }};   // первые ~2 с ролика, T — секунды: лёгкое движение (дыхание героя t: T, дрейф фона, popIn/slam); к T=0.6 кадр уже цепляет
 3. Отрисуй командой (ровно так): {cmd}
    Получишь cover.png, frame.png (T=0.6), frame_0.2.png, frame_1.5.png и ошибки страницы, если есть.
-4. Посмотри PNG через Read, сравни с концептом и эскизом, исправь scene.js и отрисуй снова. 2–4 прохода, пока не станет хорошо.
+4. Посмотри PNG через Read, сравни с концептом и эскизом, исправь scene.js и отрисуй снова. 1–2 прохода; третий — только если кадр сломан или элемент не узнать. На промежуточных проходах смотри одну главную картинку (element.png / лист), остальные — на последнем: каждая картинка дорогая.
 
 Правила кадра:
-- Обложка: яркая и чистая, 1–3 образа, без ребуса; крупный объект или ёжик с сильной эмоцией. Текст — только если он есть в концепте
+- Обложка: яркая и чистая, 1–3 образа, без ребуса; крупный объект или герой с сильной эмоцией. Текст — только если он есть в концепте
   (Rubik 900 или плашка label, толстая обводка), и он не повторяет название. Всё важное — в зоне y 150–1400 и x 60–1020.
 - Первый кадр: живая сцена без заголовков (субтитры добавит движок, зона y 1400–1540 свободна), читается за секунду.
 - Фон шире кадра, без белых дыр.
@@ -891,7 +1023,7 @@ def prop3_engine(docs, e, rel, wd, blender):
    Собери командой (ровно так): python {br} model.py  → model.glb рядом + размеры; ошибки Python — в ответе, лог — model.log.
    В prefab.js: models: {{ m1: 'model.glb' }}, kind: 'model', model: 'm1', h: <высота>, detail(w, o, G) {{ … наклейки и мелочи поверх … }}."""
     return f"""Движок — 3D-пропс для диорамы (props3d.js поверх stage3d.js, three.js). Стиль 3D канала: {look} (материалы P3 делают его сами — не задавай свои материалы без нужды).
-1. Прочитай шапку {_fwd(os.path.join(P.ENGINE, 'props3d.js'))} (P3.box, cyl, lathe, extrude, sticker, part, p) и образец {_fwd(os.path.join(P.STANDS, 'samples', 'crt3d', 'prefab.js'))} — ЭЛТ-монитор фигурами кодом.
+1. Прочитай шапку {_fwd(os.path.join(P.ENGINE, 'props3d.js'))} (Read с limit по шапке; P3.box, cyl, lathe, extrude, sticker, part, p) и образец {_fwd(os.path.join(P.STANDS, 'samples', 'crt3d', 'prefab.js'))} — ЭЛТ-монитор фигурами кодом.
    Бумажный тулкит для рисунков на наклейках (экраны, логотипы, надписи, кнопки): {_fwd(os.path.join(P.STANDS, 'paper.js'))}.
 2. {pick}
    Запиши в текущую папку prefab.js (контракт — образец):
@@ -1045,9 +1177,24 @@ def charparts_spec(docs, params, sysp):
                 shutil.copy2(src, os.path.join(wd, f))
         if os.path.isdir(os.path.join(bd, "costumes")):
             shutil.copytree(os.path.join(bd, "costumes"), os.path.join(wd, "costumes"), dirs_exist_ok=True)
+    # S22: вариация без своих версий — от модели основного (Blender): тот же персонаж, меняются только отличия образа; было — каждый «Марио …» с нуля по 25–30 мин
+    vbase = None
+    if not base and not any(r.get("rigchar") for r in renders):
+        mo = preprod.main_of(e, plan)
+        mr = next((r for r in reversed((mo or {}).get("renders") or []) if r.get("rigchar") and r.get("dir")
+                   and os.path.isfile(os.path.join(P.resolve("render/" + r["dir"]), "model.py"))), None)
+        if mr:
+            bd = P.resolve("render/" + mr["dir"])
+            got = [f for f in ("prefab.js", "rig.json", "model.py", "model.glb") if os.path.isfile(os.path.join(bd, f))]
+            for f in got:
+                shutil.copy2(os.path.join(bd, f), os.path.join(wd, f))
+            vbase = dict(mr, _main=mo.get("name"), _files=", ".join(got))
     params["_wd"], params["_rel"], params["_v"] = wd, rel, v
     slug = re.sub(r"[^a-z0-9-]+", "-", (e.get("slug") or e["id"]).lower()).strip("-") or e["id"]
-    if (e.get("make") or params.get("make")) == "blender":       # S9: 3D-персонаж в Blender (model.glb с арматурой) — rig 'model'
+    blender = (e.get("make") or params.get("make")) == "blender" or bool(vbase) \
+        or (not params.get("make") and base is not None and os.path.isfile(os.path.join(wd, "model.py")))   # S22: «Поправить» Blender-героя — снова Blender, не карточка
+    if blender:                                                  # S9: 3D-персонаж в Blender (model.glb с арматурой) — rig 'model'
+        params["_vbase"] = vbase
         params["_blender"] = True
         return charblender_spec(docs, params, sysp, e, wd, rel, v, slug, base)
     rc = _fwd(os.path.join(P.STANDS, "render_char.js"))
@@ -1149,8 +1296,16 @@ def charblender_spec(docs, params, sysp, e, wd, rel, v, slug, base):
     if base:
         edit = (f"ПРАВКА. Это версия v{v}; в папке уже лежат model.py, model.glb и prefab.js прошлой версии v{base.get('v')} — начни с них, сделай ровно то, что просит автор:\n"
                 + "\n".join(f"- «{t}»" for t in notes) + (f"\nПрошлая версия (лист): {_fwd(P.resolve(base['img']))}" if base.get("img") else ""))
+    vb = params.get("_vbase")
+    if vb and not base:                                          # S22: вариация — от модели основного персонажа
+        edit = (f"ВАРИАЦИЯ. Это тот же персонаж, что «{vb.get('_main')}», в другом образе. В папке уже лежат {vb.get('_files')} ОСНОВНОГО (v{vb.get('v')}) — "
+                "начни с них, НЕ строй заново: сохрани пропорции, лицо, скелет и имена костей (клипы и позы основного должны подходить), "
+                f"поменяй только то, чем этот образ отличается: {e.get('desc') or e.get('name')}"
+                + ("\nЕщё автор просит:\n" + "\n".join(f"- «{t}»" for t in notes) if notes else "")
+                + (f"\nОсновной (лист): {_fwd(P.resolve(vb['img']))}" if vb.get("img") else ""))
     prompt = f"""Задача: главный герой канала «{ch.get('name', '')}» — «{e.get('name', '')}» — как 3D-МОДЕЛЬ В BLENDER СО СКЕЛЕТОМ, чтобы его можно было ставить в сцены и двигать (позы, клипы, ходьба, эмоции).
 Описание: {e.get('desc') or '—'}
+{preprod.element_brief(e, docs["plan"], docs["data"])}
 
 Референсы (посмотри все через Read — силуэт, пропорции, цвета, детали):
 {ref_lines}
@@ -1186,7 +1341,7 @@ def charblender_spec(docs, params, sysp, e, wd, rel, v, slug, base):
    Позы: node {rp} {url} {_fwd(os.path.join(wd, 'pose_up'))} --params '{{"pose": {{"bones": {{"armL": {{"rot": 1.2}}, "armR": {{"rot": 1.2}}}}}}}}'
          node {rp} {url} {_fwd(os.path.join(wd, 'pose_step'))} --params '{{"pose": {{"bones": {{"legL": {{"rot": 0.5}}, "legR": {{"rot": -0.4}}, "armL": {{"rot": -0.3}}, "armR": {{"rot": 0.3}}}}}}}}'
    Посмотри через Read: похоже ли на референсы (силуэт, цвета, клыки, уши, причёска), нет ли дыр и вывернутой геометрии, руки поднимаются обе и по-человечески, сетка не рвётся в суставах.
-   Исправь model.py / prefab.js, собери и сними снова — 2–4 прохода.
+   Исправь model.py / prefab.js, собери и сними снова — 1–2 прохода (третий — только если модель сломана).
 
 В ответе: summary — что получилось (2–3 предложения); fn — тип скелета (как skeleton в prefab.js); note — что автору проверить."""
     return {"system": sysp, "prompt": prompt, "cwd": wd, "timeout": 3000,
@@ -1333,7 +1488,9 @@ def element_spec(docs, params, sysp, genre):
 - Перенеси код рисования этого предмета (и только нужные ему функции и константы) как есть; всё — внутри файла, без глобальных имён, которые могут столкнуться
   с другими prefab.js (оберни помощников в объект или замыкание). 0 — центр низа, перед смотрит на +z: если префаб строился «по месту» (home), сдвинь к началу координат.
 - Карточка (kind 'card', 2D-рисунок) -> P3.sticker / тонкая коробка с наклейкой; коробка (kind 'box') -> P3.box с гранями-наклейками; group — как есть внутри build.
-- params префаба — в params; каналы (channels), если были, — тоже.
+- params префаба — в params; каналы (channels), если были, — тоже.{f'''
+- В сцене {len(fr["objs"])} копий этого предмета (объекты {", ".join(fr["objs"])}) — пропс ОДИН. Посмотри их params в scene.json: всё, чем копии
+  отличаются (например, горит / не горит, цвет), должно стать params пропса, а не отдельными моделями.''' if len(fr.get("objs") or []) > 1 else ""}
 Проверь: node {rp} /rscene/{rel}/prefab.js {_fwd(wd)} --port {docs['port']} — 4 ракурса и лист element.png; посмотри через Read, поправь, если не похоже на предмет в сцене.
 В ответе: summary — что вынесено и что поменялось; fn — пусто; note — что автору проверить."""
         sysp_x = "Ты — технический художник Claude Studio: выносишь предметы бумажной 3D-анимации из кода сцены в отдельные пропсы, не меняя их вид. Отвечай строго JSON по схеме."
@@ -1368,6 +1525,17 @@ def element_spec(docs, params, sysp, genre):
         else:
             flat = (f"ЭТОТ ПРОПС — ВАРИАЦИЯ {f3.get('i')} из {f3.get('n')} модели «{f3.get('src_name')}». В папке уже лежит её prefab.js (кадры исходной: {_fwd(src_img)}). "
                     f"Начни с него и сделай заметно другую версию того же предмета: {f3.get('part')}. Стиль, масштаб, эпоха и способ сборки — те же; name — новое.")
+    mo = preprod.main_of(e, plan) if e.get("kind") in ("char", "prop") else None
+    if mo and not base and not flat and not renders:          # S18: первый черновик вариации — от кода основного образа
+        rm = preprod.el_render(mo)
+        if rm and bool(rm.get("three3")) == prop3:
+            sd = P.resolve("render/" + rm["dir"])
+            for f in ("element.js", "prefab.js", "model.py", "model.glb"):
+                if os.path.isfile(os.path.join(sd, f)) and not os.path.isfile(os.path.join(wd, f)):
+                    shutil.copy2(os.path.join(sd, f), os.path.join(wd, f))
+            flat = (f"ЭТО ВАРИАЦИЯ @[{mo.get('name')}] — тот же {preprod.ONE.get(e['kind'])} в другом образе. В папке уже лежит код основного образа "
+                    f"(его черновик: {_fwd(P.resolve(rm['img']))}{', функция ' + rm['fn'] if rm.get('fn') else ''}). Начни с него: лицо, пропорции, цвета и манера — "
+                    "те же, меняй только то, чем этот образ отличается по описанию (одежда, предметы, поза, эмоция). Функцию назови по-новому, чтобы не столкнуться с основной.")
     if prop3 and not base and not flat:
         r2 = next((r for r in reversed(renders) if not r.get("three3") and r.get("img")), None)
         if r2:
@@ -1441,14 +1609,18 @@ def element_spec(docs, params, sysp, genre):
                 "(мерцание ламп, дым, пылинки, экраны, листва, птицы). НИКАКИХ персонажей (их ставят сцены на монтаже), проходов и событий по времени. "
                 "Камера: 3–6 ключей w.camKeys с паузами между ними — каждый ключ = РАКУРС, хорошая точка съёмки этого места для вертикального кадра "
                 "(общий план, средний у главного предмета, крупный, «из-за плеча» героя, если место для него); при переводе в редактор ключи станут ракурсами локации. "
-                "Собери место со всех сторон, куда смотрят ракурсы, без дыр.\n" + edit)
+                "Собери место со всех сторон, куда смотрят ракурсы, без дыр. "
+                "S22, по правкам автора: место БОГАТОЕ, а не пустое — задний план с деталями эпохи и места (как в игре / на референсе), а не голый горизонт; "
+                "свет с заметными мягкими тенями и пятнами тепла / холода, а не плоский яркий; но ничего «для отсылки», что не про это место.\n" + edit)
     if prop3:
         engine = prop3_engine(docs, e, rel, wd, P.blender())
     elif three:
         ex = _example_3d(docs["root"])
         engine = f"""Движок — 3D (stage3d.js шаблона, three.js): картонная диорама в духе Paper Mario + свет и пост-эффекты Octopath.
-1. Прочитай шапку {_fwd(os.path.join(P.ENGINE, 'stage3d.js'))} (API мира: card, box, plane, lamp, sun, ambient, motes, shaft, glow, camKeys; герои hogCard, spriteCard; грабли) и {_fwd(os.path.join(P.ENGINE, 'moves3d.js'))}.
-   Примеры целых миров: {'; '.join(f'{_fwd(p)} — {w}' for p, w in ex) or '(нет)'}. Бумажный тулкит для текстур карточек и drawHog: {paper}.
+1. Прочитай ТОЛЬКО шапку {_fwd(os.path.join(P.ENGINE, 'stage3d.js'))} — Read с limit: 40 (API мира: card, box, plane, lamp, sun, ambient, motes, shaft, glow, camKeys; герои hogCard, spriteCard; грабли).
+   ЭКОНОМИЯ: файлы целиком не читай — каждая прочитанная строка оплачивается на каждом следующем шаге. Движения — {_fwd(os.path.join(P.ENGINE, 'moves3d.js'))},
+   примеры целых миров — {'; '.join(f'{_fwd(p)} — {w}' for p, w in ex) or '(нет)'}, бумажный тулкит для текстур карточек и drawHog — {paper}:
+   только если нужен конкретный приём — Grep по имени и Read нужного куска (offset/limit).
 2. Запиши в текущую папку файл element.js (только его):
    const PICS = {{ r1: '/files/…png' }};          // если нужны картинки (spriteCard / текстуры) -> IMG.r1
    const MODELS = {{ m1: '/files/…/x.glb' }};      // только если автор взял 3D-модели в работу (список ниже) -> w.model('m1', {{ h, pos, name, matte: true }})
@@ -1461,7 +1633,7 @@ def element_spec(docs, params, sysp, genre):
    Получишь element.png (T=0.6), element_0.2.png и element_2.5.png (движение камеры) и ошибки страницы, если есть."""
     else:
         engine = f"""Движок — 2D, бумажный тулкит канала.
-1. Прочитай тулкит {paper}: cut/cutRect/cutEll/torn, paperBG, desk, photo, sticker, note, label, scrawl, stamp, light, tint, flakes, popIn,
+1. Тулкит {paper} (целиком НЕ читай — экономия; нужна точная сигнатура — Grep по имени функции): cut/cutRect/cutEll/torn, paperBG, desk, photo, sticker, note, label, scrawl, stamp, light, tint, flakes, popIn,
    drawHog(ctx, x, yНог, рост, {{kind: 'adult'|'kid'|'friend', look, lid, mouth, armL, armR, lenL, lenR, hoodie, cap, glasses, prop, walk, backView, t}}) и aim.
    Хелперы lib.js глобальные: W=1080, H=1920, TAU, lerp, remap, clamp, E.*, rng, rr, circle, font(size, weight), vgrad, radial, imgFit.
 2. Запиши в текущую папку файл element.js (только его):
@@ -1487,7 +1659,7 @@ def element_spec(docs, params, sysp, genre):
 
 {('В этой сцене стоят (обязательно размести их, узнаваемо и в масштабе; готовый код — скопируй функцию из их element.js к себе и вызови, не рисуй заново):' + chr(10) + chr(10).join(inside)) if inside else ''}
 
-{('Уже нарисованные элементы этого ролика — можно брать их код (Read) и держать общий стиль и палитру:' + chr(10) + chr(10).join(done)) if done else ''}
+{('Уже нарисованные элементы этого ролика (общий стиль и палитра; их код читай, только если ставишь элемент в кадр, — Grep по функции, не весь файл):' + chr(10) + chr(10).join(done)) if done else ''}
 
 {preprod.element_brief(e, plan, data)}
 
@@ -1496,8 +1668,9 @@ def element_spec(docs, params, sysp, genre):
 {edit}
 
 {engine}
-4. Посмотри PNG через Read, сравни с описанием и референсами, исправь {'prefab.js (и model.py)' if prop3 else 'element.js'} и отрисуй снова. 2–4 прохода, пока не станет хорошо.
+4. Посмотри PNG через Read, сравни с описанием и референсами, исправь {'prefab.js (и model.py)' if prop3 else 'element.js'} и отрисуй снова. 1–2 прохода; третий — только если кадр сломан или элемент не узнать. На промежуточных проходах смотри одну главную картинку (element.png / лист), остальные — на последнем: каждая картинка дорогая.
 
+Ходы: всё, что нужно прочитать (референсы, код состава, кусок тулкита), запрашивай ОДНИМ ответом — несколько Read / Grep сразу, а не по одному: каждый лишний ход перечитывает всю историю заново.
 Правила: читается за секунду; узнаваемая конкретика важнее общих форм; без белых дыр по краям; все подпути одной фигуры — по часовой стрелке (правило nonzero).
 Жанр: {GENRE[genre]}
 
@@ -1563,7 +1736,7 @@ use — work (можно брать в ролик как есть) или ref (�
 
 
 def sound_spec(docs, params, sysp):
-    """«✨ Подобрать звук»: Claude searches with sounds.py (library, Freesound, Commons) and the web, returns 3–5 candidates;
+    """«✨ Подобрать звук»: Claude searches with sounds.py (YouTube first, then library, Freesound, Commons) and the web, returns 3–5 candidates;
     apply() downloads them into the element."""
     plan = docs["plan"]
     e = next((x for x in plan.get("elements") or [] if x["id"] == params.get("el")), None)
@@ -1586,18 +1759,21 @@ def sound_spec(docs, params, sysp):
 {('Как автор хочет свести слои: «' + mixnote + '» — если нужен недостающий слой, ищи именно его.') if mixnote else ''}
 {brief}
 
-Найди 3–5 лучших кандидатов.
-1. Сначала библиотека пайплайна и открытые базы: запускай
-   {py} {snd} search "<английский запрос>"
-   Можно несколько раз с разными запросами (синонимы, точнее, шире{', например: ' + e['q'] if e.get('q') else ''}). Получишь JSON: url — что качать, page, dur (с), license, tags.
-2. Если там нет подходящего — поищи в интернете (WebSearch / WebFetch): Freesound, Wikimedia Commons, YouTube (звуки и эмбиенты), myinstants для мемов.
-   Для YouTube и длинных записей укажи start и end (секунды) — кусок с нужным звуком, если его можно понять по описанию или таймкодам; иначе оставь пустыми.
-Выбирай по названию, описанию и длительности: акцент — короткий (до 3 с); эмбиент — 10–60 с ровного фона без речи и музыки; музыка — трек без слов в нужном настроении.
-Лицензии: библиотека пайплайна и CC0 лучше, чем Attribution; NC и неизвестные — только если нет другого, тогда скажи об этом в why.
+Найди 3–5 лучших кандидатов. Главный источник — YouTube: там больше всего звуков, автору нравятся именно они.
+1. Сначала YouTube: запускай
+   {py} {snd} search "<запрос>" --src youtube
+   Несколько раз с разными запросами: по-английски с «sound effect» / «sfx» / «ambience», по-русски («звук …»), мем — его названием{'; подсказка: ' + e['q'] if e.get('q') else ''}.
+   Получишь JSON: url, title, dur (с), author (канал), tags (просмотры). Больше просмотров и понятное название — обычно лучше.
+   Ролик длиннее ~15 с — загляни внутрь: {py} {snd} peek "<url>" (главы, таймкоды из описания, most_replayed — самые пересматриваемые места)
+   и укажи start и end (секунды) — кусок с нужным звуком; акцент — 1–4 с, эмбиент — 10–60 с. Не угадывается — оставь пустыми.
+2. Чтобы было из чего выбрать, добавь 1–2 кандидата из открытых баз: {py} {snd} search "<английский запрос>" --src lib,freesound,commons
+3. Ничего не подошло — WebSearch / WebFetch (myinstants для мемов, другие сайты со звуками).
+Выбирай по названию, описанию и длительности: акцент — короткий; эмбиент — ровный фон без речи и музыки; музыка — трек без слов в нужном настроении.
+Не бери ролики-компиляции «100 звуков» без таймкодов, звуки с голосом поверх и вотермарками «subscribe». Права на звуки с YouTube у их авторов — в why ничего про это писать не нужно.
 candidates — url ровно такой, какой вернул search (или ссылка на страницу / видео), title — понятное название звука, why — почему он (1 фраза),
 start/end — числа или null; page, license, author — перепиши из результата search, если они там были."""
     return {"system": sysp, "prompt": prompt, "timeout": 900,
-            "tools": ["WebSearch", "WebFetch", "Bash"], "allowed": ["WebSearch", "WebFetch", f"Bash({py} {snd} search:*)"],
+            "tools": ["WebSearch", "WebFetch", "Bash"], "allowed": ["WebSearch", "WebFetch", f"Bash({py} {snd} search:*)", f"Bash({py} {snd} peek:*)"],
             "schema": S({"candidates": ARR(S({"url": STR, "title": STR, "why": STR, "start": {"type": ["number", "null"]}, "end": {"type": ["number", "null"]},
                                               "page": STR, "license": STR, "author": STR}, ["url", "title", "why"]))})}
 
@@ -1773,6 +1949,12 @@ def apply(action, docs, params, res):
                 ops.append({"op": "set", "path": ["thumbs", cid, "fx", part, "text"], "value": ""})
         return [(key, ops)], f"Claude отрисовал версию v{v}"
 
+    if action == "qopts":
+        have = {q["id"] for q in plan.get("qa") or []}
+        ops = [{"op": "set", "path": ["qa", it["id"], "opts"], "value": [o.strip() for o in it.get("opts") or [] if (o or "").strip()][:4]}
+               for it in res.get("items") or [] if it.get("id") in have and it.get("opts")]
+        return [(key, ops)], f"Claude: варианты к {len(ops)} вопросам"
+
     if action in ("questions", "challenge"):
         qa = plan.get("qa") or []
         rnd = max([int(q.get("round") or 1) for q in qa] + [0]) + 1
@@ -1782,7 +1964,8 @@ def apply(action, docs, params, res):
             if q.get("q") and norm(q["q"]) not in seen:
                 seen.add(norm(q["q"]))
                 ops.append({"op": "add", "path": ["qa"], "item": {"id": nid("q"), "q": q["q"].strip(), "a": "", "why": q.get("why", ""),
-                                                                 "group": q.get("group", ""), "round": rnd, "by": "claude", "from": action}})
+                                                                 "group": q.get("group", ""), "round": rnd, "by": "claude", "from": action,
+                                                                 "opts": [o.strip() for o in q.get("opts") or [] if (o or "").strip()][:4]}})
         if action == "questions":
             return [(key, ops)], f"Claude: +{len(ops)} вопросов"
         ops.insert(0, {"op": "set", "path": ["challenge"], "value": {"verdict": res.get("verdict"), "points": res.get("points", []), "at": t, "round": rnd}})
@@ -1800,6 +1983,17 @@ def apply(action, docs, params, res):
                         "q": e.get("q", "") if e["kind"] in ("sound", "broll") else "", "status": "", "refs": [], "by": "claude"}
                 if e["kind"] in ("char", "prop"):
                     cast.setdefault(norm(item["name"]), item["id"])
+                    if e.get("dim") in ("2d", "3d"):                  # S19: Claude предполагает 2D / 3D (автор переключает на карточке)
+                        if e["kind"] == "prop":
+                            item["dim"] = e["dim"]
+                        else:
+                            item["form"] = "rig" if e["dim"] == "3d" else ""
+                        item["dimBy"] = {"by": "claude", "why": (e.get("dimWhy") or "").strip()[:120]}
+                    elif e["kind"] == "char" and plan.get("engine") == "3d":   # S22: персонаж 3D-видео без пометки — объёмный (не 2D-черновик)
+                        item["form"] = "rig"
+                        item["dimBy"] = {"by": "claude", "why": "персонаж 3D-видео — объёмный по умолчанию"}
+                    if (e.get("variantOf") or "").strip() and norm(e["variantOf"]) != norm(item["name"]):
+                        item["_var"] = e["variantOf"]                 # S18: вариация того же персонажа / пропса — id основного ниже, когда известны все имена
                 elif e["kind"] == "scene":
                     item["_uses"] = e.get("uses") or []
                     if (e.get("sec") or "").strip():                 # S11: сцена сценария, по которой сделана эта
@@ -1809,11 +2003,19 @@ def apply(action, docs, params, res):
             names = o["item"].pop("_uses", None)
             if names is not None:
                 o["item"]["uses"] = list(dict.fromkeys(cast[norm(n)] for n in names if norm(n) in cast))
+            vn = o["item"].pop("_var", None)
+            m = cast.get(norm(vn)) if vn else None
+            if m and m != o["item"]["id"]:
+                x = next((y for y in (plan.get("elements") or []) + [p["item"] for p in ops] if y["id"] == m), None)
+                o["item"]["variantOf"] = (x or {}).get("variantOf") or m       # вариация вариации -> к основному: семья в один уровень
         by = {}
         for o in ops:
             by[o["item"]["kind"]] = by.get(o["item"]["kind"], 0) + 1
         many = {"scene": "сцены", "char": "персонажи", "prop": "пропсы", "sound": "звуки", "vfx": "эффекты", "broll": "B-roll"}
         return [(key, ops)], "Claude: " + (", ".join(f"{many.get(k, k)} +{n}" for k, n in by.items()) or "новых элементов нет")
+
+    if action == "reuse":
+        return docs_A(docs).rsapi().apply(docs, params, res)
 
     if action in ("split3d", "vary3d"):
         e, r = _src3d(plan, params)
@@ -1827,7 +2029,7 @@ def apply(action, docs, params, res):
             ops.append({"op": "add", "path": ["elements"], "item": {
                 "id": iid, "kind": "prop", "dim": "3d", "name": x["name"].strip()[:80], "desc": x.get("desc", ""),
                 "why": (f"Часть модели @[{e.get('name')}]" if mode == "split" else f"Вариация {i} из {len(items)} модели @[{e.get('name')}]") + (f" — {e.get('why')}" if e.get("why") else ""),
-                "status": "", "refs": [], "by": "claude",
+                "status": "", "refs": [], "by": "claude", **({"variantOf": e.get("variantOf") or e["id"]} if mode == "vary" else {}),   # S18: одна карточка с оригиналом
                 "from3d": {"el": e["id"], "rid": r["id"], "dir": r["dir"], "mode": mode, "part": x.get("part", ""), "i": i, "n": len(items), "src_name": e.get("name", "")}}})
             spawn.append(iid)
         params["_spawn"] = spawn
@@ -2006,6 +2208,9 @@ def apply(action, docs, params, res):
         n = sum(1 for o in ops if o["op"] == "add")
         return [(key, ops)], f"Claude: +{n} звуков для «{e.get('name', '')}»" + (f" (не скачались: {len(bad)} — {'; '.join(bad)[:200]})" if bad else "")
 
+    if action == "thumbprompt":                               # промпт кладёт в ноду сама страница доски (onResult)
+        return [], "Claude написал промпт: " + (res.get("why") or "")[:160]
+
     raise ValueError(f"неизвестное действие: {action}")
 
 
@@ -2107,8 +2312,16 @@ def sceneagent_spec(docs, e, doc, c):
     aut = "\n".join(f"- {names.get(k, k)} ({k}): {', '.join(v)}" for k, v in au.items()) or "—"
     hist = "\n".join(f"- {'автор' if h.get('by') == 'author' else 'Claude'}: {h.get('desc')}" for h in c.get("history") or [] if h.get("desc")) or "—"
     frame = c.get("frame")
+    refs = [(r, P.resolve(r["img"])) for r in e.get("refs") or [] if r.get("img") and os.path.isfile(P.resolve(r["img"]))]
+    rtxt = "\n".join(f"- {_fwd(p)} (адрес для PICS: '/{r['img']}')" + (f" — «{r['note']}»" if r.get("note") else "") for r, p in refs)
+    rtxt = (f"""Картинки-референсы, которые автор приложил к этой сцене (смотри через Read, когда просьба про «референс», «фото», «картинку»):
+{rtxt}
+""" + ("""Вставить картинку прямо в кадр (фото на постер, экран, рамку): в prefabs.js добавь её в PICS (`PICS.yacht = '/files/…'` или в сам объект PICS) —
+она придёт в draw карточки как IMG.<ключ> (уже загруженная); рисуй её g.drawImage с кропом под формат карточки, без растяжения.
+""" if c.get("prefabs") else "Вставить картинку в кадр ты сейчас не можешь (нужна правка вида предметов) — скажи автору включить Opus.\n")) if refs else ""
     prompt = f"""Просьба автора: «{c['ask']}»
 
+{rtxt}
 Время курсора: {c['t']:.2f} с. Выбрано: {', '.join(sel) or 'ничего'}.
 {('Кадр сцены в этот момент (так её видит зритель): ' + _fwd(frame) + ' — посмотри через Read.') if frame else ''}
 Полный документ: {_fwd(os.path.join(work, 'scene.json'))}; код предметов (только читать): {_fwd(os.path.join(work, 'prefabs.js'))}.
@@ -2134,7 +2347,7 @@ def sceneagent_spec(docs, e, doc, c):
 - Ничего не выдумывай про объекты: только id и префабы из списка выше."""
     sysp = ("Ты — помощник автора в редакторе 3D-сцены бумажной анимации (Claude Studio). Ты правишь сцену операциями над её JSON-документом: "
             "точно, минимально, по просьбе. Ручные правки автора священны. Отвечай строго JSON по схеме.")
-    dirs = [work] + ([os.path.dirname(frame)] if frame else [])
+    dirs = [work] + ([os.path.dirname(frame)] if frame else []) + sorted({os.path.dirname(p) for _, p in refs})
     if c.get("prefabs"):                                   # Opus: may also change how things look (prefabs.js), checks itself with a frame
         shot = _fwd(os.path.join(P.STANDS, "render_shot.js"))
         dirs += [P.ENGINE, P.STANDS]

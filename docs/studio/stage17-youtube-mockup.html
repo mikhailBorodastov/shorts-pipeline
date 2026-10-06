@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube — макет S17</title>
+<style>
+  :root { --bg:#0e0e10; --side:#131316; --panel:#18181b; --panel2:#202024; --panel3:#2a2a2f; --field:#121214; --line:#2a2a30; --line-strong:#3a3a42;
+    --text:#ececf0; --mute:#8b8b96; --acc:#5aa9ff; --ok:#3ddc97; --bad:#ff6b6b; --key:#ffcc33; --agent:#b48cff; --warn:#ff9f43; --chart:#6fd3b0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  .app { display:grid; grid-template-columns:220px 1fr; min-height:100vh; }
+  .side { background:var(--side); border-right:1px solid var(--line); padding:14px 10px; }
+  .brand { font-weight:700; padding:4px 10px 14px; }
+  .nav a { display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:8px; color:var(--mute); text-decoration:none; }
+  .nav a.sel { background:var(--panel2); color:#fff; }
+  .nav .grp { font-size:11px; letter-spacing:.08em; color:#5c5c66; padding:14px 10px 4px; text-transform:uppercase; }
+  .nav .newb { margin-left:auto; font-size:11px; color:var(--key); }
+  .main { padding:22px 28px 60px; max-width:1300px; }
+  .mute { color:var(--mute); } .small { font-size:12px; }
+  .note { border:1px dashed var(--line-strong); border-radius:10px; padding:8px 12px; color:var(--mute); font-size:12px; margin:0 0 16px; }
+  .note b { color:var(--key); font-weight:600; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; } .sp { flex:1; }
+  button.b { background:var(--panel2); color:var(--text); border:1px solid var(--line-strong); border-radius:9px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button.claude { background:linear-gradient(90deg,#3b2a63,#2a3a63); border-color:#5b4a8f; }
+  .ava { width:54px; height:54px; border-radius:50%; background:radial-gradient(circle at 40% 35%,#9a9aa5,#4a4a52); display:flex; align-items:center; justify-content:center; font-size:26px; }
+  h1 { font-size:26px; margin:0; }
+  .chip { display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line-strong); border-radius:20px; padding:3px 10px; font-size:12px; cursor:pointer; white-space:nowrap; }
+  .chip.guess { border-color:#ffcc3377; color:var(--key); background:#ffcc3312; }
+  .chip.linked { color:#cfe6ff; }
+  a.lnk { color:var(--acc); text-decoration:none; }
+  .warnbar { border:1px solid #ff9f4366; background:#ff9f4312; border-radius:12px; padding:10px 14px; margin:14px 0 0; font-size:13px; }
+  .seg { display:inline-flex; padding:3px; background:var(--field); border:1px solid var(--line); border-radius:10px; }
+  .seg button { background:none; border:0; color:var(--mute); padding:5px 12px; border-radius:7px; font:inherit; cursor:pointer; }
+  .seg button.sel { background:var(--panel3); color:#fff; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:14px; }
+  .kpi .lab { color:var(--mute); font-size:12px; } .kpi .val { font-size:28px; font-weight:650; margin:2px 0; font-variant-numeric:tabular-nums; }
+  .delta { display:inline-block; font-size:12px; padding:1px 7px; border-radius:6px; background:#3ddc9722; color:var(--ok); }
+  .delta.neg { background:#ff6b6b22; color:var(--bad); }
+  .kpi svg { float:right; margin-top:-26px; }
+  .chart { margin-top:12px; }
+  .legend { font-size:12px; color:var(--mute); display:flex; gap:16px; margin:4px 0 6px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  h3 { margin:0; font-size:15px; }
+  .lesson { border-top:1px solid var(--line); padding:9px 0; font-size:13px; }
+  .lesson .why { color:var(--mute); font-size:12px; margin-top:2px; }
+  .lesson.new { background:#b48cff10; margin:0 -16px; padding:9px 16px; }
+  .tag { font-size:11px; color:var(--agent); }
+  .acts button { background:none; border:1px solid var(--line-strong); color:var(--text); border-radius:7px; padding:1px 8px; font-size:12px; cursor:pointer; margin-left:4px; }
+  .add { display:flex; gap:8px; margin-top:10px; } .add input { flex:1; background:var(--field); border:1px solid var(--line-strong); border-radius:8px; color:var(--text); padding:7px 10px; font:inherit; }
+  .cm { border-top:1px solid var(--line); padding:8px 0; font-size:13px; } .cm .who { color:var(--mute); font-size:12px; } .cm .on { color:var(--mute); font-size:12px; }
+  .idea { display:flex; gap:10px; align-items:center; border:1px solid var(--line-strong); border-radius:10px; padding:7px 10px; margin-top:6px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-weight:600; font-size:12px; color:var(--mute); padding:8px 8px; border-bottom:1px solid var(--line); white-space:nowrap; cursor:pointer; }
+  th.r, td.r { text-align:right; }
+  td { padding:8px 8px; border-bottom:1px solid var(--line); vertical-align:middle; font-variant-numeric:tabular-nums; }
+  tr.v { cursor:pointer; } tr.v:hover td { background:#ffffff06; }
+  .thumb { width:46px; height:64px; border-radius:6px; position:relative; flex:none; overflow:hidden; }
+  .thumb.long { width:96px; height:54px; }
+  .thumb i { position:absolute; right:3px; bottom:3px; font-style:normal; font-size:10px; background:#000c; padding:0 4px; border-radius:3px; }
+  .bar { display:inline-block; width:50px; height:5px; background:var(--panel3); border-radius:3px; vertical-align:middle; margin-right:6px; }
+  .bar b { display:block; height:100%; background:var(--acc); border-radius:3px; }
+  .typ { font-size:11px; color:var(--mute); border:1px solid var(--line-strong); border-radius:5px; padding:0 5px; }
+  /* modal */
+  .ov { position:fixed; inset:0; background:#000a; display:none; align-items:flex-start; justify-content:center; padding:30px; overflow:auto; z-index:5; }
+  .ov.on { display:flex; }
+  .modal { width:min(1100px,100%); background:#141417; border:1px solid var(--line-strong); border-radius:16px; padding:18px 22px 24px; }
+  .mstats { display:grid; grid-template-columns:repeat(8,1fr); gap:8px; margin:14px 0; }
+  .mstats .card { padding:10px 12px; } .mstats .val { font-size:20px; font-weight:650; } .mstats .lab { font-size:11px; color:var(--mute); }
+  .scenes { display:flex; height:22px; margin:2px 0 0 36px; font-size:10px; }
+  .scenes div { border-left:1px solid var(--line-strong); padding:3px 4px; color:var(--mute); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; background:#ffffff05; }
+  .drop { font-size:12px; margin-top:6px; } .drop b { color:var(--bad); }
+  .src { display:grid; grid-template-columns:170px 1fr 60px 44px; gap:8px; align-items:center; font-size:13px; margin:5px 0; }
+  .src .bb { height:7px; border-radius:4px; background:var(--panel3); } .src .bb b { display:block; height:100%; border-radius:4px; background:#7fb2ff; }
+  .review { border:1px solid #5b4a8f; background:#b48cff0d; border-radius:12px; padding:12px 14px; margin-top:12px; font-size:13px; }
+  .review ul { margin:6px 0; padding-left:18px; } .review li { margin:3px 0; }
+  select { background:var(--field); color:var(--text); border:1px solid var(--line-strong); border-radius:8px; padding:6px 10px; font:inherit; }
+  .menu { position:absolute; background:var(--panel2); border:1px solid var(--line-strong); border-radius:10px; padding:4px; font-size:13px; display:none; z-index:6; min-width:220px; box-shadow:0 8px 30px #0008; }
+  .menu div { padding:6px 10px; border-radius:6px; cursor:pointer; } .menu div:hover { background:var(--panel3); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">Claude Studio</div>
+    <nav class="nav">
+      <a>📚 Библиотека</a><a>🎬 Видео</a><a>✂ Редактор</a>
+      <div class="grp">Канал</div>
+      <a>🎨 Стиль</a><a>💡 Память <span class="newb">3 new</span></a><a>🖼 Обложки</a><a>🎞 Рендеры</a>
+      <div class="grp">Аналитика</div>
+      <a class="sel">📈 YouTube</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="note"><b>Макет S17.</b> Цифры — с прошлого подключения канала (stats.json), длинный ролик и кривые выдуманы. Клик по строке таблицы — карточка ролика, по жёлтому чипу «?» — меню привязки.</div>
+
+    <div class="row">
+      <div class="ava">🦔</div>
+      <div>
+        <h1>Доедать будешь?</h1>
+        <div class="row small mute" style="gap:12px;margin-top:2px">@doedat_budesh · 412 подписчиков · <a class="lnk">YouTube Studio ↗</a> <span class="chip linked">🔗 канал Studio «Доедать будешь»</span></div>
+      </div>
+      <div class="sp"></div>
+      <span class="small mute">обновлено 2 ч назад</span>
+      <button class="b">⟳ Обновить</button><button class="b">⋯</button>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <div class="seg" id="per"><button>7 дней</button><button class="sel">28 дней</button><button>90 дней</button></div>
+      <div class="seg" id="typ"><button class="sel">Всё</button><button>Шорты</button><button>Длинные</button></div>
+      <span class="small mute">по 2 окт., сравнение с 28 днями до этого</span>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card chart">
+      <div class="row"><h3>Просмотры по дням</h3><div class="sp"></div><div class="seg"><button class="sel">Просмотры</button><button>Часы</button><button>Подписчики</button></div></div>
+      <div class="legend"><span>━ последние 28 дней</span><span>┅ 28 дней до этого</span><span>▲ вышел ролик</span></div>
+      <svg id="daily" viewBox="0 0 1000 230" width="100%" height="230"></svg>
+    </div>
+
+    <div class="two">
+      <div class="card">
+        <div class="row"><h3>💡 Что работает</h3><div class="sp"></div><button class="b claude">✨ Спросить Claude</button></div>
+        <p class="small mute" style="margin:6px 0 8px">Уроки из статистики. Принятые лежат в «Памяти», их учитывают сценарист и все кнопки ✨.</p>
+        <div class="lesson new"><div class="row"><span class="tag">📊 новое · из статистики</span><div class="sp"></div><span class="acts"><button>✓</button><button>✏</button><button>✕</button></span></div>
+          Хук-сравнение с бытом («дороже, чем всё твоё детство») держит лучше вопроса в начале.
+          <div class="why">цифры: «PS6 дороже…» — 66 % среднего просмотра и 33 лайка против 52 % в среднем по каналу; «Работа мечты?» — 52 %</div></div>
+        <div class="lesson new"><div class="row"><span class="tag">📊 новое · из статистики</span><div class="sp"></div><span class="acts"><button>✓</button><button>✏</button><button>✕</button></span></div>
+          Шорты длиннее 50 с теряют половину зрителей к середине — держать 35–45 с.
+          <div class="why">цифры: 36–43 с → 61 % досмотра в среднем; 53–65 с → 50 %</div></div>
+        <div class="lesson"><span class="tag" style="color:var(--mute)">📊 из статистики · принято 28 сент</span><br>Новость про игровые деньги заходит лучше ИИ-тем.
+          <div class="why">цифры: игровые 1 300–1 700 просмотров, ИИ 1 100–1 300</div></div>
+        <div class="add"><input placeholder="Свой урок…"><button class="b">Добавить</button></div>
+      </div>
+      <div class="card">
+        <h3>💬 Свежие комментарии</h3>
+        <div class="cm" style="margin-top:8px"><span class="who">@kostya_play · 19 ч назад · ♥ 12</span><br>а можно про то, сколько стоила разработка GTA 6?<div class="on">к «Тратим бюджет Wolverine на другие игры»</div></div>
+        <div class="cm"><span class="who">@lena.k · 1 д назад · ♥ 4</span><br>ёжик лучший, озвучка топ 😂<div class="on">к «PS6 дороже, чем всё твоё детство»</div></div>
+        <div class="cm"><span class="who">@ded_insaid · 2 д назад · ♥ 9</span><br>Пузырь лопнет, когда инвесторы спросят про прибыль<div class="on">к «ИИ пузырь — кто будет платить?»</div></div>
+        <div style="margin-top:10px"><b class="small">💡 Идеи из комментариев</b>
+          <div class="idea"><span>Сколько стоила разработка GTA 6 — в бюджетах других игр</span><div class="sp"></div><button class="b">+ видео</button></div>
+          <div class="idea"><span>Кто платит за ИИ: ответ инвесторам через год</span><div class="sp"></div><button class="b">+ видео</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="row"><h3>Ролики</h3><span class="small mute">9 из 9</span><div class="sp"></div>
+        <div class="seg"><button class="sel">Всего</button><button>За 3 дня</button><button>За 28 дней</button></div>
+        <select><option>Сначала новые</option><option>По просмотрам</option><option>По удержанию</option></select>
+        <input placeholder="🔍 Поиск" style="background:var(--field);border:1px solid var(--line-strong);border-radius:8px;color:var(--text);padding:6px 10px;width:160px">
+      </div>
+      <table style="margin-top:6px">
+        <thead><tr><th>Ролик</th><th>Вышел ↓</th><th class="r">Просмотры</th><th class="r">Часы</th><th>Средний %</th><th class="r" title="engaged views / views">Смотрели</th><th class="r">Лайки</th><th class="r">Комм.</th><th>Видео Studio</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<div class="menu" id="menu"><div>✓ Да, это оно</div><div>Выбрать другое видео…</div><div>Не из Studio</div></div>
+
+<div class="ov" id="ov"><div class="modal" id="modal"></div></div>
+
+<script>
+const V = [
+  {t:'Тест 16x9: невозможные игры на Денди', d:'2 окт', type:'long', dur:'9:41', v:3120, h:96.4, pct:38, eng:null, l:211, c:17, studio:'Невозможные игры на денди', st:'guess', col:'#3a6ea5'},
+  {t:'Коты сыщики #нейросеть #казахстан #алматы', d:'30 сент', type:'short', dur:'0:31', v:933, h:4.6, pct:57, eng:71, l:22, c:0, studio:'Коты сыщики 3D', st:'guess', col:'#7a5a3a'},
+  {t:'Как Ким Чин Ил свое кино', d:'28 сент', type:'short', dur:'1:05', v:1113, h:12.7, pct:63, eng:53, l:24, c:2, studio:'Похищенный режиссер', st:'linked', col:'#6a3a3a'},
+  {t:'ИИ пузырь — кто будет платить? #нейросети #экономика', d:'27 сент', type:'short', dur:'0:53', v:1291, h:9.4, pct:50, eng:66, l:19, c:0, studio:'ИИ пузырь', st:'linked', col:'#3a5a3a'},
+  {t:'Тратим бюджет Wolverine на другие игры #wolverine #sony', d:'26 сент', type:'short', dur:'0:36', v:1521, h:9.2, pct:61, eng:45, l:13, c:0, studio:'Бюджет Росомахи', st:'guess', col:'#8a2a2a'},
+  {t:'РАБОТА МЕЧТЫ? #ии #claude #chatgpt', d:'25 сент', type:'short', dur:'0:31', v:1328, h:6.0, pct:52, eng:43, l:18, c:3, studio:'Какого это работать в Valve', st:'guess', col:'#4a4a7a'},
+  {t:'Убил босса — смотри рекламу #microsoft #xbox #gamepass', d:'25 сент', type:'short', dur:'0:42', v:1509, h:9.7, pct:55, eng:51, l:16, c:2, studio:'Microsoft патент', st:'linked', col:'#2a6a3a'},
+  {t:'PS6 дороже, чем всё твоё детство 😭', d:'24 сент', type:'short', dur:'0:39', v:1684, h:12.1, pct:67, eng:42, l:33, c:5, studio:'PS6', st:'linked', col:'#2a3a8a'},
+  {t:'У него поехала крыша', d:'23 сент', type:'short', dur:'0:43', v:638, h:3.5, pct:47, eng:52, l:7, c:0, studio:null, st:'none', col:'#5a5a5a'},
+];
+const fmt = n => n.toLocaleString('ru-RU');
+
+function spark(seed, up) {
+  let p = [], y = 20;
+  for (let i = 0; i < 28; i++) { y += Math.sin(i * 1.7 + seed) * 4 + (up ? 0.35 : -0.1); p.push(`${i * 4},${Math.max(3, Math.min(37, 40 - y))}`); }
+  return `<svg width="112" height="40"><polyline points="${p.join(' ')}" fill="none" stroke="var(--chart)" stroke-width="1.6"/></svg>`;
+}
+document.getElementById('kpis').innerHTML = [
+  ['👁 Просмотры', '13 140', '↑ 212 %', 1], ['⏱ Часы просмотра', '163,6', '↑ 180 %', 2],
+  ['👥 Подписчики', '+16', '↑ 60 %', 3, 'пришло минус ушло'], ['📈 Средний просмотр', '0:24', '↓ 3 %', 4, '55 % ролика · смотрели 53 %', true],
+].map(([lab, val, dl, s, sub, neg]) => `<div class="card kpi"><div class="lab">${lab}</div><div class="val">${val}</div>${spark(s, !neg)}
+  <span class="delta ${neg ? 'neg' : ''}">${dl}</span> <span class="small mute">${sub || ''}</span></div>`).join('');
+
+(function daily() {
+  const W = 1000, H = 200, X0 = 40;
+  const cur = [], prev = [];
+  for (let i = 0; i < 28; i++) {
+    const base = i < 4 ? 40 : 120 + 380 * Math.exp(-((i - 6) % 7) / 2.2) * (i > 3 ? 1 : 0);
+    cur.push(Math.round(base + 60 * Math.sin(i))); prev.push(Math.round(20 + 15 * Math.sin(i * .8)));
+  }
+  const max = 800, sx = i => X0 + i * (W - X0 - 10) / 27, sy = v => 10 + (H - 10) * (1 - v / max);
+  let g = '';
+  [0, 200, 400, 600, 800].forEach(v => g += `<line x1="${X0}" x2="${W}" y1="${sy(v)}" y2="${sy(v)}" stroke="#ffffff10"/><text x="0" y="${sy(v) + 4}" fill="#6c6c76" font-size="11">${v}</text>`);
+  const pts = a => a.map((v, i) => `${sx(i)},${sy(v)}`).join(' ');
+  g += `<polygon points="${sx(0)},${sy(0)} ${pts(cur)} ${sx(27)},${sy(0)}" fill="#6fd3b022"/>`;
+  g += `<polyline points="${pts(prev)}" fill="none" stroke="#9a9aa5" stroke-dasharray="5 5" stroke-width="1.4"/>`;
+  g += `<polyline points="${pts(cur)}" fill="none" stroke="var(--chart)" stroke-width="2"/>`;
+  [[4, 'У него поехала крыша'], [5, 'PS6 дороже…'], [6, 'Работа мечты? · Убил босса'], [7, 'Бюджет Wolverine'], [8, 'ИИ пузырь'], [9, 'Ким Чин Ил'], [11, 'Коты сыщики'], [13, 'Невозможные игры (16:9)']]
+    .forEach(([i, t]) => g += `<text x="${sx(i) - 5}" y="${H + 16}" fill="var(--key)" font-size="12"><title>${t}</title>▲</text>`);
+  ['5 сент', '12 сент', '19 сент', '26 сент', '2 окт'].forEach((t, k) => g += `<text x="${sx(k * 6.7) - 18}" y="${H + 28}" fill="#6c6c76" font-size="11">${t}</text>`);
+  const s = document.getElementById('daily'); s.setAttribute('viewBox', `0 0 ${W} ${H + 32}`); s.innerHTML = g;
+})();
+
+function chip(v) {
+  if (v.st === 'linked') return `<span class="chip linked">🔗 ${v.studio}</span>`;
+  if (v.st === 'guess') return `<span class="chip guess" data-m>🔗 ${v.studio} ?</span>`;
+  return `<span class="chip mute" data-m>—</span>`;
+}
+document.getElementById('rows').innerHTML = V.map((v, i) => `<tr class="v" data-i="${i}">
+  <td><div class="row" style="flex-wrap:nowrap"><div class="thumb ${v.type}" style="background:linear-gradient(160deg,${v.col},#111)"><i>${v.dur}</i></div>
+    <div>${v.t}<br><span class="typ">${v.type === 'long' ? 'длинное 16:9' : 'шорт'}</span></div></div></td>
+  <td class="mute">${v.d}</td><td class="r">${fmt(v.v)}</td><td class="r">${String(v.h).replace('.', ',')}</td>
+  <td><span class="bar"><b style="width:${v.pct}%"></b></span>${v.pct} %</td><td class="r">${v.eng == null ? '<span class="mute">—</span>' : v.eng + ' %'}</td>
+  <td class="r">${v.l}</td><td class="r">${v.c}</td><td>${chip(v)}</td></tr>`).join('');
+
+const menu = document.getElementById('menu');
+document.addEventListener('click', e => {
+  const m = e.target.closest('[data-m]');
+  if (m) { e.stopPropagation(); const r = m.getBoundingClientRect(); menu.style.left = r.left + scrollX + 'px'; menu.style.top = r.bottom + scrollY + 4 + 'px'; menu.style.display = 'block'; return; }
+  menu.style.display = 'none';
+  const tr = e.target.closest('tr.v'); if (tr) openVideo(+tr.dataset.i);
+  if (e.target.id === 'ov' || e.target.closest('[data-x]')) document.getElementById('ov').classList.remove('on');
+});
+document.querySelectorAll('.seg').forEach(s => s.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') return; s.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b === e.target)); }));
+
+function retention(v) {
+  const W = 1000, H = 220, X0 = 36, n = 100, pts = [], avg = [];
+  for (let i = 0; i <= n; i++) {
+    const x = i / n;
+    let y = 100 * Math.exp(-x * 0.9) - (x > .05 ? 18 : x * 360) * (1 - x * .3) - (x > .18 && x > .2 ? 9 : 0) - (x > .62 ? 7 : 0) + 6 * Math.sin(x * 9);
+    y = Math.max(20, Math.min(100, y + (v.pct - 55) * .6)); pts.push(y);
+    avg.push(Math.max(20, 100 * Math.exp(-x * 1.1) - 10 * Math.min(1, x * 12)));
+  }
+  const sx = i => X0 + i * (W - X0 - 10) / n, sy = y => 8 + (H - 16) * (1 - y / 100);
+  let g = '';
+  [0, 25, 50, 75, 100].forEach(y => g += `<line x1="${X0}" x2="${W}" y1="${sy(y)}" y2="${sy(y)}" stroke="#ffffff10"/><text x="0" y="${sy(y) + 4}" fill="#6c6c76" font-size="11">${y}%</text>`);
+  const p = a => a.map((y, i) => `${sx(i)},${sy(y)}`).join(' ');
+  g += `<polygon points="${sx(0)},${sy(0)} ${p(pts)} ${sx(n)},${sy(0)}" fill="#7fb2ff22"/>`;
+  g += `<polyline points="${p(avg)}" fill="none" stroke="#9a9aa5" stroke-dasharray="4 5" stroke-width="1.3"/>`;
+  g += `<polyline points="${p(pts)}" fill="none" stroke="#7fb2ff" stroke-width="2"/>`;
+  [[5, '−18 %'], [20, '−9 %'], [62, '−7 %']].forEach(([i, t]) => g += `<line x1="${sx(i)}" x2="${sx(i)}" y1="8" y2="${H - 8}" stroke="#ff6b6b66" stroke-dasharray="3 4"/><text x="${sx(i) + 4}" y="22" fill="var(--bad)" font-size="12">${t}</text>`);
+  return { svg: `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${g}</svg>`, mid: Math.round(pts[50]), end: Math.round(pts[n]), s3: Math.round(pts[8]) };
+}
+
+function openVideo(i) {
+  const v = V[i], r = retention(v), short = v.type === 'short';
+  const sc = short
+    ? [['Хук: «Sony потратила…»', 12], ['Бюджет', 14], ['Что на эти деньги', 30], ['Список игр', 26], ['Кода', 18]]
+    : [['Холодное открытие', 8], ['Глава 1. Денди', 22], ['Глава 2. Пиратки', 28], ['Глава 3. Чудеса кода', 30], ['Финал', 12]];
+  const linked = v.st !== 'none';
+  const st = [['Просмотры', fmt(v.v)], ['Часы', String(v.h).replace('.', ',')], ['Средний просмотр', short ? '0:22' : '3:41'], ['Средний %', v.pct + ' %'],
+    ['Смотрели', v.eng == null ? '—' : v.eng + ' %'], ['Лайки', v.l], ['Комментарии', v.c], ['Подписчики', '+' + Math.max(1, Math.round(v.l / 9))]];
+  const src = short
+    ? [['Лента Shorts', 81], ['Главная и подписки', 9], ['Поиск YouTube', 4], ['Страница канала', 3], ['Внешние', 2], ['Прочее', 1]]
+    : [['Главная и подписки', 62], ['Предложенные', 21], ['Поиск YouTube', 9], ['Страница канала', 5], ['Внешние', 3]];
+  document.getElementById('modal').innerHTML = `
+    <div class="row"><b style="font-size:16px">Ролик</b><div class="sp"></div><button class="b" data-x>✕</button></div>
+    <div class="row" style="margin-top:12px;align-items:flex-start;flex-wrap:nowrap;gap:18px">
+      <div class="thumb ${v.type}" style="width:${short ? 120 : 260}px;height:${short ? 200 : 146}px;background:linear-gradient(160deg,${v.col},#111)"><i>${v.dur}</i></div>
+      <div><div style="font-size:21px;font-weight:650">${v.t}</div>
+        <div class="mute small" style="margin:4px 0 10px">Вышел ${v.d} 2026 · ${short ? 'шорт' : 'длинное 16:9'} · обновлено 11 мин назад</div>
+        <div class="row"><button class="b">▶ На YouTube</button><button class="b">YouTube Studio ↗</button><button class="b">⟳ Обновить</button></div>
+        <div class="row" style="margin-top:12px"><span class="small mute">Видео Studio</span>
+          <select><option>${v.studio || 'Не привязан'}${v.st === 'guess' ? ' ?' : ''}</option><option>Выбрать другое…</option><option>Не из Studio</option></select>
+          ${v.st === 'guess' ? '<button class="b">✓ Да, это оно</button>' : ''}${linked ? '<a class="lnk small">Открыть видео →</a>' : ''}</div>
+      </div></div>
+    <div class="mstats">${st.map(([l, x]) => `<div class="card"><div class="lab">${l}</div><div class="val">${x}</div></div>`).join('')}</div>
+    <div class="card">
+      <div class="row"><h3>Удержание</h3><span class="small mute">через 3 с — <b style="color:#fff">${r.s3} %</b> · середина — <b style="color:#fff">${r.mid} %</b> · конец — <b style="color:#fff">${r.end} %</b></span>
+        <div class="sp"></div><span class="small mute">━ этот ролик ┅ типично для такой длины</span></div>
+      ${r.svg}
+      ${linked ? `<div class="scenes">${sc.map(([n, w]) => `<div style="width:${w}%" title="${n}">${n}</div>`).join('')}</div>
+      <div class="drop">Спады: <b>−18 %</b> на 0:02 — «${sc[0][0]}» · <b>−9 %</b> на 0:07 — «${sc[1][0]}» · <b>−7 %</b> на 0:22 — «${sc[3][0]}»</div>`
+      : `<div class="small mute" style="margin-top:6px">Привяжи ролик к видео Studio — под кривой появятся сцены сценария.</div>`}
+    </div>
+    <div class="two">
+      <div class="card"><h3>Откуда пришли зрители</h3><div style="margin-top:8px">${src.map(([n, p]) => `<div class="src"><span>${n}</span><span class="bb"><b style="width:${p}%"></b></span><span class="r">${fmt(Math.round(v.v * p / 100))}</span><span class="mute r">${p} %</span></div>`).join('')}</div></div>
+      <div class="card"><h3>Комментарии · ${v.c}</h3>${v.c ? `
+        <div class="cm" style="margin-top:8px"><span class="who">@kostya_play · 19 ч назад · ♥ 12</span><br>а можно про то, сколько стоила разработка GTA 6?</div>
+        <div class="cm"><span class="who">@lena.k · 1 д назад · ♥ 4</span><br>ёжик лучший, озвучка топ 😂</div>` : '<p class="mute small">Комментариев пока нет.</p>'}</div>
+    </div>
+    <div class="review">
+      <div class="row"><b>🧠 Разбор Claude</b><span class="small mute">· сам, на 3-й день · Sonnet</span><div class="sp"></div><button class="b claude">✨ Разобрать ещё раз</button></div>
+      <ul>
+        <li>Средний % (${v.pct} %) ${v.pct >= 55 ? 'выше' : 'ниже'} среднего по каналу (55 %), но «смотрели» ${v.eng ?? '—'} % — каждый второй пролистывает в первые секунды.</li>
+        <li>Главный спад на 0:02: хук начинается с названия игры, а не с конфликта. Лучшие ролики канала начинают с бытового сравнения («дороже, чем всё твоё детство»).</li>
+        <li>На списке игр (0:22) уходят ещё 7 %: перечисление из пяти пунктов без нарастания. В «PS6» список был из трёх.</li>
+        <li>81 % зрителей пришли из ленты Shorts: поиск почти не работает, хэштеги в названии мало что дают.</li>
+      </ul>
+      <div class="small">В «Память» предложены 2 урока → <a class="lnk">посмотреть</a> · Идея из комментариев: «бюджет GTA 6» → <a class="lnk">+ видео</a></div>
+    </div>`;
+  document.getElementById('ov').classList.add('on');
+}
+</script>
+</body>
+</html>

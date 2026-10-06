@@ -1,6 +1,6 @@
 // Claude Studio — core: DOM helper, API of the local script, documents with ops (+ sync), Claude jobs, small UI parts.
 'use strict';
-const API = 23;                     // must match ideas_api.API_VERSION
+const API = 32;                     // must match ideas_api.API_VERSION
 const REF = {};                     // web/ref.json, loaded at boot
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -170,9 +170,10 @@ const Sync = {
       const r = await api('GET', '/api/revs' + (vid ? '?v=' + encodeURIComponent(vid) : ''));
       if (!this.ok) { this.ok = true; App.banner(''); }
       if (this.web == null) this.web = r.web;
-      else if (r.web !== this.web && !Store.busy()) { await Store.flushAll(); location.reload(); return; }
+      else if (r.web !== this.web && !Store.busy() && !(typeof NewVideo !== 'undefined' && NewVideo.el)) { await Store.flushAll(); location.reload(); return; }   // открыт поп-ап «Новое видео» — перезагрузка после его закрытия (раньше он пропадал на полуслове)
       if (r.api !== API) App.banner('⚠ Локальный скрипт Studio старой версии. Закрой его окно и запусти «Claude Studio.bat» заново.');
       await Claude.update(r.jobs);
+      if (r.notify && typeof Bell !== 'undefined') Bell.update(r.notify);   // S20.5: 🔔
       if (vid && r.proj != null) {                      // файлы проекта поменялись (Claude, tts, своя запись) — окно перечитывает голос, тайминги, сценарий без F5
         const k = 'proj:' + vid;
         if (this[k] != null && this[k] !== r.proj) {
@@ -199,7 +200,7 @@ const Claude = {
   running(key, scope) { return Object.values(this.jobs).find(j => (j.status === 'running' || j.status === 'queued') && j.key === key && j.scope === scope); },
   queued() { return Object.values(this.jobs).filter(j => j.status === 'queued').length; },
   async run({ action, key, scope = action, params = {}, onResult, confirm: q }) {
-    const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch', montagebuild: '/api/montage/build', brollfetch: '/api/videos/broll' }[action];
+    const local = { produce: '/api/produce', ytlogin: '/api/yt/login', ytsync: '/api/yt/sync', ytlearn: '/api/yt/learn', ytvideo: '/api/yt/review', sndfetch: '/api/sound/fetch', refparse: '/api/refparse', assetfetch: '/api/assets/fetch', montagebuild: '/api/montage/build', brollfetch: '/api/videos/broll' }[action];
     if (!this.on && !local) return UI.toast('Claude Code не найден — кнопки ✨ не работают', 'err');
     if (q && !confirm(q)) return;
     Unread.ask();                                     // browser notifications: asked once, on a click (browsers require a gesture)
@@ -222,6 +223,7 @@ const Claude = {
       if (j.status === 'running' || j.status === 'queued') { if (j.status !== old.status) flip = true; continue; }   // из очереди — в работу
       flip = true;
       if (j.status === 'done' || j.status === 'error') Unread.done(j);
+      if (j.status === 'done') Chime.done(j, now);
       if (j.status === 'done') {
         if (j.kind !== 'ytfresh') UI.toast(j.summary || 'Claude закончил');   // the 10-minute live counter stays quiet
         if (this.cbs[id]) { const full = await api('GET', '/api/job?id=' + id).catch(() => null); if (full) this.cbs[id](full.result || {}, full); }
@@ -244,6 +246,52 @@ const Claude = {
       onclick: () => this.run({ action, key, scope, params: typeof params === 'function' ? params() : params, onResult, confirm: q }) }, icon, label ? ' ' + label : '');
   },
 };
+// звук «готово»: ассет препродакшена — мягкий «динь»; монтаж или последний ассет в очереди — светлое трезвучие. Синтез Web Audio, без файлов; выключается в ⚙ Настройках.
+const Chime = {
+  ASSET: ['element', 'make3d', 'charparts', 'charmodel', 'trellisfix', 'split3d', 'vary3d', 'sound', 'sndfetch', 'assetfetch', 'layout3d', 'brollfetch', 'render', 'libfix'],
+  BIG: ['fastmontage', 'automontage', 'montagebuild'],
+  // звенит сервер Studio силами Windows (server/chime_api.py) — даже при свёрнутом окне; здесь только «послушать» и вкл/выкл
+  on() { return !!(window.SETTINGS_CHIME ?? true); },
+  set(v) { window.SETTINGS_CHIME = v; api('POST', '/api/settings', { chime: !!v }).catch(e => UI.toast(e.message, 'err')); },
+  last: 0,
+  done(j, now) {
+    return;                                                    // задачи озвучивает сервер (Windows) — в странице не дублируем
+    if (!this.on()) return;
+    const big = this.BIG.includes(j.kind), asset = this.ASSET.includes(j.kind);
+    if (!big && !asset) return;
+    const busy = Object.values(now || {}).some(x => (x.status === 'running' || x.status === 'queued') && this.ASSET.includes(x.kind) && x.key === j.key);
+    this.play(big || !busy ? 'big' : 'small');                // последний ассет из очереди видео — как «всё готово»
+  },
+  // окно приложения (WebView2) и браузер не дают странице звучать без жеста: звук создаётся и «разблокируется» на первом клике / клавише,
+  // иначе созданный в момент окончания задачи AudioContext так и остаётся suspended — и «динь» молча глушится
+  unlock() {
+    try {
+      const ac = this.ac || (this.ac = new (window.AudioContext || window.webkitAudioContext)());
+      if (ac.state === 'suspended') ac.resume();
+      const b = ac.createBuffer(1, 1, 22050), s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0);
+    } catch (e) {}
+  },
+  play(kind = 'small') { api('POST', '/api/chime', { kind }).catch(() => this.playWeb(kind)); },   // через Windows; сервер недоступен — в странице
+  playWeb(kind = 'small') {
+    const t = Date.now(); if (t - this.last < 1200) return; this.last = t;
+    try {
+      const ac = this.ac || (this.ac = new (window.AudioContext || window.webkitAudioContext)());
+      if (ac.state === 'suspended') { ac.resume().then(() => { if (ac.state === 'running') { this.last = 0; this.playWeb(kind); } }).catch(() => {}); return; }   // проснётся — сыграем
+      const out = ac.createGain(); out.gain.value = 0.16; out.connect(ac.destination);
+      const notes = kind === 'big' ? [[784, 0], [1047, 0.11], [1319, 0.22]] : [[1047, 0], [1568, 0.09]];
+      for (const [f, dt] of notes) {
+        const t0 = ac.currentTime + dt;
+        for (const [type, mul, g] of [['sine', 1, 0.9], ['triangle', 2, 0.12]]) {     // мягкий колокольчик: основной тон + тихий обертон
+          const o = ac.createOscillator(), e = ac.createGain();
+          o.type = type; o.frequency.value = f * mul;
+          e.gain.setValueAtTime(0, t0); e.gain.linearRampToValueAtTime(g, t0 + 0.012); e.gain.exponentialRampToValueAtTime(0.0008, t0 + (kind === 'big' ? 1.3 : 0.9));
+          o.connect(e); e.connect(out); o.start(t0); o.stop(t0 + 1.4);
+        }
+      }
+    } catch (e) {}
+  },
+};
+for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => Chime.unlock(), { once: true, capture: true });   // разблокировать звук «готово» первым жестом
 // finished Claude jobs: a dot on the plan (sidebar, card, tab) until you look at it + a browser notification when the tab is not in view
 const Unread = {
   // задача -> панель окна видео (#/v/<id>/<tab>; '' — монтаж)
@@ -299,7 +347,72 @@ const UI = {
   copy(text) { navigator.clipboard.writeText(text).then(() => this.toast('Скопировано'), () => prompt('Скопируй:', text)); },
 };
 
-function autosize(ta) { if (!ta.isConnected) return; ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; }
+// height: auto на миг сжимает поле — и прокрутку панели над ним браузер подрезает (прыжок вверх). Поэтому прокрутку предков запоминаем и ставим обратно.
+function autosize(ta) {
+  if (!ta.isConnected) return;
+  const ups = [];
+  for (let p = ta.parentElement; p; p = p.parentElement) if (p.scrollTop) ups.push([p, p.scrollTop]);
+  const win = window.scrollY;
+  ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px';
+  for (const [p, t] of ups) if (p.scrollTop !== t) p.scrollTop = t;
+  if (window.scrollY !== win) window.scrollTo(window.scrollX, win);
+}
+
+// Перерисовка куска интерфейса без прыжков прокрутки: keepScroll(корень, () => корень.replaceChildren(…)).
+// Запоминает scrollTop/scrollLeft корня и всех прокрученных блоков и полей внутри (по месту в разметке: data-key, иначе тег+классы+номер),
+// после перерисовки ставит их обратно; пока догружаются картинки (страница короче — браузер подрезает), повторяет, если автор сам не крутил.
+const ScrollKeep = {
+  sig: el => el.dataset && el.dataset.key ? 'k:' + el.dataset.key : el.tagName + '.' + (typeof el.className === 'string' ? el.className.trim().replace(/\s+/g, '.') : ''),
+  path(root, el) {
+    const steps = [];
+    for (let e = el; e && e !== root; e = e.parentElement) {
+      const s = this.sig(e), par = e.parentElement;
+      if (s.startsWith('k:')) { steps.unshift([s, 0]); break; }        // data-key уникален — дальше вверх не нужно
+      let i = 0; for (const c of par.children) { if (c === e) break; if (this.sig(c) === s) i++; }
+      steps.unshift([s, i]);
+    }
+    return steps;
+  },
+  find(root, steps) {
+    let cur = root;
+    for (const [s, i] of steps) {
+      if (s.startsWith('k:')) { cur = root.querySelector(`[data-key="${CSS.escape(s.slice(2))}"]`); if (!cur) return null; continue; }
+      let n = -1, hit = null;
+      for (const c of cur.children) if (this.sig(c) === s && ++n === i) { hit = c; break; }
+      if (!hit) return null;
+      cur = hit;
+    }
+    return cur;
+  },
+  save(root) {
+    const out = [];
+    if (!root) return out;
+    if (root.scrollTop || root.scrollLeft) out.push([[], root.scrollTop, root.scrollLeft]);
+    for (const el of root.querySelectorAll('*')) if (el.scrollTop || el.scrollLeft) out.push([this.path(root, el), el.scrollTop, el.scrollLeft]);
+    return out;
+  },
+  restore(root, saved) {
+    if (!root || !saved.length) return;
+    const set = [];
+    for (const [steps, t, l] of saved) {
+      const el = steps.length ? this.find(root, steps) : root;
+      if (!el) continue;
+      el.scrollTop = t; el.scrollLeft = l;
+      if (el.scrollTop !== t || el.scrollLeft !== l) set.push([el, t, l, el.scrollTop, el.scrollLeft]);   // подрезано — контент ещё догружается
+    }
+    if (!set.length) return;
+    const again = () => { for (const x of set) { const [el, t, l, gotT, gotL] = x;
+      if (!el.isConnected || el.scrollTop !== gotT || el.scrollLeft !== gotL) continue;     // автор уже крутил сам — не трогаем
+      el.scrollTop = t; el.scrollLeft = l; x[3] = el.scrollTop; x[4] = el.scrollLeft; } };
+    requestAnimationFrame(again); setTimeout(again, 150); setTimeout(again, 500); setTimeout(again, 1200);
+  },
+};
+function keepScroll(root, fn) {
+  const saved = ScrollKeep.save(root);
+  const r = fn();
+  ScrollKeep.restore(root, saved);
+  return r;
+}
 // textarea bound to doc path: typing saves (debounced), no re-render
 function area(key, path, { ph = '', cls = '', onInput } = {}) {
   const ta = h('textarea.auto', { class: cls, key: key + '|' + path.join('.'), placeholder: ph, rows: 1,
@@ -371,7 +484,7 @@ const ImgSearch = {
   // панель поиска картинок прямо в приложении (server/imgsearch.py): Яндекс Картинки без ключа | свободные (Openverse + Commons).
   // Клик по картинке — она скачивается в файлы видео и встаёт в слот (onPath); multi — слот «+ референс»: можно набрать несколько подряд.
   // «↗ Google в окне» — запасной путь: окно «🔎 Картинки», оттуда перетаскивают в слот.
-  open(q = '', { planId, onPath, multi } = {}) {
+  open(q = '', { planId, onPath, multi, fetch } = {}) {   // fetch(it) -> путь: своё хранилище (S14: референсы визуала — в style/refs канала)
     const S = { q, src: Local.get('imgsrc') || 'ya', p: 0, items: [], busy: false, err: '', got: new Set() };
     const inp = h('input.box', { value: q, placeholder: 'что ищем: «ЭЛТ монитор 2006», «бабушкин ковёр»…' });
     const grid = h('div.is-grid'), more = h('button', { onclick: () => run(true) }, 'Ещё картинки'), status = h('span.dim.small');
@@ -379,17 +492,19 @@ const ImgSearch = {
       h('button', { class: S.src === k ? 'sel' : '', 'data-k': k, onclick: () => { S.src = k; Local.set('imgsrc', k); seg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.k === k)); run(); } }, l)));
     const google = () => { const v = inp.value.trim(); window.open('https://www.google.com/search?udm=2&hl=ru&q=' + encodeURIComponent(v), 'imgsearch', `popup,width=760,height=900,left=${Math.max(0, screen.availWidth - 780)},top=40`); };
     async function run(next) {
-      const v = inp.value.trim(); if (!v || S.busy) return;
+      const v = inp.value.trim(); if (!v || (S.busy && next)) return;   // новый запрос, пока ищется старый, — перебивает его
+      const tok = S.tok = (S.tok || 0) + 1;
       if (!next) { S.p = 0; S.items = []; grid.innerHTML = ''; } else S.p++;
-      S.busy = true; status.textContent = 'ищу…'; more.hidden = true; Local.set('imgq', v);
+      S.busy = true; status.textContent = 'ищу…'; more.hidden = true; Local.set('imgq', v); S.found = v;   // по какому запросу найдена выдача — уйдёт в onPath
       try {
         const r = await api('GET', `/api/imgsearch?q=${encodeURIComponent(v)}&src=${S.src}&p=${S.p}`);
+        if (tok !== S.tok) return;                       // пока ждали — запустили другой поиск
         const items = r.items || [];
         for (const it of items) grid.append(card(it));
         S.items.push(...items);
         status.textContent = S.items.length ? `${S.items.length} картинок · клик — ${multi ? 'добавить (можно несколько)' : 'взять'}` : 'ничего не нашлось';
         more.hidden = !items.length || S.src === 'free';
-      } catch (e) { status.textContent = '⚠ ' + e.message; }
+      } catch (e) { if (tok !== S.tok) return; status.textContent = '⚠ ' + e.message; }
       S.busy = false;
     }
     // взять картинку: скачать оригинал (или превью) в файлы видео -> слот
@@ -397,9 +512,9 @@ const ImgSearch = {
       if (c.classList.contains('busy') || c.classList.contains('done')) return false;
       c.classList.add('busy');
       try {
-        const r = await api('POST', '/api/file/url', { plan: planId, url: it.full, fallback: it.thumb });
+        const r = fetch ? { path: await fetch(it) } : await api('POST', '/api/file/url', { plan: planId, url: it.full, fallback: it.thumb });
         c.classList.remove('busy'); c.classList.add('done');
-        onPath && onPath(r.path);
+        onPath && onPath(r.path, S.found);
         UI.toast(r.thumb ? '✓ взял превью — сайт не отдал оригинал' : '✓ картинка в референсах');
         if (!multi) close();
         return true;
@@ -457,20 +572,22 @@ const ImgSearch = {
 document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
 document.addEventListener('drop', e => { if (hasFiles(e)) e.preventDefault(); });
 function pickFile(cb) { const i = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', onchange: () => i.files[0] && cb(i.files[0]) }); i.click(); }
+function pickFiles(cb) { const i = h('input', { type: 'file', multiple: true, accept: 'image/png,image/jpeg,image/webp,image/gif', onchange: () => i.files.length && cb([...i.files]) }); i.click(); }
 const readAsDataURL = f => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(f); });
 async function uploadImage(planId, fileOrDataURL) {
   const data = typeof fileOrDataURL === 'string' ? fileOrDataURL : await readAsDataURL(fileOrDataURL);
   return (await api('POST', '/api/file?plan=' + encodeURIComponent(planId), undefined, data)).path;
 }
 // picture slot bound to a path; onSet(path) is used when the item does not exist yet
-function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small, compact, q }) {
+function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small, compact, q, onFiles }) {   // onFiles(files) — пустой слот берёт сразу несколько файлов
   const src = (path && getPath(Store.get(key), path)) || '';
   const set = p => (onSet ? onSet(p) : Store.set(key, path, p, true));
   const upload = async f => {                              // файл / data: — как раньше; адрес картинки (из окна поиска) — качает локальное приложение
     try { set(typeof f === 'string' && !f.startsWith('data:') ? (UI.toast('⬇ беру картинку…'), await uploadImageUrl(planId, f)) : await uploadImage(planId, f)); }
     catch (e) { UI.toast(e.message, 'err'); }
   };
-  const search = () => ImgSearch.open(q || Local.get('imgq') || '', { planId, onPath: set, multi: !path });
+  // onSet(путь, запрос) — запрос, по которому нашли картинку: слот «+ референс» подписывает им референс, если автор искал не то, что подставилось
+  const search = () => ImgSearch.open(q || Local.get('imgq') || '', { planId, onPath: (p, found) => (onSet ? onSet(p, found) : set(p)), multi: !path });
   const box = h('div.slot', { class: (src ? '' : 'empty') + (small ? ' small' : '') + (compact && !src ? ' compact' : ''), tabindex: 0,
     style: { aspectRatio: compact && !src ? 'auto' : aspect }, title: 'Ctrl+V — вставить картинку сюда' });
   if (src) box.append(h('img', { src: '/' + src, alt: '', onclick: () => UI.lightbox('/' + src) }),
@@ -480,7 +597,7 @@ function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small,
     h('button.icon', { title: 'Найти картинку (Яндекс Картинки прямо здесь, Google — в окне)', onclick: search }, '🔎'),
     h('button.icon', { title: 'Нарисовать эскиз', onclick: () => Sketch.open({ aspect, planId, onSave: set }) }, '✏️'), h('span', 'картинка: Ctrl+V')));
   else box.append(h('div.slot-empty', label && h('b', label), h('span', 'Ctrl+V · перетащи'),
-    h('div.row', h('button.icon', { title: 'Файл с диска', onclick: () => pickFile(upload) }, '📎'),
+    h('div.row', h('button.icon', { title: onFiles ? 'Файлы с диска — можно сразу несколько' : 'Файл с диска', onclick: () => (onFiles ? pickFiles(onFiles) : pickFile(upload)) }, '📎'),
       h('button.icon', { title: 'Найти картинку (Яндекс Картинки прямо здесь, Google — в окне)', onclick: search }, '🔎'),
       h('button.icon', { title: 'Нарисовать эскиз', onclick: () => Sketch.open({ aspect, planId, onSave: set }) }, '✏️'))));
   box.addEventListener('mouseenter', () => (Paste.target = upload));
@@ -490,7 +607,8 @@ function imgSlot({ key, path, planId, aspect = '16/9', label = '', onSet, small,
   box.addEventListener('dragleave', () => box.classList.remove('drop'));
   box.addEventListener('drop', e => {
     box.classList.remove('drop');
-    const f = imageFiles(e.dataTransfer)[0], u = !f && dropImageUrl(e.dataTransfer);
+    const fs = imageFiles(e.dataTransfer), f = fs[0], u = !f && dropImageUrl(e.dataTransfer);
+    if (onFiles && !src && fs.length) { e.preventDefault(); e.stopPropagation(); onFiles(fs); return; }
     if (f || u) { e.preventDefault(); e.stopPropagation(); upload(f || u); }
   });
   return box;
@@ -634,7 +752,7 @@ const Mention = {
     el.setSelectionRange(p, p);
     this.close();
     el.dispatchEvent(new Event('input', { bubbles: true }));      // the field's own handler saves it
-    el.focus();
+    el.focus({ preventScroll: true });
     App.render();                                                // links shown elsewhere (scene cast, «Отмечено через @») update at once; focus and caret survive
   },
   // App.render replaces the field with a new one (same data-key) — e.g. when a Claude job finishes while the list is open: follow it

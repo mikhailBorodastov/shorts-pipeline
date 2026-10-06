@@ -132,7 +132,7 @@ fn check_deps() -> Vec<(&'static str, &'static str, bool)> {
     let claude = has("claude", &["--version"], &path) || Path::new(&home).join(".local").join("bin").join("claude.exe").is_file();
     vec![
         ("python", "Python 3", has("python", &["--version"], &path) || has("py", &["-3", "--version"], &path)),
-        ("pip", "Python-пакеты (edge-tts, numpy, pillow, yt-dlp)", has("python", &["-c", "import edge_tts, numpy, PIL"], &path)),
+        ("pip", "Python-пакеты (edge-tts, numpy, pillow, yt-dlp, curl_cffi — TikTok)", has("python", &["-c", "import edge_tts, numpy, PIL, curl_cffi"], &path)),
         ("node", "Node.js", has("node", &["--version"], &path)),
         ("npm", "Модули рендера кадров (puppeteer-core)", stands),
         ("ffmpeg", "ffmpeg", has("ffmpeg", &["-version"], &path)),
@@ -280,6 +280,7 @@ fn app_window(app: &AppHandle, label: &str, url: WebviewUrl) -> tauri::Result<We
         .title("Claude Studio")
         .inner_size(1500.0, 950.0)
         .min_inner_size(900.0, 600.0)
+        .disable_drag_drop_handler()                                  // S23: HTML5-перетаскивание и файлы из проводника — странице (иначе WebView2 на Windows их забирает)
         .on_navigation({
             let h3 = app.clone();
             move |url| {

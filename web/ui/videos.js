@@ -20,6 +20,7 @@ const Videos = {
   stage(p, x) {
     if (p.stage === 'brief') return { label: 'Бриф', cls: 'amber', title: 'Бриф не закончен — клик по карточке: вопросы Claude' };
     const STEP = { script: 'Сценарий', pre: 'Препродакшен', montage: 'Монтаж', pack: 'Упаковка' };   // этап по факту (videos_api._step)
+    if (x && x.work) return { label: x.work, cls: 'live', title: 'Сейчас идёт работа над видео (Claude или сборка)' };   // идёт монтаж / правки — не «Готово»
     if (p.status === 'out') return { label: 'Вышло', cls: 'ok' };
     if (x && x.ready) return { label: 'Готово', cls: 'ok' };
     if (p.status === 'draft') return { label: 'Черновик', cls: '' };
@@ -34,13 +35,19 @@ const Videos = {
   },
   loadExtra() {
     const sig = App.plans.map(p => p.id + ':' + p.updated).join(',');
-    if (VIDS.busy || (VIDS.extra && VIDS.sig === sig)) return;
+    const live = VIDS.extra && Object.values(VIDS.extra).some(x => x && x.work);   // что-то идёт — освежаем раз в 5 с, чтобы таблетка сменилась на «Готово» сама
+    if (VIDS.busy || (VIDS.extra && VIDS.sig === sig && !(live && Date.now() - (VIDS.at || 0) > 5000))) {
+      if (live && !VIDS.timer) VIDS.timer = setTimeout(() => { VIDS.timer = 0; if (Date.now() - (VIDS.shown || 0) < 8000) App.render(); }, 5200);
+      return;
+    }
+    VIDS.at = Date.now();
     VIDS.busy = true; VIDS.sig = sig;
     api('GET', '/api/videos/extra').then(j => { VIDS.extra = j; }).catch(() => { VIDS.extra = VIDS.extra || {}; })
       .finally(() => { VIDS.busy = false; App.render(); });
   },
 
   page() {
+    VIDS.shown = Date.now();                                     // список на экране (для обновления таблеток «Монтаж идёт» → «Готово»)
     this.loadExtra();
     const X = VIDS.extra || {}, all = App.plans.filter(p => p.status !== 'archived');
     const n = k => all.filter(p => this.bucket(p, X[p.id]) === k).length;
@@ -100,7 +107,7 @@ const NewVideo = {
     const ck = 'channel:' + (App.info.channel || {}).id;
     if (!Store.get(ck)) Store.load(ck).then(() => this.el && this.step === 1 && this.draw()).catch(() => {});   // подачи и визуалы канала
     const LK = Styles.looks(), eng = ((App.info.channel || {}).defaults || {}).engine || '3d';
-    this.f = { name: '', mode: 'short', delivery: (Styles.deliveries()[0] || {}).key || 'auto', look: (LK.find(x => (x.engine || '2d') === eng) || LK[0] || {}).key || 'paper', len: '1:00', topic: '', script: '', direction: '', refs: '' };
+    this.f = { name: '', mode: 'short', delivery: (Styles.deliveries()[0] || {}).key || 'auto', look: (LK.find(x => (x.engine || '2d') === eng) || LK[0] || {}).key || 'paper', len: '1:00', topic: '', script: '', direction: '', refs: '', refBase: '', flow: 'idea', hint: '' };
     try { const kept = JSON.parse(Local.get('nv-draft') || 'null'); if (kept && kept.name !== undefined) Object.assign(this.f, kept); } catch {}   // S12.13: недописанный бриф — с того же места
     this.min = false; this.dock();
     this.el = h('div.nv', { onmousedown: e => { if (e.target === this.el) this.close(); } });
@@ -117,7 +124,7 @@ const NewVideo = {
     this.id = d.id; this.edit = true;
     Object.assign(this.f, { name: d.name || '', mode: d.mode === 'long' ? 'long' : 'short', len: b.len ? mm(b.len) : d.mode === 'long' ? '10:00' : '1:00',
       topic: b.topic != null ? b.topic : (d.idea || ''), direction: b.direction != null ? b.direction : (b.topic == null ? (d.topic || '') : ''), script: b.script || '',
-      refs: (d.refs || []).map(r => r.url).filter(Boolean).join('\n') });
+      refs: (d.refs || []).filter(r => r.role !== 'base').map(r => r.url).filter(Boolean).join('\n'), refBase: ((d.refs || []).find(r => r.role === 'base') || {}).url || '' });
     if (b.delivery) this.f.delivery = b.delivery;
     if (b.look) this.f.look = b.look;
     this.draw();
@@ -149,13 +156,24 @@ const NewVideo = {
   },
   // продолжить незаконченное видео (закрыли на вопросах): поп-ап сразу на шаге 2
   resume(d) {
-    this.openFor(d); this.edit = false; this.step = 2; this.draw();
+    this.openFor(d); this.edit = false; this.step = 2;
+    const T = d.refTopics;                                // ресерч по референсу без выбранной темы — обратно к темам
+    if (T && !(T.items || []).some(t => t.pick) && !(d.qa || []).length) { this.f.flow = 'research'; this.step = 1; }
+    else if (!(d.qa || []).length && ((d.brief || {}).topic || (d.brief || {}).script) && !Claude.running('plan:' + d.id, 'questions')) Claude.run({ action: 'questions', key: 'plan:' + d.id, params: { n: 15 } });   // черновик темы «на будущее» — вопросы при первом открытии
+    this.draw();
   },
   // App.render (каждое сохранение, раз в ~2 с): перерисовать только если поменялось видимое — вопросы, число отвеченных, работа Claude
   refresh() {
+    if (this.el && !this.min && this.step === 1 && this.id && this.f.flow === 'research') {          // S16: «💡 Похожие темы» — перерисовать, когда Claude ответил или разбор продвинулся
+      const d = Store.get('plan:' + this.id) || {}, b = (d.refs || []).find(r => r.role === 'base') || {};
+      const run = Claude.running('plan:' + this.id, 'reftopics');
+      const sig = [(d.refTopics || {}).at, !!run, run && run.summary, (b.parse || {}).msg].join('|');
+      if (sig !== this.tsig) { this.tsig = sig; this.draw(); }
+      return;
+    }
     if (!this.el || this.min || this.step !== 2) return;
     const key = 'plan:' + this.id, d = Store.get(key) || {}, qa = d.qa || [];
-    const sig = [qa.map(q => q.id + (q.skip ? '-' : '') + ((q.a || '').trim() ? '+' : '')).join(','), !!Claude.running(key, 'questions'), d.name].join('|');
+    const sig = [qa.map(q => q.id + (q.skip ? '-' : '') + ((q.a || '').trim() ? '+' : '') + ((q.opts || []).length ? 'o' : '')).join(','), !!Claude.running(key, 'questions'), !!Claude.running(key, 'qopts'), d.name].join('|');
     if (sig === this.sig) return;
     this.draw();
   },
@@ -163,13 +181,13 @@ const NewVideo = {
   secs(v) { const m = /^\s*(\d+)(?::(\d{1,2}))?\s*$/.exec(v || ''); return m ? (m[2] != null ? +m[1] * 60 + +m[2] : +m[1] * 60) : 0; },
 
   draw() {
-    const old = this.el.querySelector('.nv-body'), top = old ? old.scrollTop : 0, same = this.drawnStep === this.step;
+    const same = this.drawnStep === this.step, saved = same ? ScrollKeep.save(this.el) : [];
     const box = this.step === 1 ? this.step1() : this.step2();
     this.el.replaceChildren(box);
-    if (same) { const nb = this.el.querySelector('.nv-body'); if (nb) nb.scrollTop = top; }     // перерисовка не прыгает наверх
+    ScrollKeep.restore(this.el, saved);                   // перерисовка не прыгает наверх: ни окно, ни поля в нём (новый шаг — с начала)
     this.drawnStep = this.step;
     if (this.step === 2) { const key = 'plan:' + this.id, d = Store.get(key) || {}, qa = d.qa || [];
-      this.sig = [qa.map(q => q.id + (q.skip ? '-' : '') + ((q.a || '').trim() ? '+' : '')).join(','), !!Claude.running(key, 'questions'), d.name].join('|'); }
+      this.sig = [qa.map(q => q.id + (q.skip ? '-' : '') + ((q.a || '').trim() ? '+' : '') + ((q.opts || []).length ? 'o' : '')).join(','), !!Claude.running(key, 'questions'), !!Claude.running(key, 'qopts'), d.name].join('|'); }
     requestAnimationFrame(() => this.el && this.el.querySelectorAll('textarea.auto').forEach(autosize));
   },
 
@@ -188,34 +206,140 @@ const NewVideo = {
       h('span.btn', Icon('download', 15), this.voice ? this.voice.name : 'Выбрать аудиофайл…'),
       h('span.dim', this.voice ? `${(this.voice.size / 2 ** 20).toFixed(1)} МБ` : 'или перетащи сюда'),
       this.voice && h('button.icon', { title: 'Убрать', onclick: e => { e.preventDefault(); this.voice = null; this.draw(); } }, Icon('x', 14)));
+    const flows = !this.edit && h('div.seg.nv-flow',
+      [['idea', 'Есть идея'], ['research', '🔎 Ресерч по референсу']].map(([k, l]) => h('button', { class: (f.flow || 'idea') === k ? 'sel' : '', onclick: () => { f.flow = k; this.err = ''; this.draw(); } }, l)));
+    const head = h('div.nv-head', h('h3', this.edit ? 'Бриф видео' : 'Новое видео'),
+      f.flow === 'research' ? null : h('span.nv-steps', h('b', '1'), ' Бриф', h('span.dim', ' → '), h('span.dim', '2 Вопросы Claude')), h('span.sp'),
+      h('button.icon', { onclick: () => this.minimize(), title: 'Свернуть — вернуться можно плашкой внизу' }, '–'),
+      h('button.icon', { onclick: () => this.close(), title: 'Закрыть (Esc) — бриф запомнится' }, Icon('x', 16)));
+    if (f.flow === 'research' && !this.edit) return this.research(head, flows);
     return h('div.nv-box',
-      h('div.nv-head', h('h3', this.edit ? 'Бриф видео' : 'Новое видео'), h('span.nv-steps', h('b', '1'), ' Бриф', h('span.dim', ' → '), h('span.dim', '2 Вопросы Claude')), h('span.sp'),
-        h('button.icon', { onclick: () => this.minimize(), title: 'Свернуть — вернуться можно плашкой внизу' }, '–'),
-        h('button.icon', { onclick: () => this.close(), title: 'Закрыть (Esc) — бриф запомнится' }, Icon('x', 16))),
+      head,
       h('div.nv-body',
+        flows || null,
         this.field('Название', null, this.inp('name', { placeholder: 'например: Почему PS2 тянула всё на 32 МБ' })),
         h('div.nv-row',
           this.field('Формат', null, h('div.seg', [['short', 'tall', 'Шортс 9:16'], ['long', 'wide', 'Длинное 16:9']].map(([k, ic, l]) =>
             h('button', { class: f.mode === k ? 'sel' : '', onclick: () => { f.mode = k; if (k === 'long' && this.secs(f.len) < 180) f.len = '10:00'; if (k === 'short' && this.secs(f.len) > 180) f.len = '1:00'; this.draw(); } }, Icon(ic, 14), l)))),
           this.field('Ориентировочная длина', null, this.inp('len', { placeholder: '1:00', class: 'len', oninput: () => { const w = this.el.querySelector('.nv-words'); if (w) w.textContent = `≈ ${Math.round(this.secs(f.len) * 2.65)} слов`; } }), h('span.nv-words.dim', `≈ ${words} слов`))),
         this.field('Озвучка', 'по желанию', voice, h('p.hint', 'WAV, MP3, M4A. Можно добавить позже: сначала сценарий и черновой голос нейросетью, потом своя запись.')),
-        h('div.nv-row',
-          this.field('Подача', '— как пишется сценарий', pick('delivery', DL), dl && h('p.hint', dl.desc)),
-          this.field('Визуал', '— как выглядит', pick('look', LK), lk && h('p.hint', lk.desc))),
+        this.field('Подача', '— как пишется сценарий', pick('delivery', DL), dl && h('p.hint', dl.desc)),
+        this.field('Визуал', '— как выглядит; наведи — покажет', (typeof Looks !== 'undefined' && Looks.picker(f.look, v => { f.look = v; this.draw(); })) || pick('look', LK), lk && h('p.hint', lk.desc)),
         this.field('Тема', 'по желанию: Claude поищет и напишет сценарий', this.inp('topic', { placeholder: 'например: как Resident Evil 2 влез в картридж N64' })),
         this.field('Сценарий', 'по желанию: свой текст вместо темы', this.ta('script', 'Вставь текст голоса — Claude не будет его переписывать, только разложит по сценам.', 3)),
         this.field('Указания для Claude', 'по желанию', this.ta('direction', 'Тон, герои, на чём сделать акцент, камера…', 2)),
-        this.field('Референсы', 'по желанию: ссылки, по одной в строке', this.ta('refs', 'https://youtu.be/…', 2)),
+        this.field('Референсы', 'по желанию: ссылки, по одной в строке — материал и факты', this.ta('refs', 'https://youtu.be/…', 2)),
+        this.field('📐 Референс подачи', 'по желанию: шорт / TikTok, в подаче которого расскажем нашу историю',
+          this.inp('refBase', { placeholder: 'https://www.tiktok.com/@…/video/…' }),
+          h('p.hint', 'Те же биты, приёмы и длина фраз — про нашу тему. Перед сценарием Claude покажет карту «их бит → наш бит», ты её поправишь и утвердишь. Нет темы — вкладка «🔎 Ресерч по референсу» сверху.')),
         this.err && h('div.badline', '⚠ ' + this.err)),
       h('div.nv-foot', h('span.dim.small', 'Дальше Claude задаст вопросы по идее — ответы помогут ему не выдумывать за тебя.'), h('span.sp'),
         h('button', { onclick: () => this.close() }, 'Отмена'),
         h('button.primary', { disabled: this.sending, onclick: () => this.next() }, this.sending ? [h('span.spin'), ' Создаю…'] : ['Далее', Icon('chevRight', 15)])));
   },
 
+  // путь «🔎 Ресерч по референсу»: ссылка на ролик -> Claude смотрит его и предлагает темы канала в той же механике -> клик по теме -> обычный бриф (путь «Есть идея»)
+  research(head, flows) {
+    const f = this.f, key = this.id && 'plan:' + this.id, run = key && Claude.running(key, 'reftopics');
+    const items = key ? (((Store.get(key) || {}).refTopics || {}).items || []) : [];
+    return h('div.nv-box',
+      head,
+      h('div.nv-body',
+        flows,
+        h('p.hint.nv-rintro', 'Понравился шорт или видео — его подача и тема? Claude скачает и расшифрует его, разберёт, почему он работает, и предложит темы для нашего канала в той же механике — не копию. Выберешь тему — дальше как обычно: бриф, вопросы, карта подачи, сценарий.'),
+        this.field('Ссылка на ролик', 'шорт, TikTok, Reels или длинное видео', this.inp('refBase', { placeholder: 'https://www.tiktok.com/@…/video/…' })),
+        this.field('Что ищем', 'по желанию', this.inp('hint', { placeholder: 'например: про игры 2000-х, без политики, чтобы был наш ёжик…' })),
+        h('div.row', h('span.sp'),
+          run ? Claude.btn({ label: 'Ищу темы', action: 'reftopics', key })
+            : h('button.claude', { disabled: this.sending, onclick: () => this.topics() }, items.length ? '💡 Ещё темы' : '💡 Найти темы')),
+        this.topicList(),
+        this.err && h('div.badline', '⚠ ' + this.err)),
+      h('div.nv-foot', h('span.dim.small', 'Ролик станет референсом подачи нового видео — его можно будет снять в брифе.'), h('span.sp'),
+        h('button', { onclick: () => this.close() }, 'Отмена')));
+  },
+
+  // S16 «💡 Похожие темы»: видео заводится сразу (задачам Claude нужна папка), ссылка — референсом подачи; Claude смотрит ролик и предлагает темы
+  async topics() {
+    const f = this.f, url = (f.refBase || '').trim();
+    if (!/^https?:\/\//.test(url)) { this.err = 'Вставь ссылку на шорт / TikTok в «Референс подачи»'; this.draw(); return; }
+    this.err = ''; this.sending = true; this.draw();
+    try {
+      const b = this.body();
+      if (!this.id) {
+        const hint = (f.hint || '').trim().replace(/\s+/g, ' ');   // имя черновика — из запроса автора (Claude потом даст своё, если имя не трогали)
+        if (!b.name) b.name = hint ? 'Ресерч: ' + (hint.length > 48 ? hint.slice(0, 47) + '…' : hint) : 'Ресерч по референсу';
+        this.id = (await api('POST', '/api/videos/create', b)).id;
+        Local.set('nv-draft', '');
+        await Store.load('plan:' + this.id); Store.set('plan:' + this.id, ['stage'], 'brief', false);
+        await App.refreshState();
+      } else await api('POST', '/api/videos/brief', { id: this.id, ...b });
+      await Store.load('plan:' + this.id, true);
+      const base = ((Store.get('plan:' + this.id) || {}).refs || []).find(r => r.role === 'base');
+      await Claude.run({ action: 'reftopics', key: 'plan:' + this.id, params: { ref: base && base.id, n: 6, hint: (f.hint || '').trim() } });
+      UI.toast('Claude скачивает ролик, расшифровывает и ищет похожие темы — 2–6 минут');
+    } catch (e) { this.err = e.message; }
+    this.sending = false;
+    if (this.el) this.draw();
+  },
+  topicList() {
+    if (!this.id) return null;
+    const key = 'plan:' + this.id, d = Store.get(key) || {}, T = d.refTopics || {}, run = Claude.running(key, 'reftopics');
+    const b = (d.refs || []).find(r => r.role === 'base') || {}, ps = b.parse || {};
+    if (run && !(T.items || []).length) return h('div.nv-wait', h('span.spin'), ' ', run.summary && run.summary !== 'в очереди' ? run.summary : ps.msg || 'Claude смотрит ролик…');
+    if (!(T.items || []).length) return null;
+    return h('div.nv-topics',
+      (T.about || T.trick) && h('details.about', h('summary', h('b', 'О референсе и почему он работает')), T.about && [h('b', 'О чём: '), T.about, h('br')], T.trick && [h('b', 'Почему работает: '), T.trick]),
+      T.items.map(t => h('div.nv-topic', { class: (t.pick ? 'sel ' : '') + (t.draft ? 'drafted' : '') },
+        h('b', t.title), h('span.t', t.topic), h('span.a', h('i', 'механика: '), t.angle), t.why && h('span.a', h('i', 'почему зайдёт: '), t.why),
+        t.facts && h('details.f', h('summary', '📎 факты и источники'), t.facts), t.risk && h('span.f', '⚠ ' + t.risk),
+        h('div.row.nv-tact',
+          t.draft ? h('span.ok.small', { title: 'Отдельное видео-черновик с этой темой и тем же референсом подачи — в списке видео' }, '✓ в черновиках')
+            : h('button.small', { disabled: this.busyTopic === t.id, title: 'Завести отдельное видео-черновик на будущее: название, тема, угол и тот же референс подачи (разбор ролика копируется, заново не качается)',
+                onclick: () => this.draftTopic(t) }, this.busyTopic === t.id ? [h('span.spin'), ' завожу…'] : '＋ В черновики'),
+          h('span.sp'),
+          h('button.small.primary', { title: 'Взять эту тему сейчас: название, тема и угол — в бриф этого видео', onclick: () => this.pickTopic(t) }, t.pick ? '✓ Взята' : 'Взять сейчас')))),
+      null);
+  },
+  // «＋ В черновики»: тема на будущее — отдельное видео (бриф: формат, длина, визуал — как в поп-апе; референс подачи — копия разбора из ресерча)
+  async draftTopic(t) {
+    const key = 'plan:' + this.id, d = Store.get(key) || {}, base = (d.refs || []).find(r => r.role === 'base') || {}, b = this.body();
+    this.busyTopic = t.id; this.draw();
+    try {
+      const r = await api('POST', '/api/videos/create', { ...b, name: t.title, topic: t.topic, direction: 'Угол (по референсу подачи): ' + t.angle, script: '', refs: [],
+        refBase: base.url || '', refCopy: { video: this.id, ref: base.id } });
+      await api('POST', '/api/op', { key: 'plan:' + r.id, ops: [{ op: 'set', path: ['stage'], value: 'brief' }] });
+      Store.set(key, ['refTopics', 'items', t.id, 'draft'], r.id);
+      await App.refreshState();
+      UI.toast(`«${t.title}» — в черновиках`);
+    } catch (e) { UI.toast(e.message, 'err'); }
+    this.busyTopic = null;
+    if (this.el) this.draw();
+  },
+  async pickTopic(t) {
+    const key = 'plan:' + this.id, f = this.f;
+    f.name = t.title; f.topic = t.topic;
+    const ang = 'Угол (по референсу подачи): ' + t.angle;
+    if (!f.direction.includes(ang)) f.direction = (f.direction.trim() ? f.direction.trim() + '\n' : '') + ang;
+    for (const x of ((Store.get(key) || {}).refTopics || {}).items || []) if (x.pick && x.id !== t.id) Store.set(key, ['refTopics', 'items', x.id, 'pick'], false);
+    Store.set(key, ['refTopics', 'items', t.id, 'pick'], true);
+    Store.set(key, ['name'], t.title);
+    Store.set(key, ['idea'], t.topic);
+    const qa = (Store.get(key) || {}).qa || [];                // вопросы к прошлой теме, на которые ещё не отвечали, — устарели: «Далее» задаст новые
+    if (qa.length && qa.every(q => !(q.a || '').trim() && !q.skip)) Store.set(key, ['qa'], []);
+    f.flow = 'idea';
+    this.draw();
+    try {                                                      // тема сразу в видео, а не только в поп-ап: закрыли / перезагрузили до «Далее» — бриф не теряется
+      await Store.flushAll();
+      await api('POST', '/api/videos/brief', { id: this.id, ...this.body() });
+      await Store.load(key, true);
+      UI.toast('Тема в брифе, ролик — референсом подачи. Проверь бриф и жми «Далее»');
+    } catch (e) { UI.toast('Тема не сохранилась: ' + e.message, 'err'); }
+  },
+
   body() {
     const f = this.f;
     return { name: f.name.trim(), mode: f.mode, delivery: f.delivery, look: f.look, len: this.secs(f.len), topic: f.topic.trim(), script: f.script.trim(),
-      direction: f.direction.trim(), refs: f.refs.split(/\s+/).filter(u => /^https?:\/\//.test(u)), channel: (App.info.channel || {}).id };
+      direction: f.direction.trim(), refs: f.refs.split(/\s+/).filter(u => /^https?:\/\//.test(u)), refBase: (f.refBase || '').trim(), channel: (App.info.channel || {}).id };
   },
   async next() {
     const b = this.body();
@@ -238,7 +362,7 @@ const NewVideo = {
         if (d && d.name !== b.name) Store.set(key(), ['name'], b.name);
         if (d && d.mode !== b.mode) Store.set(key(), ['mode'], b.mode);
         await Store.load(key(), true);
-        if (this.edit && !((Store.get(key()) || {}).qa || []).length && !Claude.running(key(), 'questions'))
+        if (!((Store.get(key()) || {}).qa || []).length && !Claude.running(key(), 'questions'))
           Claude.run({ action: 'questions', key: key(), params: b.script ? { n: 8, focus: 'У автора уже готовый сценарий (текст голоса). Не спрашивай про сюжет и факты — только про подачу, героев, картинку, тон и финал.' } : { n: 15 } });
       }
       this.step = 2;
@@ -258,6 +382,8 @@ const NewVideo = {
       h('div.nv-body',
         h('div.row', h('span.counter', { class: qa.length && answered === qa.length ? 'ok' : '' }, qa.length ? `отвечено ${answered} из ${qa.length}` : ''),
           h('span.sp'),
+          qa.some(q => !(q.opts || []).length && !(q.a || '').trim() && !q.skip) && Claude.btn({ label: 'Варианты ответов', action: 'qopts', key, icon: '💡',
+            title: 'Claude допишет к неотвеченным вопросам 2–4 варианта ответа — кликом выбрать, своё можно вписать' }),
           Claude.btn({ label: qa.length ? 'Ещё вопросы' : 'Вопросы', action: 'questions', key, params: { n: 8 }, title: 'Уточняющий раунд: Claude учтёт твои ответы' })),
         run && !qa.length ? h('div.nv-wait', h('span.spin'), ' Claude читает бриф и готовит вопросы… обычно 20–60 секунд')
           : qa.length ? h('div.nv-qa', qa.map((q, i) => Plan.qRow(d, key, q, i + 1)))
@@ -281,10 +407,12 @@ const NewVideo = {
     const name = (Store.get(key) || {}).name;
     const write = () => {
       go(`#/v/${id}`);
+      const dd = Store.get(key) || {};
+      if ((dd.refs || []).some(r => r.role === 'base') && (dd.beatmap || {}).status !== 'ok') { setTimeout(() => Workspace.beatmap(Store.get(key) || dd), 900); return; }   // S16: сначала карта подачи
       setTimeout(() => {
         if (!window.AgentPanel) return;
         AgentPanel.toggle(true);
-        AgentPanel.say('📝 ' + (NewVideo.edit ? 'Бриф видео обновлён в поп-апе' : 'Новое видео из поп-апа') + ': прочитай бриф (тема, подача, визуал, длина, указания, свой сценарий — если есть) и мои ответы на вопросы. Сначала ресерч темы (WebSearch → research.md с источниками), потом сценарий. Потом montage check и montage tts.',
+        AgentPanel.say('📝 ' + (NewVideo.edit ? 'Бриф видео обновлён в поп-апе' : 'Новое видео из поп-апа') + ': прочитай бриф (тема, подача, визуал, длина, указания, свой сценарий — если есть) и мои ответы на вопросы. Сначала мои референсы (ref list — дождись разбора, прочитай расшифровки целиком), потом ресерч темы (WebSearch → research.md с источниками), потом сценарий. Потом montage check и montage tts.',
           { mode: 'script', model: 'opus' });
       }, 900);
     };

@@ -716,7 +716,8 @@ def char_job(A, job):
 def comfy_setup_job(A, job):
     """🖥 ⚙ Настройки → «Поставить локальную 3D»: tools/comfy_setup.py (ComfyUI portable + модели TRELLIS.2 / Pixal3D), строки вывода — в summary."""
     cf = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    pr = subprocess.Popen([sys.executable, "-u", os.path.join(P.STUDIO, "tools", "comfy_setup.py")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    flux = (job.params or {}).get("flux")                 # ⚙ «Локальные обложки» → веса FLUX.2 [klein] (группы comfy_setup.FLUX)
+    pr = subprocess.Popen([sys.executable, "-u", os.path.join(P.STUDIO, "tools", "comfy_setup.py")] + (["--flux", *flux] if flux else []), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           text=True, encoding="utf-8", errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8"), creationflags=cf)
     last = ""
     for line in pr.stdout:
@@ -726,7 +727,7 @@ def comfy_setup_job(A, job):
             pr.kill(); raise RuntimeError("остановлено — докачается с того же места")
     if pr.wait():
         raise RuntimeError(last or "установка не удалась")
-    job.summary = "Локальная 3D готова: TRELLIS.2 и Pixal3D"
+    job.summary = "FLUX.2 [klein] скачана: " + ", ".join(flux) if flux else "Локальная 3D готова: TRELLIS.2 и Pixal3D"
 
 
 def run_job(A, job):

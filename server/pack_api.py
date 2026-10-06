@@ -91,6 +91,10 @@ def rights(plan):
         for a in e.get("assets") or []:
             add(what=f"ассет «{a.get('name') or a.get('title') or ''}» для «{e.get('name')}»", kind="asset", author=a.get("author") or "",
                 license=a.get("license") or "", url=a.get("page") or a.get("url") or "")
+    for r in plan.get("refs") or []:                       # S16: подача по референсу — формат по мотивам чужого ролика (кадры и факты не берём)
+        if r.get("role") == "base":
+            add(what=f"формат подачи по мотивам ролика «{r.get('title') or ''}»".replace(" «»", ""), kind="format", author=r.get("channel") or "",
+                license="структура и приёмы подачи; текст, кадры и факты — свои", url=r.get("url") or "")
     return out
 
 

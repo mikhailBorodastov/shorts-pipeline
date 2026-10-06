@@ -17,7 +17,7 @@ const Shell = {
         h('a.logo', { href: '#/' }, h('span.l1', 'Claude'), h('span.l2', 'Studio')),
         h('button.icon.side-fold', { title: this.mini ? 'Развернуть панель' : 'Свернуть панель', onclick: () => this.fold() }, Icon('panel', 16))),
       cs.length > 0 && h('label.side-chan', { title: 'Канал: у каждого свой стиль, библиотека и видео' },
-        sel([...cs.map(c => ({ value: c.id, label: `${c.icon || '📺'} ${c.name}` })), { value: '__new', label: '+ новый канал…' }], C.id,
+        sel([...cs.map(c => ({ value: c.id, label: `${c.icon ? c.icon + ' ' : ''}${c.name}` })), { value: '__new', label: '+ новый канал…' }], C.id,
           v => v === '__new' ? go('#/newchan') : Pages.useChannel(v), { class: 'box', 'aria-label': 'Канал' })),
       h('button.side-search', { onclick: () => Palette.open(), title: 'Поиск по каналу и команды (Ctrl K)' },
         Icon('search', 15), h('span.lbl.ss-t', 'Поиск или команда…'), h('kbd.lbl', 'Ctrl K')),
@@ -28,10 +28,15 @@ const Shell = {
           : h('span.nav.off', { title: 'Откройте видео — здесь будет последнее открытое' }, Icon('clapper', 17), h('span.lbl', 'Редактор'))),
       h('div.side-sec.lbl', 'Студия'),
       h('nav.side-nav',
+        Bell.navItem(),                                     // S20.5: лента уведомлений
         item('#/style', 'sliders', 'Стиль', r.page === 'style'),
         item('#/memory', 'bulb', 'Память', r.page === 'memory', Memory.newCount() ? h('span.newb', { title: 'Claude предложил правила' }, Memory.newCount() + ' new') : null),
         item('#/thumbs', 'image', 'Обложки', r.page === 'thumbs'),
         item('#/renders', 'film', 'Рендеры', r.page === 'renders', Renders.active().length ? h('span.live', { title: 'Идёт рендер: ' + Renders.active().map(x => x.video).join(', ') }) : null)),
+      h('div.side-sec.lbl', 'Аналитика'),                 // S17
+      h('nav.side-nav',
+        item('#/yt', 'chart', 'YouTube', r.page === 'yt', YTPage.syncing() ? h('span.live', { title: 'Обновляю статистику YouTube' })
+          : YTPage.newCount() ? h('span.newb', { title: 'Claude предложил уроки из статистики' }, YTPage.newCount() + ' new') : null)),
       h('div.side-foot',
         h('nav.side-nav',
           item('#/settings', 'settings', 'Настройки', r.page === 'settings'),
@@ -59,6 +64,7 @@ const Shell = {
   },
   page(r) {
     if (r.page === 'memory') return Memory.page();       // S12.10
+    if (r.page === 'yt') return YTPage.page();           // S17
     if (r.page === 'thumbs') return Thumbs.page();       // S12.9
     if (r.page === 'renders') return Renders.page();     // S12.8
     return null;
@@ -77,10 +83,12 @@ const Palette = {
     nav('Библиотека', '#/lib', 'library', 'ассеты персонажи пропсы звуки');
     const last = Shell.lastVideo();
     if (last) nav('Редактор — ' + last.name, `#/v/${last.id}`, 'clapper', 'активное видео');
-    nav('Стиль канала', '#/style', 'sliders', 'гайд палитра голос субтитры герой');
+    nav('Стиль канала', '#/style', 'sliders', 'гайд подачи визуалы палитра голос субтитры герой правила интервью');
     nav('Память', '#/memory', 'bulb', 'правила');
     nav('Обложки', '#/thumbs', 'image', 'тамбнейл thumbnail');
     nav('Рендеры', '#/renders', 'film', 'экспорт mp4');
+    r.push({ group: 'Разделы', label: 'Уведомления', icon: 'bell', kw: 'колокольчик что сделал claude', run: () => Bell.toggle(true) });
+    nav('YouTube', '#/yt', 'chart', 'аналитика статистика просмотры удержание комментарии');
     nav('Настройки', '#/settings', 'settings', 'ключи модели');
     nav('Справочник', '#/help', 'book', 'карта превью');
     const cmd = (label, icon, run, kw = '') => r.push({ group: 'Команды', label, icon, kw, run });

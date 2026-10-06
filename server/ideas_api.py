@@ -27,7 +27,7 @@ POST-запросы принимаются только со страницы (�
 import base64, importlib, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from urllib.parse import urlparse, parse_qs, unquote
 
-API_VERSION = 23
+API_VERSION = 32
 
 import paths as P  # noqa: E402  где что лежит: _studio, каналы, видео, архив, .studio (docs/studio/stage2-studio.md)
 HERE = P.SERVER                                             # _studio/server
@@ -47,7 +47,7 @@ EFFORT = os.environ.get("IDEAS_EFFORT", "")
 TEXT_MODEL = os.environ.get("IDEAS_TEXT_MODEL", "sonnet")           # алиас: самый новый Sonnet, который знает установленный Claude Code
 VISUAL_MODEL = os.environ.get("IDEAS_VISUAL_MODEL", "claude-opus-5-5")
 VISUAL_ACTIONS = ("element", "render", "charparts", "animteach", "libfix")
-TEXT_EFFORT = {"elements": "medium", "sound": "medium", "assets": "medium"}              # усилие для текстовых кнопок препродакшена; остальные — по умолчанию Claude Code
+TEXT_EFFORT = {"elements": "medium", "sound": "medium", "assets": "medium", "reuse": "medium"}              # усилие для текстовых кнопок препродакшена; остальные — по умолчанию Claude Code
 VISUAL_EFFORT = os.environ.get("IDEAS_VISUAL_EFFORT", "")           # пусто — по умолчанию Claude Code
 MAX_JOBS = 3
 MIME = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".pdf": "application/pdf", ".ttf": "font/ttf", ".png": "image/png", ".jpg": "image/jpeg",
@@ -62,6 +62,7 @@ os.makedirs(DATA, exist_ok=True)
 import ideas_claude  # noqa: E402  промпты и схемы кнопок ✨
 import sounds  # noqa: E402  поиск и скачивание звуков препродакшена
 import refvideo  # noqa: E402  разбор видео-референсов
+import refs_api  # noqa: E402  референсы брифа: добавить, разобрать, CLI ref …
 import preprod  # noqa: E402  модель элементов препродакшена и экспорт в проект
 import assets  # noqa: E402  поиск и скачивание бесплатных 3D / 2D ассетов
 import studio_api  # noqa: E402  Claude Studio: каналы, видео, стиль, библиотека, архив
@@ -70,6 +71,8 @@ import agent  # noqa: E402  агент S7: живая сессия Claude, ло�
 import settings_api  # noqa: E402  ⚙ настройки приложения: ключи сервисов, Blender, модели Claude
 import models3d  # noqa: E402  3D-модели: нормализация, скелет, «картинка -> 3D»
 import channel_api  # noqa: E402  новый канал и его стиль (S9): интервью, файлы стиля, герой
+import looks_api  # noqa: E402  визуалы канала (S14): техники → луки, ручки (window.LOOK), герои лука, превью
+import looks_jobs  # noqa: E402  задачи визуалов (S14): превью, герой лука, интервью и ✨ сборка по референсам
 import pack_api  # noqa: E402  упаковка S8: права, packaging.md, обложки в проект
 import montage_api  # noqa: E402  монтаж (S6): video.json → montage → файлы проекта, сборка
 import scene_api  # noqa: E402  сцены редактора (S1 Claude Studio): scene.json, операции, история, версии, клип, агент
@@ -81,9 +84,17 @@ import videos_api  # noqa: E402  S12: страница «Видео» (карт�
 import render_api  # noqa: E402  S12.8: экспорт, очередь рендеров, готовые ролики
 import thumbs_api  # noqa: E402  S12.9: обложки — доски и генерация картинок
 import memory_api  # noqa: E402  S12.10: память — правила из правок автора
+import youtube_api  # noqa: E402  S17: YouTube — аналитика канала и уроки
 import make3d_api  # noqa: E402  S12.11: «✨ Сделать 3D» — Claude выбирает способ
 import locations_api  # noqa: E402  S13: локации и сцены монтажа
+import reuse_api  # noqa: E402  S15: «Уже было» — поиск готового в библиотеке и прошлых видео перед препродакшеном
+import audio_api  # noqa: E402  S23: звуковой редактор монтажа — панель «Звуки», свои файлы, скачивание
+import refbase_api  # noqa: E402  S16: «📐 По референсу» — подача чужого шорта, карта битов, похожие темы
 import clips_api  # noqa: E402  S13.4: клипы сцен — плейбек и экспорт склейкой
+import chime_api  # noqa: E402  звук «готово» силами Windows (winsound)
+import fast_api  # noqa: E402  ⚡ быстрый монтаж v2: план -> сцены параллельно -> сводка
+import notify_api  # noqa: E402  S20.5: лента уведомлений 🔔
+import actions  # noqa: E402  S20.2: реестр действий Claude по вкладкам (агент: studio.py act)
 KINDS = preprod.KINDS
 # on a hot reload of this file keep the old mark, so a changed ideas_claude.py is still picked up by capi()
 _claude_mtime = globals().get("_claude_mtime") or os.path.getmtime(ideas_claude.__file__)
@@ -102,7 +113,7 @@ _revc = globals().get("_revc") or {}
 _refc = globals().get("_refc") or {}
 
 
-LOCAL_KINDS = ("clips", "produce", "sndfetch", "refparse", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts", "brollfetch")   # jobs of this script that do not need Claude
+LOCAL_KINDS = ("fastmontage", "automontage", "clips", "produce", "sndfetch", "refparse", "refbase", "assetfetch", "layout3d", "scenever", "sceneclip", "libpublish", "charrig", "montagebuild", "chanhero", "charmodel", "assetupload", "comfysetup", "mediaadd", "voicesplit", "voicetts", "brollfetch", "lookprev", "lookhero", "ytsync", "ytlogin")   # jobs of this script that do not need Claude
 
 
 def _fresh(mod, tag):
@@ -126,6 +137,10 @@ def vapi():
     return _fresh(refvideo, "vid")
 
 
+def rapi():
+    return _fresh(refs_api, "refs")
+
+
 def pr():
     return _fresh(preprod, "pre")
 
@@ -146,6 +161,22 @@ def stgapi():
     return _fresh(settings_api, "stg")
 
 
+def chmapi():
+    return _fresh(chime_api, "chime")
+
+
+def ntapi():
+    return _fresh(notify_api, "notify")
+
+
+def acapi():
+    return _fresh(actions, "actions")
+
+
+def fsapi():
+    return _fresh(fast_api, "fast")
+
+
 def clapi():
     return _fresh(clips_api, "clips")
 
@@ -164,6 +195,15 @@ def m3d():
 
 def chnapi():
     return _fresh(channel_api, "chn")
+
+
+def lkapi():
+    return _fresh(looks_api, "looks")
+
+
+def ljapi():
+    lkapi()
+    return _fresh(looks_jobs, "lookjobs")
 
 
 def pkapi():
@@ -190,6 +230,10 @@ def mmapi():
     return _fresh(memory_api, "memory")
 
 
+def ytapi():
+    return _fresh(youtube_api, "yt")
+
+
 def thapi():
     return _fresh(thumbs_api, "thumbs")
 
@@ -212,6 +256,18 @@ def tkapi():
 
 def stapi():
     return _fresh(studio_api, "std")
+
+
+def rsapi():
+    return _fresh(reuse_api, "reuse")
+
+
+def rbapi():
+    return _fresh(refbase_api, "refbase")
+
+
+def auapi():
+    return _fresh(audio_api, "audio")
 
 
 def capi():
@@ -249,10 +305,7 @@ def new_id(prefix=""):
 
 
 def write_text(path, text):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    P.write_atomic(path, text)
 
 
 class FileLock:
@@ -330,10 +383,7 @@ def load(key):
 
 def save(key, doc):
     p = doc_path(key)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+    P.write_atomic(p, json.dumps(doc, ensure_ascii=False, indent=1))
     try:
         if key.startswith("plan:"):
             write_text(p[:-5] + ".md", plan_md(doc))            # video.md — читаемая версия для Claude
@@ -456,7 +506,13 @@ def apply_ops(key, ops):
         doc["rev"] = prev + 1
         doc["updated"] = now_ms()
         save(key, doc)
-        return {"rev": doc["rev"], "prev": prev}
+        res = {"rev": doc["rev"], "prev": prev}
+    if key.startswith("plan:") and any(isinstance(o, dict) and o.get("path") == ["status"] and o.get("value") == "out" for o in ops):
+        try:                                               # S14: видео вышло — настройки лука замораживаются (lookSnap)
+            lkapi().freeze(sys.modules[__name__], key[5:])
+        except Exception as e:
+            print("lookSnap:", e)
+    return res
 
 
 def folder_name(name, base):
@@ -835,6 +891,14 @@ def claude_bin():
     return home if os.path.isfile(home) else None
 
 
+def usage_of(data):
+    """Токены запуска claude -p по видам (журнал задач): in — новый ввод, cw — запись в кэш, cr — чтение из кэша (каждый ход перечитывает историю), out — ответ и размышления.
+    По ним видно, на что уходит лимит: длинная история × много ходов (cr), большие картинки и файлы (cw), длинное мышление (out)."""
+    u = data.get("usage") or {}
+    out = {"in": u.get("input_tokens"), "cw": u.get("cache_creation_input_tokens"), "cr": u.get("cache_read_input_tokens"), "out": u.get("output_tokens")}
+    return {k: v for k, v in out.items() if v}
+
+
 def run_claude(job, spec):
     """claude -p on the user's subscription: our system prompt, tools off (or web search / reading given files), JSON by schema."""
     exe = claude_bin()
@@ -861,10 +925,11 @@ def run_claude(job, spec):
     try:
         job.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=spec.get("cwd") or JOBS_DIR,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        _persist()                                             # S22: pid claude.exe — чтобы после перезапуска Studio его остановить
         try:
             out, err = job.proc.communicate(spec["prompt"].encode("utf-8"), timeout=timeout)
         except subprocess.TimeoutExpired:
-            job.proc.kill()
+            P.kill_tree(job.proc)                              # S22: со всеми детьми (Blender, node, Chrome)
             raise RuntimeError(f"Claude не ответил за {timeout // 60} мин")
     finally:
         try:
@@ -877,7 +942,7 @@ def run_claude(job, spec):
         data = json.loads(out.decode("utf-8", "replace"))
     except ValueError:
         raise RuntimeError((err or out).decode("utf-8", "replace").strip()[-400:] or f"claude завершился с кодом {job.proc.returncode}")
-    job.meta = {"cost": data.get("total_cost_usd"), "turns": data.get("num_turns"), "ms": data.get("duration_ms")}
+    job.meta = {"cost": data.get("total_cost_usd"), "turns": data.get("num_turns"), "ms": data.get("duration_ms"), **usage_of(data)}
     if data.get("is_error") or data.get("subtype") != "success":
         raise RuntimeError(str(data.get("result") or data.get("subtype") or "ошибка Claude")[:400])
     res = data.get("structured_output")
@@ -894,6 +959,8 @@ class Job:
     def __init__(self, kind, key, scope, params):
         self.id = "j" + uuid.uuid4().hex[:10]
         self.kind, self.key, self.scope, self.params = kind, key, scope or kind, params or {}
+        self.kind0 = kind                                      # S20.5: make3d и т. п. меняют kind по ходу — уведомление по исходной кнопке
+        self.params0 = dict(params or {})                     # S22: как задачу запустили — для повтора и восстановления после перезапуска
         self.status, self.started, self.finished = "running", time.time(), 0.0
         self.result, self.error, self.summary, self.proc, self.cancelled, self.meta = None, "", "", None, False, {}
 
@@ -915,22 +982,96 @@ def max_jobs():
 
 
 _PUMP = threading.Lock()
+_PERSIST = threading.Lock()
+JOBS_FILE = os.path.join(JOBS_DIR, "live.json")
+SERVER = globals().get("SERVER", False)                    # S22: очередь на диск пишет только процесс сервера (CLI затёр бы её своим пустым JOBS)
+
+
+def _persist():
+    """S22: живые задачи Claude (ждут / идут) -> .jobs/live.json: после перезапуска Studio очередь вернётся, осиротевшие процессы остановятся."""
+    if not SERVER:
+        return
+    rows = []
+    for j in list(JOBS.values()):
+        if j.status not in ("queued", "running") or j.cancelled or j.kind0 in LOCAL_KINDS:
+            continue
+        pid = None
+        try:
+            pid = j.proc.pid if j.proc and j.proc.poll() is None else None
+        except Exception:
+            pass
+        rows.append({"id": j.id, "kind": j.kind0, "key": j.key, "scope": j.scope, "params": getattr(j, "params0", {}), "status": j.status,
+                     "started": j.started, "retry_at": getattr(j, "retry_at", 0), "tries": getattr(j, "tries", 0), "pid": pid})
+    try:
+        with _PERSIST:
+            os.makedirs(JOBS_DIR, exist_ok=True)
+            P.write_atomic(JOBS_FILE, json.dumps(rows, ensure_ascii=False, indent=1, default=str))
+    except OSError as e:
+        print("! очередь на диск:", e)
+
+
+def restore_jobs():
+    """S22: старт сервера — задачи прошлого запуска: их claude.exe (и Blender / node / Chrome под ним) останавливаются, задачи — снова в очередь
+    тем же порядком. Прерванный черновик начнётся заново (своя новая версия, старые не трогаются)."""
+    global SERVER
+    SERVER = True
+    try:
+        rows = json.load(open(JOBS_FILE, encoding="utf-8"))
+    except (OSError, ValueError):
+        rows = []
+    back, killed = 0, 0
+    for r in rows:
+        if r.get("pid") and P.kill_tree(r["pid"], names=("claude",)):
+            killed += 1
+        if any(j.key == r.get("key") and j.scope == r.get("scope") and j.status in ("queued", "running") for j in JOBS.values()):
+            continue
+        job = Job(r.get("kind"), r.get("key"), r.get("scope"), r.get("params") or {})
+        job.status, job.started = "queued", float(r.get("started") or time.time())
+        job.summary = "после перезапуска Studio — снова в очереди"
+        job.tries, job.retry_at = int(r.get("tries") or 0), float(r.get("retry_at") or 0)
+        JOBS[job.id] = job
+        back += 1
+    _persist()
+    if back or killed:
+        print(f"очередь после перезапуска: вернул {back}, остановил осиротевших процессов {killed}")
+        try:
+            ntapi().add("job", f"После перезапуска Studio: в очереди снова {back}", (f"остановлено зависших процессов Claude: {killed}" if killed else ""), None, None, None, "🔄")
+        except Exception as e:
+            print("! notify:", e)
+    _pump()
+
+
+def _held(job):
+    """S15: черновик элемента с нерешённой находкой «Нашлось в библиотеке» ждёт решения автора (reuse_api.holds)."""
+    try:
+        return rsapi().holds(sys.modules[__name__], job)
+    except Exception as e:
+        print("! reuse holds:", e)
+        return False
 
 
 def _waits_for(job):
-    """Сцену препродакшена рисуем после черновиков её состава (S12.13): пока у её персонажей / пропсов идёт или ждёт задача — сцена ждёт."""
+    """Сцену / локацию препродакшена рисуем после ВСЕХ персонажей и пропсов видео (автор: «без ассетов локации не соберёшь»): пока у любого из них идёт или ждёт задача — сцена ждёт."""
     if job.kind not in ("element", "make3d") or not job.key.startswith("plan:"):
         return False
     try:
         d = load(job.key)
         e = _by_id(d.get("elements"), job.params.get("el"))
+        mo = preprod.main_of(e, d) if e and e.get("kind") in ("char", "prop") and not e.get("renders") else None
+        if mo and not preprod.el_render(mo):                # S18: первый черновик вариации — от основного образа: ждём, пока его рисуют
+            return any(j is not job and j.key == job.key and j.status in ("running", "queued") and (j.params or {}).get("el") == mo["id"]
+                       and j.kind in ("element", "make3d", "charparts", "charmodel") for j in JOBS.values())
         if not e or e.get("kind") != "scene":
             return False
         cast = {x["id"] for x, _ in preprod.cast_of(e, d)}
+        assets = {x["id"] for x in d.get("elements") or [] if x.get("kind") in ("char", "prop", "vfx")}   # все персонажи и пропсы видео — сначала они, потом места
     except Exception:
         return False
     scopes = {f"{p}:{i}" for i in cast for p in ("element", "charmodel")}
-    return any(j is not job and j.key == job.key and j.status in ("running", "queued") and j.scope in scopes for j in JOBS.values())
+    if any(_held(Job("element", job.key, "element:" + i, {"el": i})) for i in cast):
+        return True                                        # S15: кто-то из состава ждёт решения «Нашлось в библиотеке» — место ждёт его
+    return any(j is not job and j.key == job.key and j.status in ("running", "queued")
+               and (j.scope in scopes or (j.params or {}).get("el") in assets) for j in JOBS.values())
 
 
 def _pump():
@@ -940,12 +1081,18 @@ def _pump():
         for job in sorted((j for j in JOBS.values() if j.status == "queued"), key=lambda j: j.started):
             if busy >= max_jobs():
                 break
+            if getattr(job, "retry_at", 0) > time.time():      # S22: повтор после перегрузки / лимита Claude — ждёт своего времени
+                continue
+            if _held(job):
+                job.summary = "ждёт решения: 📚 нашлось в библиотеке"
+                continue
             if _waits_for(job):
-                job.summary = "ждёт черновики персонажей и пропсов сцены"
+                job.summary = "ждёт: сначала основной образ, персонажи и пропсы, потом места"
                 continue
             job.status, job.started, job.summary = "running", time.time(), ""
             busy += 1
             threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    _persist()
 
 
 def start_job(kind, key, scope, params):
@@ -961,12 +1108,37 @@ def start_job(kind, key, scope, params):
     else:                                                  # S12.13: лишние не отклоняются — ждут в очереди (status queued), _pump запускает по мере освобождения
         job.status, job.summary = "queued", "в очереди"
         _pump()
+    _persist()
     for jid in [i for i, j in JOBS.items() if j.finished and time.time() - j.finished > 1800]:
         JOBS.pop(jid, None)
     return job
 
 
+_RE_BUSY = re.compile(r"\b529\b|overloaded|API Error: 5\d\d|internal server error", re.I)
+_RE_LIMIT = re.compile(r"session limit|usage limit|limit reached|hit your [\w ]*limit", re.I)
+
+
+def _retry_after(err, tries):
+    """S22: через сколько секунд повторить задачу Claude, упавшую не по своей вине, или None.
+    529 / перегрузка — через 1, 2, 3 мин (3 попытки); лимит сессии — после сброса из текста ошибки («resets 10:10pm») + 2 мин (2 попытки)."""
+    if _RE_BUSY.search(err) and tries < 3:
+        return 60 * (tries + 1)
+    if _RE_LIMIT.search(err) and tries < 2:
+        m = re.search(r"resets\s+(\d{1,2})(?::(\d\d))?\s*(am|pm)?", err, re.I)
+        if not m:
+            return 3600
+        h, mi, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower()
+        h = h % 12 + (12 if ap == "pm" else 0) if ap else h
+        now = time.localtime()
+        at = time.mktime((now.tm_year, now.tm_mon, now.tm_mday, h, mi, 0, 0, 0, -1))
+        if at <= time.time():
+            at += 86400
+        return at - time.time() + 120
+    return None
+
+
 def _run_job(job):
+    kind0, params0 = job.kind, dict(job.params or {})   # make3d подменяет kind / params по ходу — повтор начинает с исходных
     try:
         if job.kind == "produce":
             produce(job)
@@ -974,6 +1146,8 @@ def _run_job(job):
             sound_fetch(job)
         elif job.kind == "refparse":
             ref_parse(job)
+        elif job.kind in ("refbase", "beatmap", "reftopics"):  # S16: референс подачи — разбор, карта битов, похожие темы
+            rbapi().run_job(sys.modules[__name__], job)
         elif job.kind == "assetfetch":
             asset_fetch(job)
         elif job.kind == "layout3d":
@@ -984,12 +1158,22 @@ def _run_job(job):
             scapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("charmodel", "assetupload", "comfysetup"):              # S9+: герой из 3D-модели (ассет / Meshy / Tripo), своя модель
             m3d().run_job(sys.modules[__name__], job)
-        elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps"):    # S9: интервью канала, сборка стиля, герой канала
+        elif job.kind in ("lookprev", "lookhero", "lookq", "lookbuild"):    # S14: визуалы канала — превью, герой лука, интервью, ✨ сборка
+            ljapi().run_job(sys.modules[__name__], job)
+        elif job.kind in ("chanq", "chanstyle", "chanhero", "chancaps", "changuide"):    # S9: интервью канала, сборка стиля, герой канала; раздел гайда
             chnapi().run_job(sys.modules[__name__], job)
         elif job.kind in ("voicesplit", "voicetts"):          # 🎙 голос ролика (S11): нарезка записи / черновой голос
             vcapi().run_job(sys.modules[__name__], job)
         elif job.kind == "clips":                              # S13.4: клипы сцен (видео на локациях)
             clapi().render(sys.modules[__name__], job)
+        elif job.kind == "fastmontage":                        # ⚡ быстрый монтаж: план (Opus) -> сцены параллельно (Sonnet) -> сводка (Opus в панели)
+            fsapi().run(sys.modules[__name__], job)
+        elif job.kind == "automontage":                        # «Сделать монтаж» без препродакшена: локации -> черновики -> агент -> дорисовка
+            lcapi().auto_montage(sys.modules[__name__], job)
+        elif job.kind in ("ytsync", "ytlogin", "ytvideo", "ytlearn"):   # S17: YouTube — синк, вход, разбор ролика, «что работает»
+            ytapi().run_job(sys.modules[__name__], job)
+        elif job.kind == "memlearn":                           # ✨ Научиться на моих правках (Память): Claude предлагает правила
+            mmapi().learn(sys.modules[__name__], job)
         elif job.kind == "make3d":                             # ✨ Сделать 3D (S12.11): Claude выбирает способ -> element / charparts / charmodel
             mk3d().run(sys.modules[__name__], job)
         elif job.kind == "brollfetch":                         # 🎞 B-roll элемента (S12.6): кусок видео -> files/<id>/broll_<el>.mp4
@@ -1003,14 +1187,47 @@ def _run_job(job):
         else:
             run_action(job)
         job.status = "done"
+        try:
+            chmapi().on_job_done(sys.modules[__name__], job)    # звук «готово» — сервер сам, через Windows
+        except Exception as e:
+            print("! chime:", e)
+        if job.kind in ("element", "make3d", "charparts", "charmodel", "trellisfix") and job.key.startswith("plan:") and (job.params or {}).get("el"):
+            try:                                               # готовый черновик подменяет заглушку в сценах монтажа (S13)
+                if load(job.key).get("locations"):
+                    lcapi().on_element_ready(sys.modules[__name__], job.key[5:], job.params["el"])
+            except Exception as e:
+                print("! on_element_ready:", e)
     except Exception as e:
         job.status = "cancelled" if job.cancelled else "error"
         job.error = str(e) or type(e).__name__
+        wait = None if job.cancelled or kind0 in LOCAL_KINDS else _retry_after(job.error, getattr(job, "tries", 0))
+        if wait:                                            # S22: Claude перегружен / лимит сессии — сама встанет в очередь, а не красная ошибка
+            job.tries = getattr(job, "tries", 0) + 1
+            job.retry_at = time.time() + wait
+            job.kind, job.params, job.status = kind0, params0, "queued"
+            job.summary = (f"повтор в {time.strftime('%H:%M', time.localtime(job.retry_at))}: "
+                           + ("Claude перегружен" if _RE_BUSY.search(job.error) else "лимит сессии — после сброса"))
+            try:
+                with open(os.path.join(JOBS_DIR, "log.txt"), "a", encoding="utf-8") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{kind0}\t{job.key}\tretry\t{time.time() - job.started:.1f}s\t{json.dumps(job.meta, ensure_ascii=False)}\t{job.error}\n")
+            except OSError:
+                pass
+            job.error = None
+            t = threading.Timer(wait + 1, lambda: _pump())
+            t.daemon = True
+            t.start()
+            _persist()
+            return
     job.finished = time.time()
     try:
-        _pump()
+        _pump()                                                # (и _persist: задача ушла из живых)
     except Exception:
         pass
+    if job.status in ("done", "error"):
+        try:
+            ntapi().on_job(sys.modules[__name__], job)          # S20.5: лента 🔔
+        except Exception as e:
+            print("! notify:", e)
     try:
         os.makedirs(JOBS_DIR, exist_ok=True)
         with open(os.path.join(JOBS_DIR, "log.txt"), "a", encoding="utf-8") as f:
@@ -1021,8 +1238,8 @@ def _run_job(job):
 
 
 def auto_tick():
-    """Every minute from the server. The bank auto-refresh and YouTube stats went to _archive in S2 — nothing periodic for now."""
-    return
+    """Every minute from the server: S17 — YouTube-данные старше 6 ч обновляются сами (вехи разборов Claude)."""
+    ytapi().tick(sys.modules[__name__])
 
 
 def _docs(key):
@@ -1031,10 +1248,10 @@ def _docs(key):
     except (OSError, ValueError):
         port = 8790
     plan = load(key) if key.startswith("plan:") else None
-    ch = (P.channel(P.index()["videos"].get(key[5:], {}).get("channel")) if plan else None) or P.channel() or {}
+    ch = (P.channel(P.index()["videos"].get(key[5:], {}).get("channel")) if plan else None)         or (P.channel(key[8:]) if key.startswith("channel:") and key[8:] else None) or P.channel() or {}   # S20: сессия канала — свой канал
     mem = ""
     try:
-        mem = mmapi().prompt_text(ch.get("id")) if ch else ""
+        mem = mmapi().prompt_text(ch.get("id"), plan.get("id") if plan else None) if ch else ""   # + правила «одно видео» этого видео
     except Exception:
         pass
     return {"plan": plan, "channel": ch, "brand": channel_brand(ch), "memory": mem, "bank": {"items": []}, "stats": {"items": []},
@@ -1087,30 +1304,10 @@ def sound_fetch(job):
 
 
 def ref_parse(job):
-    """📼 A reference video: contact sheets + transcript into _ideas/files/<plan>/ref_<id>/, summary into refs[].parse."""
-    key, rid = job.key, job.params.get("ref")
-    r = _by_id(load(key).get("refs"), rid)
-    if not r:
-        raise ValueError("референс не найден")
-    src = (r.get("url") or r.get("path") or "").strip()
-    if not src:
-        raise ValueError("у референса нет ссылки или пути")
-    apply_ops(key, [{"op": "set", "path": ["refs", rid, "parse"], "value": {"status": "running", "at": now_ms()}}])
-
-    def log(s):
-        job.summary = s
-    try:
-        res = vapi().parse(src, os.path.join(P.files(key[5:]), "ref_" + rid), log)
-    except Exception as e:
-        apply_ops(key, [{"op": "set", "path": ["refs", rid, "parse"], "value": {"status": "error", "err": str(e)[:300], "at": now_ms()}}])
-        raise
-    parse = {"status": "done", "title": res["title"], "dur": res["dur"], "step": res["step"], "sheets": [rel_data(s) for s in res["sheets"]],
-             "transcript": rel_data(res["transcript"]), "text": res["text"][:12000], "video": res["video"], "at": now_ms()}
-    ops = [{"op": "set", "path": ["refs", rid, "parse"], "value": parse}]
-    if not r.get("title") and res["title"]:
-        ops.append({"op": "set", "path": ["refs", rid, "title"], "value": res["title"][:160]})
-    apply_ops(key, ops)
-    job.summary = f"Референс разобран: {len(res['sheets'])} лист(а) кадров, {len(res['text'])} знаков расшифровки"
+    """📼 A reference video: title at once, then contact sheets + transcript into <видео>/files/ref_<id>/, summary into refs[].parse (refs_api.run)."""
+    def log(t):
+        job.summary = t
+    job.summary = rapi().run(sys.modules[__name__], job.key, job.params.get("ref"), log)
 
 
 def asset_fetch(job):
@@ -1257,6 +1454,9 @@ def run_action(job):
             apply_ops(key, ops)
     if job.kind == "element" and not job.cancelled:
         auto_stage(job)
+    if job.kind == "elements" and not job.cancelled:      # S15: новые персонажи, пропсы, звуки -> поиск в библиотеке и прошлых видео
+        for key, ops in changes:
+            rsapi().after_elements(sys.modules[__name__], key, ops)
     for eid in job.params.get("_spawn") or []:             # S12.13: «Разделить модели» / «Вариации» -> черновики новых пропсов в очередь
         try:
             start_job("element", job.key, "element:" + eid, {"el": eid})
@@ -1303,8 +1503,7 @@ def produce(job):
                                capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if not os.path.isfile(os.path.join(dst, "build.sh")):
                 raise RuntimeError("new_project.py: " + (r.stdout + r.stderr).strip()[-400:])
-        if doc.get("mode") == "long":                     # длинное видео — кадр 16:9 (src/format.js)
-            write_text(os.path.join(dst, "src", "format.js"), "// Кадр ролика: длинное видео 16:9.\nwindow.FRAME_SIZE = [1920, 1080];\n")
+        write_text(os.path.join(dst, "src", "format.js"), lkapi().format_js(sys.modules[__name__], doc))   # кадр (16:9 у длинного) + визуал канала (window.LOOK, S14)
     else:
         name = (job.params.get("name") or "").strip().rstrip(".")
         if not name or any(c in name for c in BAD_NAME):
@@ -1350,6 +1549,49 @@ def trusted(h, post=False):
         if h.headers.get("X-Ideas") != "1" or (o and urlparse(o).hostname not in ("localhost", "127.0.0.1")):
             return False
     return True
+
+
+def thumb_path(src, w=240):
+    """src — адрес картинки как у страницы (/files/…, /render/…, /api/lib/file/<канал>/…) -> JPEG шириной w (кэш .studio/cache/thumbs)."""
+    import hashlib
+    w = max(60, min(int(w or 240), 800))
+    src = unquote(src or "")
+    path = ""
+    if src.startswith("/api/lib/file/"):
+        m = re.match(r"/api/lib/file/((?:video:)?[a-z0-9-]+)/(.+)$", src)
+        if m:
+            cid = m.group(1)
+            if cid.startswith("video:"):
+                cid = P.index()["videos"].get(cid[6:], {}).get("channel")
+            st = stapi()
+            c = st.channel_dir(cid) if cid else None
+            if c:
+                base = os.path.realpath(st.lib_dir(c))
+                cand = os.path.realpath(os.path.join(base, m.group(2)))
+                path = cand if cand.startswith(base) else ""
+    else:
+        rel = src.lstrip("/").split("?")[0]
+        if rel.startswith(("files/", "render/")) and ".." not in rel:
+            try:
+                path = P.resolve(rel)
+            except Exception:
+                path = ""
+    if not path or not os.path.isfile(path) or os.path.splitext(path)[1].lower() not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        return ""
+    key = hashlib.sha1(f"{path}|{os.path.getmtime(path)}|{w}".encode("utf-8")).hexdigest()
+    out = os.path.join(P.STATE, "cache", "thumbs", key + ".jpg")
+    if not os.path.isfile(out):
+        from PIL import Image
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        im = Image.open(path)
+        im.thumbnail((w, w * 2))
+        if im.mode in ("RGBA", "LA", "P"):
+            im = im.convert("RGBA")
+            bg = Image.new("RGB", im.size, (40, 40, 44))
+            bg.paste(im, mask=im.split()[-1])
+            im = bg
+        im.convert("RGB").save(out, "JPEG", quality=82)
+    return out
 
 
 def _send_file(h, path):
@@ -1413,8 +1655,15 @@ def handle_get(h):
         h.send_error(403); return True
     if p.startswith("/api/talk/") and tkapi().handle_get(sys.modules[__name__], h, p, q):
         return True
+    if p == "/api/thumb":                              # маленькое превью картинки (окна выбора ассетов: сотни черновиков 1080×1920 разом вешали окно)
+        f = thumb_path(q.get("src", [""])[0], int((q.get("w") or ["240"])[0] or 240))
+        if not f:
+            h.send_error(404); return True
+        _send_file(h, f); return True
     if p == "/api/voice/state":                        # 🎙 голос: сцены сценария, файлы, откуда голос, записи диктора
         h._json(vcapi().state(sys.modules[__name__], q.get("video", [""])[0])); return True
+    if p == "/api/voice/text":                         # 🎤 текст для диктора: сцены, как читать, как записать
+        h._json(vcapi().actor_text(sys.modules[__name__], q.get("video", [""])[0])); return True
     if p == "/api/voice/audio":                        # 🎙 послушать: сцена (i) или исходная запись (rec)
         f = vcapi().audio_path(sys.modules[__name__], q.get("video", [""])[0], q.get("i", [None])[0], q.get("rec", [None])[0])
         if not f:
@@ -1434,7 +1683,13 @@ def handle_get(h):
         return True
     if p.startswith("/api/thumbs/") and thapi().handle_get(sys.modules[__name__], h, p, q):
         return True
+    if p.startswith("/api/yt") and ytapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
     if p.startswith("/api/memory") and mmapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
+    if p.startswith("/api/notify") and ntapi().handle_get(sys.modules[__name__], h, p, q):
+        return True
+    if p.startswith("/api/act") and acapi().handle_get(sys.modules[__name__], h, p, q):
         return True
     if p.startswith("/api/make3d/") and mk3d().handle_get(sys.modules[__name__], h, p, q):
         return True
@@ -1453,6 +1708,11 @@ def handle_get(h):
         _pump()
         jobs = [j.info() for j in JOBS.values() if j.status in ("running", "queued") or time.time() - j.finished < 90]
         out = {"docs": all_revs(), "jobs": jobs, "web": web_mtime(), "api": API_VERSION}
+        try:                                              # S20.5: 🔔 — число непрочитанных и время последнего (страница дочитывает ленту, когда оно меняется)
+            nl = ntapi().listing(ntapi().channel_of(), 0, 1)
+            out["notify"] = {"unread": nl["unread"], "last": nl["items"][0]["ts"] if nl["items"] else 0}
+        except Exception as e:
+            print("! notify revs:", e)
         vid = q.get("v", [""])[0]
         if vid:                                           # открытое видео: файлы проекта, которые меняют Claude и скрипты (голос, тайминги, сценарий, сцены)
             vd = P.video(vid) or ""
@@ -1474,8 +1734,14 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
-    if p in ("/api/settings", "/api/local3d"):
+    if p in ("/api/settings", "/api/local3d", "/api/flux"):
         stgapi().handle_get(sys.modules[__name__], h, p, q); return True
+    if p.startswith("/api/looks/"):
+        try:
+            if lkapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
     if p.startswith("/api/channel/"):
         try:
             if chnapi().handle_get(sys.modules[__name__], h, p, q):
@@ -1485,6 +1751,12 @@ def handle_get(h):
     if p == "/api/agent" or p.startswith("/api/agent/"):   # S12.4: и /api/agent/run, /api/agent/file
         try:
             if agapi().handle_get(sys.modules[__name__], h, p, q):
+                return True
+        except (KeyError, ValueError, OSError) as e:
+            h._json({"error": str(e)}, 400); return True
+    if p.startswith("/api/audio/"):                         # S23: панель «Звуки» монтажа
+        try:
+            if auapi().handle_get(sys.modules[__name__], h, p, q):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
@@ -1506,6 +1778,12 @@ def handle_get(h):
                 return True
         except (KeyError, ValueError, OSError) as e:
             h._json({"error": str(e)}, 400); return True
+    if p.startswith("/chfile/"):                              # S14: style/… канала простым путём (сцены и look.json визуалов для стендов): /chfile/<канал>/style/…
+        m = re.match(r"/chfile/([a-z0-9-]{1,40})/(style/.+)$", unquote(p))
+        c = m and P.channel(m.group(1))
+        if not c or c["id"] != m.group(1):
+            h.send_error(404); return True
+        return _static(h, c["dir"], m.group(2))
     if p.startswith("/files/") or p.startswith("/rscene/"):   # files/<id>/… and render/<id>/… of a video (paths.resolve)
         m = re.match(r"/(files|rscene)/([a-z0-9-]{3,40})/(.+)$", unquote(p))
         if not m:
@@ -1587,6 +1865,10 @@ def handle_post(h):
             return True
         if p.startswith("/api/thumbs/") and thapi().handle_post(sys.modules[__name__], h, p, q, body):
             return True
+        if (p == "/api/refs/base" or p.startswith("/api/beatmap/")) and rbapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
+        if p.startswith("/api/yt/") and ytapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/memory/") and mmapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/clips/") and clapi().handle_post(sys.modules[__name__], h, p, body):
@@ -1599,6 +1881,10 @@ def handle_post(h):
         if p == "/api/refparse":
             j = start_job("refparse", body.get("key", ""), "refparse:" + body.get("ref", ""), {"ref": body.get("ref", "")})
             h._json({"job": j.info()}); return True
+        if p == "/api/refs/add":                       # бриф: одна или несколько ссылок / путь -> refs[] (+ разбор видео)
+            items = rapi().add(sys.modules[__name__], body.get("key", ""), body.get("src", ""), body.get("note", ""))
+            rapi().autoparse(sys.modules[__name__], body.get("key", ""))
+            h._json({"items": items}); return True
         if p == "/api/sound/fetch":
             j = start_job("sndfetch", body.get("key", ""), f"sndfetch:{body.get('el', '')}:{body.get('url', '')}",
                           {k: body.get(k) for k in ("el", "url", "start", "end")})
@@ -1665,11 +1951,13 @@ def handle_post(h):
                 old.update(rev=cur.get("rev", 0) + 1, updated=now_ms(), backups=backups, id=cur["id"])
                 save(key, old)
             h._json({"ok": True, "rev": old["rev"]}); return True
-        if p in ("/api/settings", "/api/local3d/stop") and stgapi().handle_post(sys.modules[__name__], h, p, body):
+        if p in ("/api/settings", "/api/local3d/stop", "/api/flux", "/api/flux/setup") and stgapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/ws/") and wsapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/channel/") and chnapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
+        if p.startswith("/api/looks/") and lkapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/pack/") and pkapi().handle_post(sys.modules[__name__], h, p, body):
             return True
@@ -1677,10 +1965,19 @@ def handle_post(h):
             return True
         if p.startswith("/api/montage/") and mnapi().handle_post(sys.modules[__name__], h, p, body):
             return True
+        if p.startswith("/api/audio/") and auapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
         if p.startswith("/api/char/") and chapi().handle_post(sys.modules[__name__], h, p, body):
             return True
         if p.startswith("/api/scene/") and scapi().handle_post(sys.modules[__name__], h, p, body):
             return True
+        if p.startswith("/api/notify/") and ntapi().handle_post(sys.modules[__name__], h, p, body):
+            return True
+        if p == "/api/chime":                                 # послушать звук «готово» (Windows)
+            chmapi().handle_post(sys.modules[__name__], h, p, body); return True
+        if p == "/api/automontage":                          # «Сделать монтаж» без препродакшена (S13): локации -> черновики -> агент -> дорисовка задним числом
+            j = start_job("automontage", "plan:" + body.get("video", ""), "automontage", {"wish": body.get("wish") or ""})
+            h._json({"job": j.info()}); return True
         if p == "/api/claude":
             prm = body.get("params") or {}
             if body.get("action") == "element" and prm.get("base"):         # «Поправить» a scene that lives in the editor: the edits go to the scene agent
@@ -1688,6 +1985,15 @@ def handle_post(h):
                 if e.get("kind") == "scene" and (e.get("stage") or {}).get("work"):
                     j = start_job("sceneagent", body.get("key", ""), body.get("scope", ""), scapi().card_edit_params(e))
                     scapi().LOCKS[scapi().skey(body.get("key", ""), e["id"])] = j.id
+                    h._json({"job": j.info()}); return True
+            if body.get("action") == "charparts" and prm.get("base"):      # S20.3: «Поправить» плоского персонажа словами «сделай объёмным» -> «Сделать 3D» с этими словами
+                e = _by_id(load(body.get("key", "")).get("elements"), prm.get("el")) or {}
+                cur = _by_id(e.get("renders"), prm.get("base")) or {}
+                words = mk3d().author_words(e)
+                if not cur.get("model3d") and any(mk3d().VOLUME.search(w) for w in words):
+                    E = ["elements", e["id"], "fx", "main"]
+                    apply_ops(body.get("key", ""), [{"op": "set", "path": E + ["notes"], "value": []}, {"op": "set", "path": E + ["text"], "value": ""}])
+                    j = start_job("make3d", body.get("key", ""), body.get("scope", ""), {"el": e["id"], "wish": "; ".join(words)})
                     h._json({"job": j.info()}); return True
             j = start_job(body.get("action", ""), body.get("key", ""), body.get("scope", ""), prm)
             h._json({"job": j.info()}); return True
@@ -1701,10 +2007,11 @@ def handle_post(h):
             if j and j.status == "queued":                      # из очереди — просто снять
                 j.cancelled, j.status, j.finished, j.summary = True, "cancelled", time.time(), "снята из очереди"
                 _pump()
+                _persist()
             elif j and j.status == "running":
                 j.cancelled = True
                 if j.proc and j.proc.poll() is None:
-                    j.proc.kill()
+                    P.kill_tree(j.proc)                        # S22: со всеми детьми
             h._json({"ok": bool(j)}); return True
         if p == "/api/produce":
             j = start_job("produce", "plan:" + body.get("id", ""), "produce", {"name": body.get("name", ""), "attach": bool(body.get("attach"))})
@@ -1721,6 +2028,25 @@ def _opt(argv, k, default=None):
     return argv[argv.index(k) + 1] if k in argv and argv.index(k) + 1 < len(argv) else default
 
 
+def _cli_reuse(key, ops=None, ids=None, force=False):
+    """CLI add-elements / lib reuse-check -> поиск в библиотеке идёт задачей в очереди запущенной Studio (POST /api/lib/reuse/check):
+    задача из процесса CLI умерла бы вместе с ним. Studio не запущена — пропуск (None)."""
+    import urllib.request
+    if ops is not None:
+        ids = [o["item"]["id"] for o in ops if o["item"].get("kind") in rsapi().KINDS]
+        if not ids:
+            return None
+    try:
+        port = open(os.path.join(P.STATE, ".port"), encoding="utf-8").read().strip()
+    except OSError:
+        return None
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/lib/reuse/check", data=json.dumps({"key": key, "els": ids, "force": force}).encode(),
+                                 headers={"Content-Type": "application/json", "X-Ideas": "1"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        j = (json.loads(r.read()) or {}).get("job")
+    return j and j.get("id")
+
+
 def _plan_key(pid):
     key = "plan:" + pid
     try:
@@ -1729,6 +2055,55 @@ def _plan_key(pid):
     except KeyError:
         pass
     sys.exit(f"нет видео {pid} (список: python studio.py list)")
+
+
+def usage_report(days=7):
+    """Сводка расхода Claude за N дней: журнал задач (.jobs/log.txt) + запуски агента (<видео>/agent.jsonl, «done»)."""
+    import glob
+    since = time.time() - days * 86400
+    rows = {}
+
+    def add(kind, m):
+        r = rows.setdefault(kind, {"n": 0, "cost": 0.0, "turns": 0, "in": 0, "cw": 0, "cr": 0, "out": 0, "tok": 0})
+        r["n"] += 1; r["cost"] += m.get("cost") or 0; r["turns"] += m.get("turns") or 0
+        if any(m.get(k) for k in ("in", "cw", "cr", "out")):
+            r["tok"] += 1
+            for k in ("in", "cw", "cr", "out"):
+                r[k] += m.get(k) or 0
+    try:
+        for ln in open(os.path.join(JOBS_DIR, "log.txt"), encoding="utf-8"):
+            p = ln.rstrip("\n").split("\t")
+            if len(p) < 6:
+                continue
+            try:
+                if time.mktime(time.strptime(p[0], "%Y-%m-%d %H:%M:%S")) < since:
+                    continue
+                m = json.loads(p[5])
+            except ValueError:
+                continue
+            if m.get("cost"):
+                add(p[1], m)
+    except OSError:
+        pass
+    for f in glob.glob(os.path.join(P.ROOT, "*", "videos", "*", "agent.jsonl")):
+        try:
+            for ln in open(f, encoding="utf-8"):
+                if '"done"' not in ln:
+                    continue
+                e = json.loads(ln)
+                if e.get("kind") == "done" and e.get("cost") and e.get("ts", 0) / 1000 >= since:
+                    add("агент (чат видео)", e)
+        except (OSError, ValueError):
+            pass
+    tot = sum(r["cost"] for r in rows.values()) or 1
+    L = [f"Расход Claude за {days} дн. (доллары — по ценам API; лимит подписки уходит пропорционально)",
+         f"{'вид':26} {'запусков':>8} {'$':>7} {'доля':>5} {'ср.$':>6} {'ходов':>6} | токены на запуск (k): ввод · кэш-запись · кэш-чтение · ответ"]
+    for k, r in sorted(rows.items(), key=lambda kv: -kv[1]["cost"]):
+        t = r["tok"] or 0
+        tk = (" · ".join(f"{r[x] / t / 1000:.0f}" for x in ("in", "cw", "cr", "out"))) if t else "— (до учёта токенов)"
+        L.append(f"{k[:26]:26} {r['n']:>8} {r['cost']:>7.1f} {r['cost'] / tot * 100:>4.0f}% {r['cost'] / r['n']:>6.2f} {r['turns'] // max(1, r['n']):>6} | {tk}")
+    L.append(f"Всего: {sum(r['cost'] for r in rows.values()):.1f} $")
+    return "\n".join(L)
 
 
 def cli(argv):
@@ -1741,7 +2116,12 @@ def cli(argv):
     | channel new "Имя" [--icon] [--about] | channel style|hero ID  (S9, channel_api.cli)
     | montage show|gen|build <видео>  (монтаж S6, montage_api.cli)
     | char list|show|pose|skeleton|version …  (персонажи со скелетом, char_api.cli)
-    | lib list|show|publish …  (библиотека канала, studio_api.cli)"""
+    | lib list|show|publish …  (библиотека канала, studio_api.cli)
+    | ref list|add|parse|wait|read|base <видео> …  (референсы брифа: разбор видео yt-dlp + расшифровка, refs_api.cli)
+    | beatmap show|run|ok|topics <видео>  (S16: карта подачи по референсу, похожие темы — refbase_api.cli)
+    | act list [вкладка] · act <видео|channel> <действие> [--el ЭЛ] [--p '{json}'] [--wait]  (S20.2: кнопки ✨ вкладок, actions.py)
+    | el <видео> fix|draw|make3d|ok <эл> … · sound <видео> pick|fetch|use|list <эл> … · job wait <id>  (препродакшен из чата: agent_tools.py)
+    | usage [дней]  (расход Claude: задачи и агент по видам — $, ходы, токены in/cw/cr/out; по умолчанию 7 дней)"""
     cmd, a = argv[0], argv[1:]
     by = "claude"
     if cmd == "channels":
@@ -1782,11 +2162,21 @@ def cli(argv):
         if kind not in KINDS:
             sys.exit("тип: " + " | ".join(KINDS))
         ops = []
-        for t in a[2:]:
+        var = _opt(a, "--variant-of")                      # S18: вариация того же персонажа / пропса (id основного)
+        for t in [x for i, x in enumerate(a[2:], 2) if not x.startswith("--") and not (i > 2 and a[i - 1] == "--variant-of")]:
             nm, _, ds = t.partition("|")
             ops.append({"op": "add", "path": ["elements"], "item": {"id": new_id("e"), "kind": kind, "name": nm.strip(), "desc": ds.strip(),
-                                                                   "why": "", "status": "", "refs": [], "by": by}})
+                                                                   "why": "", "status": "", "refs": [], "by": by, **({"variantOf": var} if var else {})}})
         print(apply_ops(key, ops))
+        for o in ops:
+            print(f"+ {o['item']['id']} «{o['item']['name']}»")
+        if "--no-reuse" not in a:
+            try:                                           # S15: есть ли это уже в библиотеке — задача reuse (нужна запущенная Studio: идёт через её очередь)
+                j = _cli_reuse(key, ops)
+                if j:
+                    print(f"📚 ищу в библиотеке и прошлых видео: {j}")
+            except Exception as e:
+                print("! поиск в библиотеке:", e)
         return True
     if cmd == "set":
         key, path, raw = a[0], a[1].split("."), a[2]
@@ -1797,9 +2187,61 @@ def cli(argv):
         except ValueError:
             val = raw
         run = agapi().current_run()
+        if run and key.startswith("plan:") and path and path[0] == "montage":   # S23: ручные плашки звука автора (🔒) агент меняет только с --force
+            import copy as _copy
+            old = (load(key).get("montage") or {})
+            new = _copy.deepcopy(old)
+            if len(path) == 1:
+                new = mnapi().fix_by(old, val)
+                val = new
+            else:
+                cur = new
+                for k in path[1:-1]:
+                    cur = next((x for x in cur if isinstance(x, dict) and x.get("id") == k), None) if isinstance(cur, list) else cur.setdefault(k, {})
+                    if cur is None:
+                        break
+                if isinstance(cur, dict):
+                    cur[path[-1]] = val
+            bad = mnapi().author_changes(old, new)
+            if bad and "--force" not in a:
+                print("⛔ Это автор поставил или поправил руками (🔒): " + "; ".join(bad) + ".\n"
+                      "Спроси автора [[выбор: Меняй | Не трогай]] и только после «Меняй» повтори команду с --force. "
+                      "Или оставь эти плашки как были (в монтаже целиком — те же поля).")
+                return True
         if run:                                   # агент S7: запомнить, как было, — «↺ отменить» вернёт
             _journal_set(run, key, path, "set " + ".".join(map(str, path)))
         print(apply_ops(key, [{"op": "set", "path": path, "value": val}]))
+        return True
+    if cmd == "help":                         # S22: группа команд агента по запросу (в системном промпте — только ядро)
+        print(agapi().help_text(sys.modules[__name__], a[0] if a else "", a[1] if len(a) > 1 else ""))
+        return True
+    if cmd == "done":                         # S22: закрыть правки ПАЧКОЙ одной командой (было: два set на каждую — 15 % ходов агента):
+        # done <видео> '[{"id": "n…", "reply": "что сделал"}, "f…", …]' — пометки автора (notes), правки ревью (fixes), находки сторожа (guard.issues -> ok)
+        key = _plan_key(a[0])
+        items = json.loads(a[1]) if len(a) > 1 else []
+        items = items if isinstance(items, list) else [items]
+        d = load(key)
+        where = {x.get("id"): (["notes"], "done") for x in d.get("notes") or []}
+        where.update({x.get("id"): (["fixes"], "done") for x in d.get("fixes") or []})
+        where.update({x.get("id"): (["guard", "issues"], "ok") for x in (d.get("guard") or {}).get("issues") or []})
+        ops, miss = [], []
+        for it in items:
+            it = {"id": it} if isinstance(it, str) else it
+            w = where.get(it.get("id"))
+            if not w:
+                miss.append(str(it.get("id")))
+                continue
+            base = w[0] + [it["id"]]
+            ops.append({"op": "set", "path": base + ["status"], "value": it.get("status") or w[1]})
+            if it.get("reply"):
+                ops.append({"op": "set", "path": base + ["reply"], "value": it["reply"]})
+        run = agapi().current_run()
+        if run:
+            for o in ops:
+                _journal_set(run, key, o["path"], "set " + ".".join(map(str, o["path"])))
+        if ops:
+            apply_ops(key, ops)
+        print(f"закрыто: {len(items) - len(miss)}" + (f"; не нашлись id: {', '.join(miss)}" if miss else ""))
         return True
     if cmd == "op":                           # op KEY '[{"op": "add", "path": ["items"], "item": {...}}, …]'
         key = a[0]
@@ -1824,6 +2266,18 @@ def cli(argv):
         return scapi().cli(sys.modules[__name__], a)
     if cmd == "channel":
         return chnapi().cli(sys.modules[__name__], a)
+    if cmd == "looks":
+        return lkapi().cli(sys.modules[__name__], a)
+    if cmd == "act":                                   # S20.2: любое действие кнопки ✨ по вкладкам (actions.py)
+        return acapi().cli(sys.modules[__name__], a)
+    if cmd in ("el", "sound", "job"):                  # инструменты препродакшена для агента (agent_tools.py): поправить / нарисовать / 3D, звук — подобрать / скачать / выбрать
+        import agent_tools
+        try:
+            return agent_tools.cli(sys.modules[__name__], [cmd] + a)
+        except (ValueError, RuntimeError) as e:
+            print("ошибка:", e); return True
+    if cmd == "usage":
+        print(usage_report(int(a[0]) if a and a[0].isdigit() else 7)); return True
     if cmd == "montage":
         return mnapi().cli(sys.modules[__name__], a)
     if cmd == "script":
@@ -1844,8 +2298,14 @@ def cli(argv):
         return m3d().cli(sys.modules[__name__], a)
     if cmd == "mscene":                                # S13: сцены монтажа поверх локаций
         return lcapi().cli(sys.modules[__name__], a)
+    if cmd == "yt":                                    # S17: YouTube — status | login | sync | show | link | learn | review
+        return ytapi().cli(sys.modules[__name__], a)
     if cmd == "memory":                                # S12.10: правила из правок автора
         return mmapi().cli(sys.modules[__name__], a)
+    if cmd == "beatmap":                               # S16: карта подачи по референсу: show | run | ok | topics
+        return rbapi().cli(sys.modules[__name__], a)
+    if cmd == "ref":                                   # референсы брифа: list | add | parse | wait | read (refs_api.cli)
+        return rapi().cli(sys.modules[__name__], a)
     if cmd == "produce":
         job = Job("produce", _plan_key(a[0]), "produce", {"name": a[1] if len(a) > 1 else "", "attach": "--attach" in a})
         produce(job)

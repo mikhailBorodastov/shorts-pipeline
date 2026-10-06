@@ -21,6 +21,7 @@
 ```
 - `map` — пары `[время сцены, время ролика | "w:<индекс слова>"]`, между ними — линейно (время ролика отсчитывается от `at` юнита). Маркер сцены, притянутый к слову, — пара `[t маркера, "w:i"]`.
 - Звуки сцены (`scene.sounds`) идут в ролик сами, по карте времени; `sfx` / `music` — поверх.
+- **S23 (`stage23-audio.md`):** `tracks[]` (дорожки: `{id, kind: voice|music|sfx, name, gain dB, mute, solo}`), `duck` (приглушение музыки по словам голоса); у плашек `sfx` / `music` и у звуков сцены — `track`, `in` (бывший `from`), `out`, `dur`, `loop {a, xf}`, `fadeIn`, `fadeOut`, `by: author` (🔒). Генератор передаёт их в `audio.py` (`render_clip`) и пишет `build/mixcfg.json`.
 
 ## 2. Генератор — `server/montage_api.py` (`montage → project`)
 

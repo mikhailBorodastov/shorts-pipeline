@@ -4,24 +4,52 @@
 
 const CH = { files: null, cid: null, voiceUrl: null, saving: false };
 const CH_BLOCKS = [['visual', '🎨 Визуал и герой'], ['delivery', '🗣 Подача и голос'], ['montage', '🎞 Монтаж и звук'], ['pack', '📦 Упаковка']];
-const CH_TABS = [['overview', 'Обзор'], ['deliveries', 'Подачи'], ['looks', 'Визуалы'], ['interview', '🎤 Интервью'], ['guide', '📝 Стайл-гайд'], ['look', '🎨 Палитра и шрифты'], ['voice', '🎙 Голос и субтитры'], ['rules', '⚙ Правила'], ['hero', '🦸 Герой'], ['history', '🕘 История']];
+// S14.1: 7 вкладок; «Герой» и «Палитра» — у лука (Визуалы), шрифты — к субтитрам, «История» — кнопкой в гайде (docs/studio/stage14-looks.md §3.1)
+const CH_TABS = [['overview', 'Обзор'], ['deliveries', 'Подачи'], ['looks', 'Визуалы'], ['voice', 'Голос и субтитры'], ['guide', 'Стайл-гайд'], ['rules', 'Правила'], ['interview', 'Интервью']];
+const CH_OLD_TABS = { hero: 'looks', look: 'looks', history: 'guide' };
+
+// язык роликов канала (= channel_api.LANGS): на нём сценарий, голос, субтитры, обложки; с автором Claude говорит по-русски
+const CH_LANGS = [['ru', 'Русский'], ['en', 'English'], ['uk', 'Українська'], ['pl', 'Polski'], ['de', 'Deutsch'], ['es', 'Español'], ['fr', 'Français'], ['pt', 'Português']];
+const CH_EMOJI = ('📺 🎮 🕹️ 👾 🎬 🎥 📼 🎙️ 🎧 🎵 🎨 ✂️ 📚 📖 🧠 💡 🔬 🧪 🚀 🛸 🌍 🗺️ 🏰 🐉 🧌 🦔 🐱 🐶 🦊 🐻 🐸 🤖 👻 💀 🔥 ⚡ ⭐ 🌙 ☕ 🍕 '
+  + '🍔 💰 📈 ⚽ 🏎️ 😂 🤯 🎭 🃏 🎲 🧩 🪆 🏴‍☠️ 🦄 🌶️ 🍿').split(' ');
+// выбор иконки: кнопка → сетка эмодзи + «без иконки»; open хранится в CH.pick (страница пересобирается целиком)
+function iconPicker(id, value, onPick) {
+  const open = CH.pick === id;
+  const pick = v => { CH.pick = null; onPick(v); App.render(); };
+  return h('div.ic-pick', { onclick: e => e.stopPropagation() },
+    h('button.ic-btn', { type: 'button', title: 'Выбрать иконку', onclick: () => { CH.pick = open ? null : id; App.render(); } },
+      value ? h('span.ic-cur', document.createTextNode(value)) : h('span.dim.small', 'нет'), h('span.ic-arr', '▾')),
+    open && h('div.ic-pop',
+      h('div.ic-grid', CH_EMOJI.map(e => h('button.ic-e' + (e === value ? '.on' : ''), { type: 'button', onclick: () => pick(e) }, document.createTextNode(e)))),   // текстовым узлом: h() превратил бы эмодзи в контурную иконку
+      h('button.ic-none' + (!value ? '.on' : ''), { type: 'button', onclick: () => pick('') }, 'Без иконки')));
+}
+document.addEventListener('click', () => { if (CH.pick) { CH.pick = null; App.render(); } });
 
 Object.assign(Pages, {
   newChannel() {
-    const f = { name: h('input.box', { placeholder: 'Название канала (так будет называться папка)', key: 'nc|name' }), icon: h('input.box', { placeholder: '🧌', value: '📺', style: { width: '60px' }, key: 'nc|icon' }),
-      about: h('input.box', { placeholder: 'О канале одной строкой: про что, кто герой', key: 'nc|about' }) };
+    // draftInput: текст переживает App.render (страница пересобирается опросом задач и синхронизацией — обычные поля стирались)
+    const f = { name: draftInput('nc|name', { class: 'box', placeholder: 'Название канала (так будет называться папка)' }),
+      about: draftInput('nc|about', { class: 'box', placeholder: 'О канале одной строкой: про что, кто герой' }) };
+    const icon = Drafts['nc|icon'] ?? '📺', lang = Drafts['nc|lang'] || 'ru';
     const make = async () => {
       try {
-        const r = await api('POST', '/api/channel/new', { name: f.name.value.trim(), icon: f.icon.value.trim(), about: f.about.value.trim() });
+        await api('POST', '/api/channel/new', { name: f.name.value.trim(), icon, lang, about: f.about.value.trim() });
+        for (const k of ['nc|name', 'nc|icon', 'nc|about', 'nc|lang']) delete Drafts[k];
         CH.files = null; Pages._style = undefined; LIB.items = null;
         await App.refreshState(); go('#/style/interview'); UI.toast(`Канал создан — начнём с интервью по стилю`);
-        void r;
       } catch (e) { UI.toast(e.message, 'err'); }
     };
-    return h('div', h('div.phead', h('h1', '📺 Новый канал')),
-      h('section.card', h('p', 'Канал — отдельная папка в рабочей папке: свой стиль, своя библиотека (герои, предметы, звуки), свои видео и свой git.'),
-        h('div.chanform', h('label.wide', 'Название', f.name), h('label', 'Иконка', f.icon), h('label.wide', 'О канале', f.about)),
-        h('div.row', h('button.primary', { onclick: make }, '📺 Создать канал'), h('span.dim.small', 'Дальше — интервью по стилю: Claude спросит про визуал и героя, подачу и голос, монтаж и звук, упаковку.'))));
+    const fld = (label, el, cls = '') => h('div.nv-field' + cls, h('label', label), el);
+    return h('div.nc-page',
+      h('div.page-head', h('div.grow', h('h1', 'Новый канал'),
+        h('p.sub', 'Канал — отдельная папка в рабочей папке: свой стиль, своя библиотека (герои, предметы, звуки), свои видео и свой git.'))),
+      h('section.card.nc-card',
+        h('div.nv-row', fld('Иконка', iconPicker('nc', icon, v => { Drafts['nc|icon'] = v; }), '.nc-icon'), fld('Название', f.name)),
+        fld('О канале', f.about),
+        h('div.nv-row.nc-lrow', fld('Язык роликов', sel(CH_LANGS.map(([value, label]) => ({ value, label })), lang, v => { Drafts['nc|lang'] = v; }, { class: 'box' }), '.nc-lang'),
+          h('p.hint.nc-lhint', 'На нём Claude пишет названия, сценарий, озвучку, субтитры и обложки. С тобой он говорит по-русски.')),
+        h('div.nc-foot', h('button.primary', { onclick: make }, '📺 Создать канал'),
+          h('p.hint', 'Дальше — интервью по стилю: Claude спросит про визуал и героя, подачу и голос, монтаж и звук, упаковку.'))));
   },
 
   style() {
@@ -35,12 +63,13 @@ Object.assign(Pages, {
     CH.wasBusy = busy;
     const d = Store.get(ckey), F = CH.files;
     const done = d && d.interview && d.interview.done;
+    if (CH_OLD_TABS[App.route.id]) { if (App.route.id === 'history') CH.hist = true; location.replace('#/style/' + CH_OLD_TABS[App.route.id]); return h('div'); }
     const tab = App.route.id || (done ? 'overview' : 'interview');
     const body = !d || !F ? h('p.dim', h('span.spin'), ' загружаю стиль…') : F.err ? h('div.badline', '⚠ ' + F.err)
       : ({ overview: Pages.chOverview, deliveries: Pages.chDeliveries, looks: Pages.chLooks, interview: Pages.chInterview, guide: Pages.chGuide, look: Pages.chLook, voice: Pages.chVoice, rules: Pages.chRules, hero: Pages.chHero, history: Pages.chHistory }[tab] || Pages.chGuide).call(Pages, C, d, ckey, F);
     return h('div',
-      h('div.phead', h('h1', `${C.icon || '📺'} ${C.name} — стиль канала`), h('span.sp'), h('a.btn', { href: '#/newchan' }, '+ новый канал')),
-      h('div.subtabs', CH_TABS.map(([k, l]) => h('a.btn', { class: k === tab ? 'sel' : '', href: '#/style/' + k }, l))),
+      h('div.phead', h('h1', `${C.icon ? C.icon + ' ' : ''}${C.name} — стиль канала`), h('span.sp'), h('a.btn', { href: '#/newchan' }, '+ новый канал')),
+      h('div.st-tabs', { role: 'tablist' }, CH_TABS.map(([k, l]) => h('a', { class: k === tab ? 'sel' : '', href: '#/style/' + k, role: 'tab', 'aria-selected': k === tab ? 'true' : 'false' }, l))),
       body);
   },
 
@@ -58,12 +87,18 @@ Object.assign(Pages, {
     const qRow = q => h('div.chq', { class: (q.a || '').trim() ? 'ok' : '' },
       h('div.row', h('b.grow', q.q), h('button.icon.del', { title: 'Убрать вопрос', onclick: () => Store.del(ckey, ['interview', 'qa'], q.id) }, '×')),
       q.why && h('div.dim.small', 'зачем: ' + q.why),
-      area(ckey, ['interview', 'qa', q.id, 'a'], { ph: 'ответ своими словами (можно голосом в блокноте и вставить)', cls: 'box' }));
+      area(ckey, ['interview', 'qa', q.id, 'a'], { ph: 'ответ своими словами (можно голосом в блокноте и вставить)', cls: 'box' }),
+      Pages.lkMiniRefs(C, ckey, ['interview', 'qa', q.id, 'refs'], q.refs || []));   // S14: картинки, видео с куском, 🔎 поиск — к ответу
     return [
       h('section.card', h('div.card-head', h('h3', '🎤 Интервью по стилю'), h('span.counter', { class: qa.length && ans === qa.length ? 'ok' : '' }, `отвечено ${ans} из ${qa.length}`), h('span.sp'),
           running ? h('span.dim', h('span.spin'), ' Claude придумывает вопросы…') : h('button.claude', { disabled: !Claude.on, onclick: job('/api/channel/questions', 'chanq', { n: qa.length ? 8 : 20 }) }, qa.length ? '✨ Ещё вопросы' : '✨ Вопросы (≈20)')),
         h('p.dim', 'Отвечай как есть — коротко или подробно. По ответам Claude соберёт стайл-гайд, палитру, шрифты, голос, субтитры, правила и описание героя. Потом всё можно править на соседних вкладках.'),
         !qa.length && h('div.empty', 'Нажми «✨ Вопросы» — Claude спросит про визуал и героя, подачу и голос, монтаж и звук, упаковку.')),
+      h('section.card', h('div.card-head', h('h3', '🖼 Референсы'), h('span.dim.small', 'картинки (Ctrl+V, перетащить, файл), ссылки на видео с куском «с–по» — Claude смотрит их и в вопросах, и в «✨ Собрать стиль»'), h('span.sp'),
+          h('button.small', { onclick: () => ImgSearch.open('', { multi: true, fetch: async it => (await api('POST', '/api/looks/refurl', { channel: C.id, url: it.full, fallback: it.thumb })).f,
+            onPath: f => Store.add(ckey, ['interview', 'refs'], { id: uid('r'), img: f, note: '' }, true) }) }, '🔎 Найти картинки')),
+        (d.interview || {}).refs ? Styles.refGrid(C, ckey, ['interview', 'refs'], d.interview.refs, { range: true })
+          : h('button', { onclick: () => Store.set(ckey, ['interview', 'refs'], [], true) }, '+ добавить референсы')),
       CH_BLOCKS.map(([b, label]) => {
         const list = qa.filter(q => (q.block || 'visual') === b);
         return list.length > 0 && h('section.card', h('div.card-head', h('h3', label), h('span.dim.small', `${list.filter(q => (q.a || '').trim()).length} из ${list.length}`), h('span.sp'),
@@ -75,21 +110,19 @@ Object.assign(Pages, {
           styling ? h('span.dim', h('span.spin'), ' Claude (Opus) собирает стиль — 2–5 минут…')
             : h('button.claude', { disabled: !Claude.on || ans < Math.min(6, qa.length), onclick: async () => { await Store.flushAll(); job('/api/channel/style-build', 'chanstyle')(); },
               title: 'Стайл-гайд, палитра, шрифты, голос, субтитры, правила, стиль 3D, описание героя — по ответам' }, (d.interview || {}).done ? '✨ Пересобрать стиль' : '✨ Собрать стиль')),
-        (d.interview || {}).done ? h('p', '✅ Стиль собран ', h('span.dim', new Date(d.interview.styled || 0).toLocaleString().slice(0, 17)), ' — смотри вкладки ', h('a', { href: '#/style/guide' }, 'Стайл-гайд'), ', ', h('a', { href: '#/style/look' }, 'Палитра'), ', ', h('a', { href: '#/style/voice' }, 'Голос'), ', ', h('a', { href: '#/style/hero' }, 'Герой'), '.')
+        (d.interview || {}).done ? h('p', '✅ Стиль собран ', h('span.dim', new Date(d.interview.styled || 0).toLocaleString().slice(0, 17)), ' — смотри вкладки ', h('a', { href: '#/style/guide' }, 'Стайл-гайд'), ', ', h('a', { href: '#/style/voice' }, 'Голос и субтитры'), ', ', h('a', { href: '#/style/rules' }, 'Правила'), '; вид роликов и герои — ', h('a', { href: '#/style/looks' }, 'Визуалы'), '.')
           : h('p.dim', 'Когда ответишь на большую часть вопросов (пропущенные — тоже ок).')),
     ];
   },
 
   // ---------------- 📝 стайл-гайд
   chGuide(C, d, ckey, F) {
-    const ta = h('textarea.box.styleedit', { key: 'styletext:' + C.id, spellcheck: false });
-    ta.value = F.style || '';
-    const save = () => Pages.chSave('style', ta.value);
-    ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') { e.preventDefault(); save(); } });
     return [h('section.card', h('div.chanform',
         h('label', 'Название', line(ckey, ['name'], { cls: 'box' })), h('label', 'Иконка', line(ckey, ['icon'], { cls: 'box' })),
         h('label.wide', 'О канале (одной строкой — Claude читает её во всех кнопках ✨)', line(ckey, ['about'], { cls: 'box' })))),
-      h('section.card', h('div.card-head', h('h3', '📝 Стайл-гайд'), h('span.dim.small', 'style/style-guide.md · markdown · Ctrl+S'), h('span.sp'), h('button.primary', { onclick: save }, '💾 Сохранить')), ta)];
+      ...Guide.view(C, F),                             // по разделам: оглавление, чтение, правка раздела, ✨ с Claude (ui/guide.js)
+      h('div.row', h('span.sp'), h('button.small', { onclick: () => { CH.hist = !CH.hist; App.render(); }, title: 'Прошлые версии файлов стиля — каждое сохранение кладёт копию в style/.history' }, CH.hist ? 'Скрыть историю' : '🕘 История версий')),
+      CH.hist && Pages.chHistory(C, d, ckey, F)];
   },
 
   // ---------------- 🎨 палитра и шрифты
@@ -151,6 +184,7 @@ Object.assign(Pages, {
       try { const r = await api('POST', '/api/channel/upload', { channel: C.id, kind, name: f.name, data }); done(r); } catch (e) { UI.toast(e.message, 'err'); } } }); i.click(); };
     const capsBusy = Claude.running('channel:' + C.id, 'chancaps');
     return [
+      Pages.chFontsCard(C, F),
       h('section.card', h('div.card-head', h('h3', '🎙 Голос диктора')),
         V.note && h('p.dim.small', V.note),
         h('div.row', h('label', 'голос ', msel(F.voices.map(v => [v, v]), V.voice, v => { V.voice = v; saveV(); })), h('label', 'скорость ', txt(V, 'rate', saveV, '70px')), h('label', 'высота ', txt(V, 'pitch', saveV, '70px'))),
@@ -176,6 +210,17 @@ Object.assign(Pages, {
             h('label', 'появление слова ', msel([['pop', 'подпрыгивает'], ['rise', 'всплывает'], ['none', 'без анимации']], K.anim || 'pop', v => { K.anim = v; saveK(); })),
             h('label', 'высота (доля кадра) ', num(K, 'y', 0.005, saveK))))),
     ];
+  },
+  // 🔤 шрифты канала (были на вкладке «Палитра и шрифты»; палитра теперь у лука — S14)
+  chFontsCard(C, F) {
+    const P = JSON.parse(JSON.stringify(F.palette || {})); P.fonts = P.fonts || {};
+    const save = () => Pages.chSave('palette', P, true);
+    const fontSel = k => h('label', { title: 'заголовки и обложки', body: 'субтитры и текст', hand: 'рукописный' }[k],
+      msel([['', '—'], ...F.fonts.map(f => [f, f])], P.fonts[k] || '', v => { P.fonts[k] = v; F.palette = P; save(); App.render(); }),
+      h('span.fontprev', { style: { fontFamily: `"${P.fonts[k] || 'Rubik'}"` } }, 'Тролль ушёл в рейд 1234'));
+    return h('section.card', h('div.card-head', h('h3', '🔤 Шрифты'), P.fonts.note && h('span.dim.small', P.fonts.note)),
+      h('div.fonts', ['title', 'body', 'hand'].map(fontSel)),
+      h('p.dim.small', 'Шрифты — из assets/fonts шаблона и свои (⬆ свой шрифт у субтитров).'));
   },
   chFonts(C, F) {                                             // свои шрифты канала — в страницу, чтобы превью их показывало
     for (const [fam, rel] of F.chanFontFiles || []) {
@@ -256,6 +301,42 @@ Object.assign(Pages, {
           L.alive && h('button', { title: 'ComfyUI держит модели в видеопамяти. Остановить — освободить её для игр и рендера; при следующей лепке поднимется сам', onclick: async () => {
             try { Pages._l3d = await api('POST', '/api/local3d/stop', {}); App.render(); UI.toast('ComfyUI остановлен — видеопамять свободна'); } catch (e) { UI.toast(e.message, 'err'); } } }, '⏹ Освободить видеопамять'))]);
   },
+  // 🖼 Локальные обложки: FLUX.2 [klein] в том же ComfyUI Studio (server/flux2.py, tools/comfy_setup.py --flux)
+  fluxCard() {
+    if (Pages._flux === undefined) { Pages._flux = null; api('GET', '/api/flux').then(j => { Pages._flux = j; App.render(); }).catch(e => { Pages._flux = { err: e.message }; App.render(); }); }
+    const F = Pages._flux, job = Object.values(Claude.jobs).find(j => j.scope === 'fluxsetup' && j.status === 'running');
+    const refresh = () => { Pages._flux = undefined; App.render(); };
+    const head = h('div.card-head', h('h3', '🖼 Локальные обложки — FLUX.2 [klein]'), h('span.sp'), F && h('button.small', { onclick: refresh }, '↻'));
+    if (!F) return h('section.card', head, h('p.dim', h('span.spin'), ' проверяю…'));
+    if (F.err) return h('section.card', head, h('div.badline', '⚠ ' + F.err));
+    const C = F.config, M = F.models;
+    const save = async body => { try { Pages._flux = await api('POST', '/api/flux', body); UI.toast('Сохранено'); App.render(); } catch (e) { UI.toast(e.message, 'err'); } };
+    const setup = async (groups, what) => {
+      if (!confirm(what + ' Докачивается с места обрыва.')) return;
+      try { const r = await api('POST', '/api/flux/setup', { groups }); Claude.jobs[r.job.id] = r.job; App.render(); } catch (e) { UI.toast(e.message, 'err'); }
+    };
+    const url = h('input.box', { value: C.url || '', placeholder: 'пусто — свой ComfyUI Studio (порт 8199, поднимается сам)', style: { width: '360px' } });
+    const wd = h('input.box', { value: C.weights_dir || '', placeholder: 'доп. папка с весами (необязательно)', style: { width: '360px' } });
+    const to = h('input.box', { type: 'number', min: 30, value: C.timeout, style: { width: '72px' } });
+    const row = k => h('div.row', h('b', M[k].label), h('span.dim.small', ' · ' + M[k].license), h('span.sp'),
+      M[k].ready ? h('span.ok-t', '✓ веса на месте') : h('span.dim.small', F.local ? 'нет: ' + M[k].missing.join(', ') : 'веса — на стороне сервиса'));
+    return h('section.card', head,
+      h('p.dim.small', 'Обложки на своей видеокарте, без ключей и облака: промпт + до 3 картинок-референсов, сид. В «Обложках» — модель «FLUX.2 klein … · локально». ',
+        'Модель грузится один раз и остаётся в видеопамяти; «⏹ Освободить видеопамять» в карточке выше выгружает и её.'),
+      row('4b'),
+      C.allow9b && row('9b'),
+      h('div.row',
+        job ? h('span.dim.small', h('span.spin'), ' ', job.summary || 'качаю…') : [
+          F.local && !M['4b'].ready && h('button.primary', { onclick: () => setup(['4b'], 'Скачать FLUX.2 klein 4B (Apache 2.0): веса BFL 4,07 ГБ + энкодер Qwen3-4B 8,04 ГБ + VAE 0,34 ГБ с Hugging Face?') }, '⬇ Скачать 4B (~12,5 ГБ)'),
+          F.local && C.allow9b && !M['9b'].ready && h('button', { title: 'Сначала прими лицензию на странице модели и залогинься: hf auth login', onclick: () => setup(['9b-te', '9b'],
+            'Скачать FLUX.2 klein 9B (некоммерческая лицензия): энкодер Qwen3-8B 8,7 ГБ + веса ~9 ГБ? Нужны принятая лицензия на Hugging Face и вход (hf auth login).') }, '⬇ Скачать 9B')]),
+      h('div.row', h('label', 'модель по умолчанию ', sel([{ value: '4b', label: '4B' }, ...(C.allow9b ? [{ value: '9b', label: '9B' }] : [])], C.model, v => save({ model: v }))),
+        h('label', h('input', { type: 'checkbox', checked: C.allow9b, onchange: e => save({ allow9b: e.target.checked }) }), ' разрешить 9B (FLUX Non-Commercial — не для монетизируемых роликов)'),
+        C.allow9b && h('a.small', { href: M['9b'].page, target: '_blank' }, 'лицензия 9B')),
+      h('div.row', h('label', 'адрес сервиса ', url), h('label', 'таймаут, с ', to)),
+      h('div.row', h('label', 'папка весов ', wd), h('button.primary', { onclick: () => save({ url: url.value, weights_dir: wd.value, timeout: +to.value || C.timeout }) }, '💾')),
+      h('p.dim.small', F.alive ? '● сервис отвечает: ' + F.base : '○ сервис не запущен — поднимется сам при первой генерации' + (F.local ? '' : ' (кроме внешнего адреса: его запускаешь ты)')));
+  },
   settings() {
     if (Pages._set === undefined) { Pages._set = null; api('GET', '/api/settings').then(j => { Pages._set = j; App.render(); }).catch(e => { Pages._set = { err: e.message }; App.render(); }); }
     const S = Pages._set;
@@ -278,12 +359,18 @@ Object.assign(Pages, {
       h('section.card', h('div.card-head', h('h3', '🧊 Blender')), h('div.row', bl, h('button.primary', { onclick: () => save({ blender: bl.value }) }, '💾')),
         h('p.dim.small', S.blender.found ? 'Сейчас работает: ' + S.blender.found : '⚠ Blender не найден — 3D-пропсы, герои в Blender и проверка моделей не заработают.')),
       Pages.local3dCard(),
+      Pages.fluxCard(),
       S.jobs && (() => {
         const n = h('input.box', { type: 'number', min: 1, max: 8, value: S.jobs.max, style: { width: '72px' } });
         return h('section.card', h('div.card-head', h('h3', '⏳ Claude одновременно')),
           h('div.row', h('label', 'задач сразу ', n), h('button.primary', { onclick: () => save({ jobs: { max: +n.value || S.jobs.default } }) }, '💾'), h('span.dim.small', `по умолчанию ${S.jobs.default}`)),
           h('p.dim.small', 'Остальные кнопки ✨ не отказывают, а ждут в очереди и запускаются сами. Больше — быстрее, но каждая задача тратит лимит подписки Claude (5 часов), а черновики с рендером делят одну видеокарту. Сцены ждут черновики своих персонажей и пропсов.'));
       })(),
+      h('section.card', h('div.card-head', h('h3', '🔔 Звук «готово»')),
+        h('div.row', h('label', h('input', { type: 'checkbox', checked: S.chime !== false, onchange: e => { Chime.set(e.target.checked); S.chime = e.target.checked; if (e.target.checked) setTimeout(() => Chime.play('big'), 300); } }),
+          ' играть, когда готов ассет препродакшена или монтаж'), h('button.small', { onclick: () => Chime.play('small') }, '▶ ассет'), h('button.small', { onclick: () => Chime.play('preprod') }, '▶ препродакшен'),
+          h('button.small', { onclick: () => Chime.play('script') }, '▶ сценарий'), h('button.small', { onclick: () => Chime.play('montage') }, '▶ монтаж')),
+        h('p.dim.small', 'Звенит сам Studio через Windows — даже когда окно свёрнуто. Ассет — тихий «динь»; кончились все задачи препродакшена — «Препродакшен закончен»; Claude дописал сценарий — «Сценарий готов»; монтаж — «Монтаж готов».')),
       h('section.card', h('div.card-head', h('h3', '🤖 Модели Claude')),
         h('div.row', h('label', 'текстовые кнопки ', mt), h('label', 'рисование и 3D ', mv), h('label', 'усилие ', me),
           h('button.primary', { onclick: () => save({ models: { text: mt.value, visual: mv.value, effort: me.value } }) }, '💾')),

@@ -12,6 +12,15 @@ import paths as P  # noqa: E402
 
 BLOCKS = [("visual", "Визуал и герой"), ("delivery", "Подача и голос"), ("montage", "Монтаж и звук"), ("pack", "Упаковка")]
 VOICES = ["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural", "en-US-GuyNeural", "en-US-JennyNeural", "en-GB-RyanNeural"]
+# язык роликов канала (channel.json → lang): на нём названия, сценарий, VO, субтитры, обложки; с автором Claude говорит по-русски
+LANGS = {"ru": "русский", "en": "английский", "uk": "украинский", "pl": "польский", "de": "немецкий", "es": "испанский", "fr": "французский", "pt": "португальский"}
+
+
+def lang_name(doc):
+    l = (doc or {}).get("lang") or "ru"
+    return LANGS.get(l, l)
+
+
 STYLE_FILES = {"style": "style-guide.md", "palette": "palette.json", "voice": "voice.json", "captions": "captions.json", "toolkit": "toolkit.js"}
 BAD = '<>:"/\\|?*'
 
@@ -51,6 +60,7 @@ def _git(d, *a):
 
 # ---------------------------------------------------------------- + канал
 def new_channel(A, name, icon="📺", about="", lang="ru"):
+    lang = lang if lang in LANGS else "ru"
     name = (name or "").strip().rstrip(".")
     if not name or any(c in name for c in BAD):
         raise ValueError("в названии канала нельзя: " + " ".join(BAD))
@@ -63,7 +73,7 @@ def new_channel(A, name, icon="📺", about="", lang="ru"):
         cid += "-2"
     for sub in ("style", "library/characters", "library/props", "library/skeletons", "library/anims", "library/sounds", "videos"):
         os.makedirs(os.path.join(d, *sub.split("/")), exist_ok=True)
-    doc = {"schema": 1, "id": cid, "name": name, "icon": icon or "📺", "lang": lang, "formats": ["short", "long"],
+    doc = {"schema": 1, "id": cid, "name": name, "icon": (icon or "").strip(), "lang": lang, "formats": ["short", "long"],
            "style": "style/style-guide.md", "toolkit": "style/toolkit.js",
            "rules": {"paperFacing": True, "facingMaxDeg": 35, "hero": ""},
            "models": {"text": "sonnet", "visual": "claude-opus-5-5"}, "defaults": {"engine": "3d", "mode": "short", "dim": "3d"},
@@ -151,14 +161,47 @@ def voice_test(voice, rate="+20%", pitch="+0Hz", text="Привет! Так бу
 
 
 # ---------------------------------------------------------------- Claude: вопросы интервью и сборка стиля
+def _ref_line(c, r):
+    """Референс интервью строкой: картинка — абсолютный путь (Claude читает Read), видео — ссылка и кусок «с–по»."""
+    note = f" — {r['note']}" if (r.get("note") or "").strip() else ""
+    if r.get("img"):
+        return os.path.join(c["dir"], *r["img"].split("/")).replace("\\", "/") + note
+    if r.get("url"):
+        rng = f" ({r.get('from') or '0:00'}–{r.get('to') or 'конец'})" if (r.get("from") or r.get("to")) else ""
+        return "видео " + r["url"] + rng + note
+    return ""
+
+
+def interview_imgs(doc):
+    """Картинки интервью (полка + вложения к ответам) — абсолютные пути для Read."""
+    c = P.channel(doc.get("id"))
+    if not c:
+        return []
+    I = doc.get("interview") or {}
+    refs = list(I.get("refs") or []) + [r for q in I.get("qa") or [] for r in q.get("refs") or []]
+    out = [os.path.join(c["dir"], *r["img"].split("/")) for r in refs if r.get("img")]
+    return [f for f in out if os.path.isfile(f)]
+
+
 def qa_text(doc):
-    qa = (doc.get("interview") or {}).get("qa") or []
+    I = doc.get("interview") or {}
+    qa = I.get("qa") or []
+    c = P.channel(doc.get("id")) or {"dir": ""}
     by = {k: [] for k, _ in BLOCKS}
     for q in qa:
         by.setdefault(q.get("block") or "visual", []).append(q)
     out = []
+    shelf = [x for x in (_ref_line(c, r) for r in I.get("refs") or []) if x]
+    if shelf:
+        out.append("## Референсы автора (общая полка — посмотри картинки через Read)\n" + "\n".join("- " + x for x in shelf))
     for k, label in BLOCKS:
-        rows = [f"- {q['q']}\n  → {(q.get('a') or '').strip() or ('(пропущен)' if q.get('skip') else '(без ответа)')}" for q in by.get(k) or []]
+        rows = []
+        for q in by.get(k) or []:
+            row = f"- {q['q']}\n  → {(q.get('a') or '').strip() or ('(пропущен)' if q.get('skip') else '(без ответа)')}"
+            att = [x for x in (_ref_line(c, r) for r in q.get("refs") or []) if x]
+            if att:
+                row += "\n  референсы к ответу (Read): " + "; ".join(att)
+            rows.append(row)
         if rows:
             out.append(f"## {label}\n" + "\n".join(rows))
     return "\n\n".join(out)
@@ -171,7 +214,7 @@ def chanq_spec(A, doc, params):
     block = params.get("block") or ""
     blocks = "\n".join(f"- {k} — {v}" for k, v in BLOCKS)
     n = int(params.get("n") or (20 if not qa else 8))
-    prompt = f"""Интервью по стилю нового YouTube-канала «{doc.get('name')}». О канале: {doc.get('about') or '(не описан)'}.
+    prompt = f"""Интервью по стилю нового YouTube-канала «{doc.get('name')}». О канале: {doc.get('about') or '(не описан)'}. Язык роликов: {lang_name(doc)}.
 Из ответов автора соберётся стайл-гайд канала: как выглядят картинки и главный герой, как звучит подача и голос, как смонтированы ролики и звук, как упакованы (обложки, названия).
 Задай {n} вопросов{(' только по блоку ' + block) if block else ' — поровну по блокам'}:
 {blocks}
@@ -182,7 +225,9 @@ q — вопрос; why — что решит ответ (коротко); block
 {('Это уточняющий раунд ' + str(rnd) + ': копай глубже там, где ответ открыл новое или остался размытым.') if qa else ''}
 
 {qa_text(doc) or '(вопросов ещё не было)'}"""
-    return {"system": f"Ты — продюсер YouTube-канала: помогаешь автору сформулировать стиль канала, чтобы по нему делались ролики в Claude Studio. Пиши по-русски, коротко и конкретно. Отвечай строго JSON по схеме.",
+    imgs = interview_imgs(doc)
+    return {"read": imgs, "timeout": 600 if imgs else None,
+            "system": f"Ты — продюсер YouTube-канала: помогаешь автору сформулировать стиль канала, чтобы по нему делались ролики в Claude Studio. Пиши по-русски, коротко и конкретно. Отвечай строго JSON по схеме.",
             "prompt": prompt, "schema": C.S({"questions": C.ARR(C.S({"q": C.STR, "why": C.STR, "block": {"type": "string", "enum": [k for k, _ in BLOCKS]}}))}),
             "round": rnd}
 
@@ -197,6 +242,8 @@ def chanstyle_spec(A, doc):
     ex = next((x for x in P.channels() if x["id"] != doc["id"] and os.path.isfile(os.path.join(x["dir"], "style", "style-guide.md"))), None)
     example = open(os.path.join(ex["dir"], "style", "style-guide.md"), encoding="utf-8").read()[:5000] if ex else ""
     prompt = f"""Собери стиль нового канала «{doc.get('name')}» по интервью с автором. О канале: {doc.get('about') or '—'}.
+Язык роликов: {lang_name(doc)} — на нём названия, сценарии, голос, субтитры и обложки. Сам стайл-гайд, about, правила и пояснения пиши по-русски (их читает автор),
+а примеры фраз, хуков, названий и надписей в гайде — на языке роликов. Голос диктора и шрифты подбирай под этот язык.
 
 Интервью (ответы автора — его решения, не переписывай их, а развивай):
 {qa_text(doc)}
@@ -208,7 +255,7 @@ def chanstyle_spec(A, doc):
 - about — канал одной строкой (Claude читает её во всех кнопках ✨).
 - palette — 6–10 цветов: name, hex, use (где: фон, герой, акцент, текст…).
 - fonts — title (заголовки и обложки), body (субтитры), hand (рукописный) — из доступных: {', '.join(fonts())}; если нужен другой шрифт — в note, автор добавит.
-- voice — голос диктора для edge-tts: voice из {', '.join(VOICES)}, rate (например +20%), pitch (например +0Hz), note (почему).
+- voice — голос диктора для edge-tts: voice из {', '.join(VOICES)} (или другой голос edge-tts на языке роликов), rate (например +20%), pitch (например +0Hz), note (почему).
 - captions — субтитры слово за словом (караоке: сказанное слово подсвечивается): font, weight (600–900), size (60–100), color (несказанные слова), highlight (сказанное слово),
   stroke (цвет обводки), strokeWidth (0–20), shadow (true/false), box (подложка: "" — нет, или цвет #rrggbb), boxAlpha (0–1), y (доля высоты кадра, 0.7–0.8), maxWords (1–4), upper (true/false),
   anim — появление слова: pop (подпрыгивает) | rise (всплывает) | none; note — почему так.
@@ -237,7 +284,7 @@ def chanstyle_spec(A, doc):
                 "hero": S({"name": STR, "desc": STR, "character": STR, "skeleton": STR}, ["name", "desc"])},
                ["style_guide", "about", "palette", "fonts", "voice", "captions", "rules", "hero"])
     return {"system": "Ты — арт-директор и продюсер YouTube-канала. По интервью автора собираешь стиль канала для Claude Studio. Пишешь по-русски, конкретно. Отвечай строго JSON по схеме.",
-            "prompt": prompt, "schema": schema, "timeout": 900}
+            "prompt": prompt, "schema": schema, "timeout": 900, "read": interview_imgs(doc)}   # картинки-референсы интервью — Claude смотрит их (Read)
 
 
 def CAPS_SCHEMA(C):
@@ -305,6 +352,16 @@ def run_job(A, job):
         A.apply_ops(job.key, ops)
         job.result = {k: r.get(k) for k in ("about", "voice", "captions", "rules", "hero")}
         job.summary = f"Стиль собран: стайл-гайд, {len(r.get('palette') or [])} цветов, голос {(r.get('voice') or {}).get('voice', '')}, герой «{(r.get('hero') or {}).get('name', '')}»"
+        d2 = A.load(job.key)                                   # S14: визуалы — у луков; своих ещё нет — собираем первый из интервью (ответы «Визуал и герой» + референсы)
+        if not any(not lk.get("builtin") for lk in d2.get("looks") or []):
+            try:
+                lka = A.lkapi()
+                if lka.needs_migrate(d2):
+                    lka.migrate(A, cid)
+                lka.from_interview(A, cid)
+                job.summary += " · визуал канала собирается из интервью (Стиль → Визуалы)"
+            except Exception as e:
+                print("визуал из интервью:", e)
         return True
     if job.kind == "chancaps":
         img = os.path.join(chan(cid)["dir"], "style", "captions-ref.png")
@@ -318,6 +375,31 @@ def run_job(A, job):
         save_style_file(A, cid, "captions", dict(cur, **(r.get("captions") or {})))
         job.result = r.get("captions")
         job.summary = "Субтитры — как на картинке" + ((": " + r["captions"]["note"]) if (r.get("captions") or {}).get("note") else "")
+        return True
+    if job.kind == "changuide":                              # ✨ раздел стайл-гайда по просьбе автора: вариант, не сохраняется — автор принимает на странице
+        P_ = job.params
+        guide = (style_files(cid).get("style") or "")[:14000]
+        spec = {"system": "Ты — редактор стайл-гайда YouTube-канала: его читают Claude-сценаристы и аниматоры Claude Studio. Пиши по-русски, коротко, конкретно, в манере гайда. Отвечай строго JSON по схеме.",
+                "prompt": f"""Канал «{doc.get('name')}». О канале: {doc.get('about') or '(не описан)'}.
+Автор хочет поменять ОДИН раздел стайл-гайда. Его просьба: {P_.get('ask') or '(не сказал — сделай раздел яснее и короче, смысл не меняй)'}
+
+Раздел сейчас (markdown, первой строкой — заголовок):
+<<<
+{P_.get('text') or ''}
+>>>
+
+Остальной гайд — только для контекста, его не переписывай и не повторяй (правила из других разделов не дублируй):
+<<<
+{guide}
+>>>
+
+Верни text — раздел целиком в markdown, тем же уровнем заголовка в первой строке (название можно уточнить, если просит автор). Сохрани всё, о чём автор не просил,
+таблицы и блоки кода — как были, если их не касается просьба. note — 1–2 фразы: что поменял.""",
+                "schema": A.capi().S({"text": A.capi().STR, "note": A.capi().STR}), "model": A.TEXT_MODEL}
+        job.summary = "Claude правит раздел гайда…"
+        r = A.run_claude(job, spec)
+        job.result = {"text": (r.get("text") or "").strip(), "note": r.get("note") or "", "sec": P_.get("sec")}
+        job.summary = "Claude: вариант раздела готов — " + (r.get("note") or "посмотри и прими")[:120]
         return True
     if job.kind == "chanhero":
         job.result = hero_setup(A, cid)
@@ -368,15 +450,16 @@ def empty_scene(A, vid, el, name, palette):
     return wd
 
 
-def hero_setup(A, cid):
+def hero_setup(A, cid, hero=None, tag=True):
+    """Служебное видео героя. hero — герой лука (S14, looks_jobs: tag = '<лук>:<герой>'), иначе старый герой канала (channel.json → hero)."""
     c = chan(cid)
     doc = A.load("channel:" + cid)
-    hero = doc.get("hero") or {}
+    hero = hero or doc.get("hero") or {}
     hn = hero.get("name") or "Герой"
     vids = [v for v, x in P.index(True)["videos"].items() if x.get("channel") == cid]
     for v in vids:                                             # уже есть — вернуть его
         d = A.load("plan:" + v)
-        if d.get("heroSetup"):
+        if d.get("heroSetup") == tag:
             return {"video": v, "name": d.get("name")}
     d = A.new_plan("short", f"Герой канала — {hn}", "", channel=cid)
     vid = d["id"]
@@ -392,8 +475,8 @@ def hero_setup(A, cid):
                 shutil.copy2(os.path.join(hd, f), os.path.join(P.files(vid), "hero-" + f))
                 refs.append({"id": A.new_id("r"), "img": f"files/{vid}/hero-{f}", "note": "референс героя (style/hero)"})
     A.apply_ops("plan:" + vid, [
-        {"op": "set", "path": ["heroSetup"], "value": True},
-        {"op": "set", "path": ["idea"], "value": f"Служебное видео канала «{doc.get('name')}»: главный герой {hn} — персонаж со скелетом для библиотеки и пустая сцена для проверки."},
+        {"op": "set", "path": ["heroSetup"], "value": tag},
+        {"op": "set", "path": ["idea"], "value": f"Служебное видео канала «{doc.get('name')}»: герой {hn} — персонаж для библиотеки (потом выбрать его в луке: Стиль → Визуалы → Герои) и пустая сцена для проверки."},
         {"op": "add", "path": ["elements"], "item": {"id": ch, "kind": "char", "name": hn, "desc": desc, "why": "главный герой канала", "status": "", "refs": refs, "by": "studio", "dim": "3d", "make": hero.get("make") or "blender", "form": "rig"}},
         {"op": "add", "path": ["elements"], "item": {"id": sc, "kind": "scene", "name": "Пустая сцена", "desc": "Пол и задник цветами канала — проверить героя в 3D.", "why": "проверка героя",
                                                      "status": "", "refs": [], "by": "studio", "uses": [ch]}},
@@ -427,7 +510,7 @@ def handle_get(A, h, p, q):
 def handle_post(A, h, p, body):
     cid = body.get("channel") or None
     if p == "/api/channel/new":
-        h._json(new_channel(A, body.get("name"), body.get("icon"), body.get("about") or "")); return True
+        h._json(new_channel(A, body.get("name"), body.get("icon"), body.get("about") or "", body.get("lang") or "ru")); return True
     if p == "/api/channel/upload":                            # свой шрифт (style/fonts) или пример субтитров (style/captions-ref.png), base64
         import base64
         c = chan(cid)
@@ -460,6 +543,10 @@ def handle_post(A, h, p, body):
     if p == "/api/channel/voicetest":
         v = body.get("voice") or {}
         h._json({"f": voice_test(v.get("voice") or VOICES[0], v.get("rate") or "+20%", v.get("pitch") or "+0Hz", body.get("text") or "Привет! Так будет звучать голос канала.")}); return True
+    if p == "/api/channel/guide-fix":                         # ✨ один раздел стайл-гайда по просьбе автора -> вариант в job.result
+        c = chan(cid)
+        j = A.start_job("changuide", "channel:" + c["id"], "changuide:" + str(body.get("sec") or ""), {k: body.get(k) for k in ("sec", "text", "ask")})
+        h._json({"job": j.info()}); return True
     if p in ("/api/channel/questions", "/api/channel/style-build", "/api/channel/hero", "/api/channel/captions-from-ref"):
         kind = {"/api/channel/questions": "chanq", "/api/channel/style-build": "chanstyle", "/api/channel/hero": "chanhero", "/api/channel/captions-from-ref": "chancaps"}[p]
         c = chan(cid)
@@ -469,12 +556,12 @@ def handle_post(A, h, p, body):
 
 
 def cli(A, argv):
-    """channel new "Имя" [--icon 🧌] [--about "…"] | channel style ID | channel hero ID | channel scene PLAN EL "Имя" (пустая сцена)"""
+    """channel new "Имя" [--icon 🧌] [--about "…"] [--lang en] | channel style ID | channel hero ID | channel scene PLAN EL "Имя" (пустая сцена)"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
     if cmd == "new":
-        print(new_channel(A, a[0], A._opt(a, "--icon", "📺"), A._opt(a, "--about", ""))); return True
+        print(new_channel(A, a[0], A._opt(a, "--icon", "📺"), A._opt(a, "--about", ""), A._opt(a, "--lang", "ru"))); return True
     if cmd == "style":
         print(json.dumps(style_files(a[0]), ensure_ascii=False, indent=1)[:4000]); return True
     if cmd == "hero":

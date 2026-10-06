@@ -2,6 +2,9 @@
 
     python sfx_library.py import "C:/путь/к/паку"     — добавить пак (можно несколько раз, разные паки)
     python sfx_library.py import "C:/путь/к/паку" --fresh   — очистить библиотеку и импортировать заново
+    python sfx_library.py import "C:/пак.zip" --auto --license "Sonniss GDC: royalty-free, без атрибуции"
+        --auto — категории по смыслу из имён (whoosh, impact, ui, ambience…; для больших паков), --folders — по папкам; без флага — само
+        повторный запуск того же пака продолжает с места (уже импортированное пропускается)
     python sfx_library.py rebuild                      — пересобрать каталог по уже импортированным файлам
     python sfx_library.py find удар                    — поиск по каталогу
 
@@ -97,40 +100,130 @@ def load_index():
     return json.load(open(p, encoding="utf-8")) if os.path.exists(p) else {"sounds": []}
 
 
-def import_pack(src):
+# S23: категории по смыслу из имени файла и пути (большие паки вроде Sonniss GDC раскладывают по студиям, а не по типу звука).
+# Порядок важен: первое совпадение. Ключи — слова и коды UCS (WHSH, IMPCT, AMB…), с которых начинаются имена в профессиональных паках.
+AUTO_CAT = [
+    ("meme", r"\bmeme|bruh|vine boom|airhorn|mlg"),
+    ("whoosh", r"whoosh|woosh|swoosh|swish|swipe|\bwhsh|pass ?by|passby|fly ?by|\bwhoo"),
+    ("riser", r"riser|uplift|build ?up|buildup|\brise\b|rising|tension|\bsweep"),
+    ("glitch", r"glitch|\bgltch|data ?err|digital ?err|bitcrush|corrupt|stutter"),
+    ("ui", r"\bui\b|\bui[_ -]|button|click|beep|blip|notif|menu|interface|\buser ?int|select|confirm|\bpop\b|bubble ?pop"),
+    ("explosion", r"explo|\bexpl|blast|boom\b|detonat|\bkaboom"),
+    ("impact", r"impact|\bimpct|\bhit\b|hits\b|punch|slam|thud|smash|bang|crash|\bknock|\bstomp|\bbody ?fall"),
+    ("cartoon", r"cartoon|\btoon|boing|comed|squeak|slide ?whistle|zany|wacky"),
+    ("magic", r"magic|\bmagc|spell|sparkle|shimmer|chime|fairy|enchant"),
+    ("horror", r"horror|creep|scary|haunt|ghost|monster|demon|eerie"),
+    ("weapon", r"\bgun|gunshot|rifle|pistol|shot\b|sword|blade|\bweap|reload|bullet|laser"),
+    ("weather", r"\brain|thunder|storm|\bwind\b|\bwind[_ -]|\bwthr|hail|blizzard"),
+    ("water", r"water|splash|\bwatr|liquid|drip|pour|underwater|wave|bubble"),
+    ("fire", r"\bfire|flame|burn|crackl|\bfire_"),
+    ("electric", r"electric|\belec|spark|zap|buzz|hum\b|static|power ?(up|down)"),
+    ("footsteps", r"footstep|\bfeet|\bstep|\bfstp|walk|run(ning)?\b|\bjog"),
+    ("door", r"\bdoor|\bdoor_|gate|lock|latch|drawer|cabinet"),
+    ("vehicle", r"\bcar\b|\bcar_|engine|vehicle|\bveh|truck|motor ?bike|\bbike|train|plane|aircraft|helicopter|\btire|horn"),
+    ("animal", r"\bdog|\bcat\b|\bcat_|bird|horse|\banml|animal|cow|pig|chicken|wolf|insect|frog"),
+    ("human", r"laugh|scream|crowd|breath|voice|\bvox|\bhmn|cheer|applause|clap|cough|sigh|gasp|kid|baby|walla"),
+    ("foley", r"foley|\bfoly|cloth|rustle|paper|\bbag|zipper|cup|glass|plate|keys|phone|typing|keyboard|chair|book"),
+    ("mechanical", r"machine|mechan|\bmech|servo|gear|robot|motor|ratchet|metal"),
+    ("ambience", r"ambien|\bamb\b|\bamb_|\bamb[a-z]{2}_|atmos|room ?tone|roomtone|background|forest|city|street|night|nature|drone"),
+    ("music", r"\bmusic|\bmus_|stinger|jingle|loop ?\d|\bbpm"),
+]
+
+
+def auto_cat(path):
+    """категория по пути и имени файла; не нашлось — misc"""
+    s = re.sub(r"[_\-.]+", " ", path.replace("\\", "/").lower())
+    s2 = path.replace("\\", "/").lower()
+    for cat, rx in AUTO_CAT:
+        if re.search(rx, s) or re.search(rx, s2):
+            return cat
+    return "misc"
+
+
+def _unzip(src):
+    """zip -> временная папка рядом с библиотекой (удаляется после импорта)"""
+    import tempfile, zipfile
+    d = tempfile.mkdtemp(prefix="pack_", dir=os.path.dirname(LIB))
+    with zipfile.ZipFile(src) as z:
+        for m in z.infolist():
+            if m.filename.lower().endswith(AUDIO_EXT) and not m.filename.startswith("__MACOSX"):
+                z.extract(m, d)
+    return d
+
+
+def import_pack(src, auto=None, pack=None, license=None, progress=None, workers=6):
+    """Пак (папка или .zip) -> библиотека. auto — категории по смыслу (по умолчанию: если в паке нет знакомых папок-категорий).
+    Уже импортированные файлы этого пака пропускаются (можно продолжить прерванный импорт). progress(i, n, added) — для окна Studio."""
+    from concurrent.futures import ThreadPoolExecutor
     os.makedirs(LIB, exist_ok=True)
+    tmp = None
+    if src.lower().endswith(".zip") and os.path.isfile(src):
+        pack = pack or os.path.splitext(os.path.basename(src))[0]
+        tmp = src = _unzip(src)
     idx = load_index()
     have = {s["id"] for s in idx["sounds"]}
-    pack = os.path.basename(os.path.normpath(src))
+    pack = pack or os.path.basename(os.path.normpath(src))
+    done_src = {s.get("source") for s in idx["sounds"] if s.get("pack") == pack}
     files = []
     for root, _, names in os.walk(src):
         for n in names:
-            if n.lower().endswith(AUDIO_EXT):
+            if n.lower().endswith(AUDIO_EXT) and not n.startswith("._"):
                 files.append(os.path.join(root, n))
-    print(f"Найдено {len(files)} аудиофайлов")
-    added = 0
-    for i, f in enumerate(sorted(files)):
+    files.sort()
+    if auto is None:                                      # знакомые папки (как в первом паке) — по ним, иначе — по смыслу
+        auto = not any(os.path.basename(os.path.dirname(f)).lower() in CATEGORY for f in files[:500])
+    print(f"Найдено {len(files)} аудиофайлов · категории: {'по смыслу из имён' if auto else 'по папкам'}")
+
+    def cat_of(f):
+        rel = os.path.relpath(f, src)
+        if auto:
+            return auto_cat(rel)
         folder = os.path.basename(os.path.dirname(f))
-        cat = CATEGORY.get(folder.lower(), slug(folder)) if os.path.normpath(os.path.dirname(f)) != os.path.normpath(src) else "misc"
-        name = os.path.splitext(os.path.splitext(os.path.basename(f))[0])[0]
-        base = f"{cat}/{slug(name)}"
-        sid, k = base, 2
-        while sid in have:
-            sid = f"{base}-{k}"; k += 1
-        y, info = analyse_and_trim(decode(f))
-        if y is None:
-            print("  пропуск (тишина/не читается):", f); continue
-        out = os.path.join(LIB, sid + ".wav")
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        write_wav(out, y)
-        entry = {"id": sid, "category": cat, "name": name, "pack": pack, "source": os.path.relpath(f, src).replace("\\", "/"), **info}
-        if cat in CAUTION:
-            entry["caution"] = CAUTION[cat]
-        idx["sounds"].append(entry); have.add(sid); added += 1
-        if (i + 1) % 50 == 0:
-            print(f"  {i + 1}/{len(files)}")
+        return CATEGORY.get(folder.lower(), slug(folder)) if os.path.normpath(os.path.dirname(f)) != os.path.normpath(src) else "misc"
+
+    todo = [f for f in files if os.path.relpath(f, src).replace("\\", "/") not in done_src]
+    if len(todo) < len(files):
+        print(f"  уже в библиотеке: {len(files) - len(todo)} — пропускаю")
+
+    def work(f):
+        try:
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-t", str(MAX_LEN + 2), "-i", f, "-vn", "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"], capture_output=True).stdout
+            return f, analyse_and_trim(np.frombuffer(raw, dtype=np.float32).astype(np.float64))
+        except Exception:
+            return f, (None, None)
+
+    added = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for i, (f, (y, info)) in enumerate(ex.map(work, todo)):
+            if y is None:
+                print("  пропуск (тишина/не читается):", f)
+            else:
+                cat = cat_of(f)
+                name = os.path.splitext(os.path.splitext(os.path.basename(f))[0])[0]
+                base = f"{cat}/{slug(name)}"
+                sid, k = base, 2
+                while sid in have:
+                    sid = f"{base}-{k}"; k += 1
+                out = os.path.join(LIB, sid + ".wav")
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                write_wav(out, y)
+                entry = {"id": sid, "category": cat, "name": name, "pack": pack, "source": os.path.relpath(f, src).replace("\\", "/"), **info}
+                if license:
+                    entry["license"] = license
+                if cat in CAUTION:
+                    entry["caution"] = CAUTION[cat]
+                idx["sounds"].append(entry); have.add(sid); added += 1
+            if (i + 1) % 100 == 0:
+                print(f"  {i + 1}/{len(todo)}")
+            if (i + 1) % 500 == 0:
+                save(idx)                                    # прервётся — продолжит с этого места
+            if progress:
+                progress(i + 1, len(todo), added)
     save(idx)
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)
     print(f"Добавлено {added}. Всего в библиотеке: {len(idx['sounds'])}")
+    return added
 
 
 def save(idx):
@@ -187,7 +280,10 @@ if __name__ == "__main__":
     if cmd == "import" and len(sys.argv) > 2:
         if "--fresh" in sys.argv and os.path.isdir(LIB):
             shutil.rmtree(LIB)                   # wipe and re-import from scratch
-        import_pack([x for x in sys.argv[2:] if x != "--fresh"][0])
+        a = sys.argv[2:]
+        opt = lambda k: a[a.index(k) + 1] if k in a and a.index(k) + 1 < len(a) else None
+        pos = [x for i, x in enumerate(a) if not x.startswith("--") and (i == 0 or a[i - 1] not in ("--pack", "--license"))]
+        import_pack(pos[0], auto=True if "--auto" in a else False if "--folders" in a else None, pack=opt("--pack"), license=opt("--license"))
     elif cmd == "rebuild":
         save(load_index())
     elif cmd == "find":

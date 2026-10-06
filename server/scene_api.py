@@ -304,6 +304,43 @@ def target_of(path):
     return p[0], "*"
 
 
+def shift_ops(doc, frm, delta):
+    """S22: ops сдвига «всё, что в сцене по времени с frm, — на delta с»: ключи объектов (keys.*), клипы, ключи позы, камера, звуки, маркеры, длина сцены.
+    Обычные set — история, отмена и защита ручных правок автора те же, что у scene ops."""
+    eps = 1e-6
+    mv = lambda t: round(max(0.0, float(t) + delta), 3)
+    ops = []
+
+    def lst(items):
+        out, hit = [], False
+        for x in items or []:
+            if isinstance(x, dict) and x.get("t") is not None and float(x["t"]) >= frm - eps:
+                x = dict(x, t=mv(x["t"]))
+                hit = True
+            out.append(x)
+        return out, hit
+    for o in doc.get("objects") or []:
+        oid = o.get("id")
+        for ch, ks in (o.get("keys") or {}).items():
+            new, hit = lst(ks)
+            if hit:
+                ops.append({"op": "set", "path": ["objects", oid, "keys", ch], "value": new})
+        for f in ("clips", "pose"):
+            new, hit = lst(o.get(f))
+            if hit:
+                ops.append({"op": "set", "path": ["objects", oid, f], "value": new})
+    new, hit = lst((doc.get("camera") or {}).get("keys"))
+    if hit:
+        ops.append({"op": "set", "path": ["camera", "keys"], "value": new})
+    for f in ("sounds", "markers"):
+        for x in doc.get(f) or []:
+            if isinstance(x, dict) and x.get("id") and x.get("t") is not None and float(x["t"]) >= frm - eps:
+                ops.append({"op": "set", "path": [f, x["id"], "t"], "value": mv(x["t"])})
+    if doc.get("len") and float(doc["len"]) >= frm - eps:
+        ops.append({"op": "set", "path": ["len"], "value": round(max(0.1, float(doc["len"]) + delta), 3)})
+    return ops
+
+
 def op_targets(op):
     t, sub = target_of(op.get("path") or [])
     path = [str(x) for x in op.get("path") or []]
@@ -398,6 +435,72 @@ def _prefab_kind(A, key, el, ref):
     return m.group(1) if m else ""
 
 
+def doc_objs(A, key, el):
+    try:
+        return load_scene(A, key, el).get("objects") or []
+    except Exception:
+        return []
+
+
+def dup_name(names, prefab, n):
+    """«Xbox 360 01», «Xbox 360 09 (на коробке)» -> «Xbox 360 ×16»: имя без номера копии и пометки в скобках."""
+    clean = [re.sub(r"\s*×\d+$", "", re.sub(r"\s*\(.*?\)\s*$", "", x)).strip() for x in names if x]
+    if not clean:
+        base = prefab or "предмет"
+    elif len(set(clean)) == 1:
+        base = clean[0]
+    else:
+        stems = [re.sub(r"\s+\d{1,3}$", "", x) for x in clean]   # номер копии в конце: «… 01»
+        if len(set(stems)) == 1:
+            base = stems[0]
+        else:
+            base = os.path.commonprefix(stems).rstrip(" -#№")
+            if len(base) < 3:
+                base = stems[0]
+    return f"{base} ×{n}" if n > 1 else base
+
+
+def merge_dup_props(A, key):
+    """Разово: карточки «сделан в сцене» с одним префабом в одной сцене -> одна карточка ×N (связи объектов, состав сцены)."""
+    plan = A.load(key)
+    els = plan.get("elements") or []
+    groups = {}
+    for x in els:
+        fr = x.get("from") or {}
+        if fr.get("scene") and fr.get("prefab") and x.get("status") != "drop" and x.get("by") == "scene":
+            groups.setdefault((fr["scene"], fr["prefab"]), []).append(x)
+    done = []
+    for (scn, ref), xs in groups.items():
+        if len(xs) < 2:
+            continue
+        keep, rest = xs[0], [r for r in xs[1:] if not (r.get("renders") or r.get("lib") or r.get("status"))]
+        if not rest:                                            # у копий свои черновики / ✓ — не трогаем
+            continue
+        objs = []
+        for x in [keep] + rest:
+            for o in x["from"].get("objs") or [x["from"].get("obj")]:
+                if o and o not in objs:
+                    objs.append(o)
+        names = {o.get("id"): o.get("name") for o in doc_objs(A, key, scn)}
+        nm = dup_name([names.get(o) for o in objs], ref, len(objs))
+        drop = {r["id"] for r in rest}
+        ops = [{"op": "set", "path": ["elements", keep["id"], "from"], "value": dict(keep["from"], objs=objs)},
+               {"op": "set", "path": ["elements", keep["id"], "name"], "value": nm}]
+        for e2 in els:                                          # состав сцен: копии -> одна карточка
+            u = e2.get("uses") or []
+            if any(i in drop for i in u):
+                u2 = [i for i in u if i not in drop]
+                ops.append({"op": "set", "path": ["elements", e2["id"], "uses"], "value": u2 + ([keep["id"]] if keep["id"] not in u2 else [])})
+        ops += [{"op": "del", "path": ["elements"], "id": i} for i in drop]
+        links = [{"op": "set", "path": ["objects", o.get("id"), "src", "el"], "value": keep["id"]}
+                 for o in doc_objs(A, key, scn) if (o.get("src") or {}).get("el") in drop]
+        if links:
+            _apply(A, key, scn, links, by="studio", desc=f"📦 копии «{nm}» — одна карточка", kind="edit")
+        A.apply_ops(key, ops)
+        done.append(f"{nm} (сцена «{(A._by_id(els, scn) or {}).get('name', scn)}»): {len(rest) + 1} карточек -> 1")
+    return done
+
+
 def adopt(A, key, el, ops):
     """S11 ч.4: добавленные в сцену объекты без элемента препродакшена -> элементы: el:<id> — связь, lib:<предмет> — импорт (или тот же элемент),
     свой префаб сцены — новый пропс «сделан в сцене» (живёт в prefabs.js сцены; «📦 Сделать отдельным ассетом» вынесет его). У объекта появляется src.el,
@@ -412,6 +515,10 @@ def adopt(A, key, el, ops):
     added = [o.get("item") for o in ops if o.get("op") == "add" and list(o.get("path") or []) == ["objects"] and isinstance(o.get("item"), dict)]
     norm = lambda s: re.sub(r"[^\wа-яё]+", "", (s or "").lower().replace("ё", "е"))
     by_name = {norm(x.get("name")): x for x in els if x.get("kind") in ("char", "prop") and x.get("status") != "drop"}
+    # одинаковые предметы сцены (тот же префаб) — одна карточка «Xbox 360 ×16»: копии отличаются только местом и params
+    by_from = {(x["from"]["scene"], x["from"].get("prefab")): x for x in els
+               if (x.get("from") or {}).get("scene") == el and x.get("status") != "drop"}
+    grown = {}
     plan_ops, links, uses = [], [], list(sc.get("uses") or [])
     for it in added:
         if it.get("type") == "group":
@@ -435,8 +542,15 @@ def adopt(A, key, el, ops):
         else:
             if _prefab_kind(A, key, el, ref) in ("env", "overlay"):
                 continue
-            x = by_name.get(norm(it.get("name")))
-            if x:
+            x = by_from.get((el, ref)) or by_name.get(norm(it.get("name")))
+            fr0 = (x or {}).get("from") or {}
+            if x and fr0.get("scene") == el and fr0.get("prefab") == ref:     # ещё одна копия того же предмета
+                eid = x["id"]
+                fr = grown.get(eid) or dict(fr0, objs=list(fr0.get("objs") or [fr0.get("obj")]))
+                if it.get("id") not in fr["objs"]:
+                    fr["objs"].append(it.get("id"))
+                grown[eid] = fr
+            elif x:
                 eid = x["id"]
             else:
                 eid = A.new_id("e")
@@ -446,9 +560,21 @@ def adopt(A, key, el, ops):
                         "from": {"scene": el, "obj": it.get("id"), "prefab": ref}}
                 plan_ops.append({"op": "add", "path": ["elements"], "item": item})
                 by_name[norm(item["name"])] = item
+                by_from[(el, ref)] = item
         links.append({"op": "set", "path": ["objects", it["id"], "src", "el"], "value": eid})
         if eid not in uses:
             uses.append(eid)
+    if grown:
+        objs = {o.get("id"): o for o in doc_objs(A, key, el)}
+        objs.update({it.get("id"): it for it in added})
+        fresh = {o["item"]["id"]: o["item"] for o in plan_ops if o.get("op") == "add" and isinstance(o.get("item"), dict)}
+        for eid, fr in grown.items():
+            nm = dup_name([(objs.get(i) or {}).get("name") for i in fr["objs"]], fr.get("prefab"), len(fr["objs"]))
+            if eid in fresh:                                  # заведён в этой же пачке — правим сам item
+                fresh[eid].update({"from": fr, "name": nm})
+            else:
+                plan_ops += [{"op": "set", "path": ["elements", eid, "from"], "value": fr},
+                             {"op": "set", "path": ["elements", eid, "name"], "value": nm}]
     if uses != list(sc.get("uses") or []):
         plan_ops.append({"op": "set", "path": ["elements", el, "uses"], "value": uses})
     if plan_ops:
@@ -773,7 +899,15 @@ def element(A, key, el):
 
 
 def stage_url(port, rel):
-    return f"http://127.0.0.1:{port}/tpl/stand3d.html?stage=/rscene/{rel}/scene.json&parts=element"
+    # S22: длинное видео (mode long) — кадр 16:9: стенд узнаёт формат из ?fmt=long (без него сцены длинных роликов снимались 9:16)
+    return f"http://127.0.0.1:{port}/tpl/stand3d.html?stage=/rscene/{rel}/scene.json&parts=element" + ("&fmt=long" if _is_long(rel.split("/")[0]) else "")
+
+
+def _is_long(pid):
+    try:
+        return json.load(open(os.path.join(P.video(pid) or "", "video.json"), encoding="utf-8")).get("mode") == "long"
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def shoot(A, key, url, wd, ts="0.6,2.5"):
@@ -1202,10 +1336,14 @@ def cli(A, argv):
     """scene show PLAN EL | scene brief PLAN EL | scene frame PLAN EL t[,t2] | scene ops PLAN EL '<JSON>' --desc "…" [--by claude|author] | scene history PLAN EL [n]
     | scene undo PLAN EL | scene version PLAN EL ["заметка"] | scene clip PLAN EL | scene validate PLAN EL | scene finish PLAN EL
     | scene done PLAN EL NOTE_ID[,ID2…] ["что сделано"] — закрыть пометки автора (📌) как исправленные
-    | scene final-done PLAN EL FINAL_ID[,ID2…] ["что сделано"] — пункты «🎬 для финала» сделаны"""
+    | scene final-done PLAN EL FINAL_ID[,ID2…] ["что сделано"] — пункты «🎬 для финала» сделаны
+    | scene merge-props PLAN — одинаковые предметы «сделан в сцене» (один префаб) в одну карточку ×N"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
+    if cmd == "merge-props":                   # scene merge-props PLAN — одинаковые предметы сцен (один префаб) в одну карточку ×N
+        print("\n".join(merge_dup_props(A, "plan:" + a[0])) or "склеивать нечего")
+        return True
     key, el = "plan:" + a[0], a[1]
     if cmd == "show":
         d = load_scene(A, key, el)
@@ -1220,6 +1358,16 @@ def cli(A, argv):
                   + (f"  ключи {ks}" if ks else "") + ("  [автор]" if (d.get("authored") or {}).get(o["id"]) else ""))
         c = d.get("camera") or {}
         print(f"камера: {len(c.get('keys') or [])} ключей, склеек {len(c.get('cuts') or [])}, fov {c.get('fov')}")
+        return True
+    if cmd == "shift":                         # S22: scene shift VID EL FROM DELTA — всё по времени сцены после FROM на DELTA одной пачкой scene ops
+        frm, delta = float(a[2]), float(a[3])
+        ops = shift_ops(load_scene(A, key, el), frm, delta)
+        if not ops:
+            print("сдвигать нечего: после этого момента в сцене нет ключей, клипов, звуков и маркеров"); return True
+        # ручные ключи автора — тоже: сдвиг переносит их по времени, значения (позиции, повороты) не трогает — это и есть правка темпа
+        mine = sorted({f"{t}.{sub}" for o in ops for t, sub in op_targets(o) if t})
+        r = apply(A, key, el, ops, by=A._opt(a, "--by", "claude"), desc=A._opt(a, "--desc", "") or f"сдвиг с {frm} с на {delta:+} с", allow=mine)
+        print(f"сдвинуто с {frm} с на {delta:+} с: операций {len(ops)} ({', '.join(sorted({o['path'][0] for o in ops}))}); значения ключей не тронуты · отмена — scene undo")
         return True
     if cmd == "ops":
         ops = json.loads(a[2])

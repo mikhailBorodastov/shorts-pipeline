@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>S23 — Звуковой редактор монтажа (макет)</title>
+<style>
+:root { --bg:#16161a; --pan:#1e1e24; --card:#25252d; --line:#33333d; --tx:#e9e7f0; --dim:#9a97a8; --acc:#8b7cf6; --ok:#2fbf71; --warn:#e8a33d; --err:#e5584f;
+  --mus:#3a7bd5; --sfx:#d08a2e; --amb:#2f9e8f; --sc:#b0569c; }
+* { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--tx); font:13px/1.4 system-ui,Segoe UI,sans-serif; }
+h1 { font-size:18px; margin:16px 20px 2px; } .dim { color:var(--dim); } .sub { margin:0 20px 12px; }
+.win { display:grid; grid-template-columns:270px 1fr; border:1px solid var(--line); margin:0 20px 20px; border-radius:12px; overflow:hidden; min-width:1100px; }
+/* панель звуков */
+.snd { background:var(--pan); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+.snd .tabs { display:flex; border-bottom:1px solid var(--line); }
+.snd .tabs div { flex:1; text-align:center; padding:8px 0; color:var(--dim); font-size:12px; } .snd .tabs .on { color:#fff; box-shadow:inset 0 -2px var(--acc); }
+.snd input { margin:10px; padding:7px 9px; background:var(--card); border:1px solid var(--line); color:var(--tx); border-radius:8px; }
+.cats { display:flex; gap:4px; flex-wrap:wrap; padding:0 10px 8px; } .cats span { background:var(--card); border-radius:10px; padding:1px 8px; font-size:11px; color:var(--dim); } .cats .on { background:#2d2840; color:#fff; }
+.it { display:grid; grid-template-columns:22px 1fr 38px; gap:6px; align-items:center; padding:6px 10px; border-top:1px solid #26262e; cursor:grab; }
+.it:hover { background:#24242c; } .it .pl { width:22px; height:22px; border-radius:50%; background:#2f2f39; display:grid; place-items:center; font-size:10px; }
+.it canvas { width:100%; height:16px; display:block; } .it b { font-weight:500; font-size:12px; display:block; } .it .t { color:var(--dim); font-size:11px; text-align:right; }
+.it.drag { outline:1px dashed var(--acc); background:#2a2640; }
+.drop { margin:10px; border:1px dashed #555; border-radius:10px; padding:12px; text-align:center; color:var(--dim); font-size:12px; }
+/* таймлайн */
+.tl { background:var(--bg); position:relative; }
+.bar { display:flex; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); background:var(--pan); }
+.btn { background:#2f2f39; border:1px solid var(--line); color:var(--tx); border-radius:7px; padding:4px 9px; font-size:12px; } .btn.on { background:#2d2840; border-color:var(--acc); }
+.sep { width:1px; height:18px; background:var(--line); }
+.rows { position:relative; }
+.ruler { height:22px; margin-left:190px; border-bottom:1px solid var(--line); position:relative; color:var(--dim); font-size:10px; }
+.ruler i { position:absolute; top:4px; font-style:normal; }
+.row { display:grid; grid-template-columns:190px 1fr; border-bottom:1px solid #26262e; }
+.hd { background:var(--pan); padding:6px 8px; display:flex; flex-direction:column; gap:4px; border-right:1px solid var(--line); }
+.hd .n { display:flex; align-items:center; gap:6px; } .hd .n b { font-weight:600; flex:1; }
+.ms { display:inline-grid; place-items:center; width:20px; height:18px; border-radius:4px; background:#2f2f39; font-size:10px; font-weight:700; color:var(--dim); }
+.ms.m.on { background:#5a3434; color:#ffb3ad; } .ms.s.on { background:#4d4420; color:#ffd77a; }
+.fd { display:flex; align-items:center; gap:6px; color:var(--dim); font-size:11px; } .fd input { flex:1; accent-color:var(--acc); }
+.ln { position:relative; height:58px; }
+.ln.voice { height:46px; } .ln.add { height:34px; }
+.clip { position:absolute; top:5px; height:48px; border-radius:6px; overflow:hidden; border:1px solid #0006; }
+.clip canvas { position:absolute; inset:0; width:100%; height:100%; }
+.clip .lbl { position:absolute; left:6px; top:2px; font-size:11px; font-weight:600; text-shadow:0 1px 2px #000; white-space:nowrap; }
+.clip .gain { position:absolute; left:0; right:0; border-top:1.5px solid #fff; opacity:.9; }
+.clip .fi, .clip .fo { position:absolute; top:0; width:0; height:0; }
+.clip .fi { left:0; border-top:20px solid #0008; border-right:22px solid transparent; }
+.clip .fo { right:0; border-top:20px solid #0008; border-left:30px solid transparent; }
+.clip .knob { position:absolute; top:-1px; width:8px; height:8px; border-radius:50%; background:#fff; }
+.clip .edge { position:absolute; top:0; bottom:0; width:6px; background:#fff3; }
+.clip .seam { position:absolute; top:0; bottom:0; width:0; border-left:1.5px dashed #fff9; }
+.clip .seam::after { content:'↻'; position:absolute; top:30px; left:2px; font-size:10px; color:#fff; }
+.clip.sel { outline:2px solid #fff; box-shadow:0 0 0 4px #8b7cf688; }
+.clip .lock { position:absolute; right:5px; top:2px; font-size:10px; }
+.clip .pk { position:absolute; top:0; bottom:0; border-left:2px solid #ffe066; } .clip .pk::before { content:'⚑'; position:absolute; top:-1px; left:2px; font-size:10px; color:#ffe066; }
+.mus { background:#24456f; } .sfx { background:#6a4a1f; } .amb { background:#1d5a52; } .sc { background:#5c2f52; }
+.sc::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--sc); }
+.duck { position:absolute; left:0; right:0; bottom:3px; height:12px; }
+.ghost { position:absolute; top:5px; height:48px; border:2px dashed var(--acc); border-radius:6px; background:#8b7cf622; color:#cfc6ff; font-size:11px; padding:3px 6px; }
+.snap { position:absolute; top:-22px; bottom:-200px; border-left:1px solid #ffe066; z-index:5; }
+.snap span { position:absolute; top:0; left:4px; background:#ffe066; color:#222; font-size:10px; padding:0 4px; border-radius:3px; white-space:nowrap; }
+.ph { position:absolute; top:0; bottom:0; border-left:2px solid var(--err); z-index:4; }
+.words { position:absolute; top:3px; left:0; right:0; height:14px; font-size:10px; color:var(--dim); }
+.words span { position:absolute; background:#2c2c36; border-radius:3px; padding:0 3px; }
+.vwave { position:absolute; top:19px; left:0; right:0; height:24px; }
+.selbar { position:absolute; left:200px; bottom:8px; background:#2d2840; border:1px solid var(--acc); padding:4px 10px; border-radius:8px; font-size:12px; z-index:6; }
+.menu { position:absolute; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:4px 0; width:220px; box-shadow:0 10px 30px #0008; z-index:7; font-size:12px; }
+.menu div { padding:5px 12px; display:flex; justify-content:space-between; } .menu div:hover { background:#2d2840; } .menu hr { border:0; border-top:1px solid var(--line); margin:4px 0; } .menu kbd { color:var(--dim); font:11px system-ui; }
+.props { position:absolute; right:12px; top:52px; width:240px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px; z-index:6; }
+.props h4 { margin:0 0 6px; font-size:12px; } .pr { display:flex; justify-content:space-between; padding:3px 0; color:var(--dim); } .pr b { color:var(--tx); font-weight:500; }
+/* редактор звука */
+.ed { margin:0 20px 30px; background:var(--pan); border:1px solid var(--line); border-radius:12px; padding:14px 16px; min-width:1100px; }
+.ed h3 { margin:0 0 2px; font-size:15px; }
+.big { position:relative; height:150px; background:#121216; border-radius:8px; margin:12px 0 8px; overflow:hidden; }
+.big canvas { position:absolute; inset:0; width:100%; height:100%; }
+.cut { position:absolute; top:0; bottom:0; background:#000a; }
+.loopz { position:absolute; top:0; bottom:0; background:#2fbf7122; border-left:2px solid var(--ok); border-right:2px solid var(--ok); }
+.loopz span { position:absolute; top:4px; left:6px; color:var(--ok); font-size:11px; font-weight:600; }
+.xf { position:absolute; top:0; bottom:0; background:repeating-linear-gradient(45deg,#2fbf7144 0 4px,transparent 4px 8px); }
+.hdl { position:absolute; top:-2px; bottom:-2px; width:10px; margin-left:-5px; }
+.hdl::before { content:''; position:absolute; left:4px; top:0; bottom:0; width:2px; background:#fff; }
+.hdl i { position:absolute; bottom:4px; left:8px; font-size:10px; font-style:normal; color:#fff; background:#000a; padding:0 4px; border-radius:3px; white-space:nowrap; }
+.edrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.note { margin:8px 0 0; color:var(--dim); font-size:12px; }
+.num { display:inline-block; width:18px; height:18px; border-radius:50%; background:var(--acc); color:#fff; font-size:11px; text-align:center; line-height:18px; margin-right:4px; }
+.legend { margin:0 20px 16px; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; min-width:1100px; }
+.legend div { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:12px; }
+</style></head><body>
+<h1>S23 — Звуковой редактор монтажа</h1>
+<p class="sub dim">Макет: окно видео → «Монтаж». Слева вместо сцен открыта панель «🔊 Звуки». Пояснения — внизу.</p>
+
+<div class="win">
+  <div class="snd">
+    <div class="tabs"><div class="on">Библиотека</div><div>Канал</div><div>Видео</div><div>Интернет</div></div>
+    <input placeholder="🔎 дождь, удар, вжух…" value="дождь">
+    <div class="cats"><span class="on">все</span><span>ambient</span><span>impact</span><span>whoosh</span><span>riser</span><span>ui</span></div>
+    <div class="it"><div class="pl">▶</div><div><b>ambient/rain-roof</b><canvas data-w="40"></canvas></div><div class="t">18.2 с</div></div>
+    <div class="it drag"><div class="pl">❚❚</div><div><b>ambient/rain-light</b><canvas data-w="41"></canvas></div><div class="t">9.4 с</div></div>
+    <div class="it"><div class="pl">▶</div><div><b>ambient/rain-window</b><canvas data-w="42"></canvas></div><div class="t">22.0 с</div></div>
+    <div class="it"><div class="pl">▶</div><div><b>impact/thunder-far</b><canvas data-w="43"></canvas></div><div class="t">4.1 с</div></div>
+    <div class="it"><div class="pl">▶</div><div><b>ambient/drip-cave</b><canvas data-w="44"></canvas></div><div class="t">6.6 с</div></div>
+    <div class="drop">⬇ Перетащи сюда или прямо на дорожку<br>свои .wav · .mp3 · .ogg · видео</div>
+  </div>
+
+  <div class="tl">
+    <div class="bar">
+      <button class="btn on">🔊 Звуки</button><button class="btn">🛡 Сторож</button><div class="sep"></div>
+      <button class="btn on">🧲 Прилипание</button><button class="btn">✂ Разрезать S</button><button class="btn">⧉ Дубль Ctrl D</button>
+      <div class="sep"></div><button class="btn on">🎚 Приглушать музыку под голос · −10 dB</button>
+      <span class="dim" style="margin-left:auto">0:07.40 / 0:52.10</span>
+    </div>
+    <div class="ruler" id="ruler"></div>
+    <div class="rows" id="rows">
+      <div class="row"><div class="hd"><div class="n">🎙 <b>Голос</b><span class="ms m">M</span><span class="ms s">S</span></div><div class="fd">0 dB<input type="range" value="70"></div></div>
+        <div class="ln voice"><div class="words" id="words"></div><canvas class="vwave" data-v="1"></canvas></div></div>
+      <div class="row"><div class="hd"><div class="n">🎵 <b>Музыка</b><span class="ms m">M</span><span class="ms s">S</span></div><div class="fd">−6 dB<input type="range" value="52"></div></div>
+        <div class="ln"><div class="clip mus" style="left:0;width:93%"><canvas data-w="7"></canvas><div class="lbl">lo-fi · paper-walk 🔒</div>
+          <div class="fi"></div><div class="fo"></div><div class="gain" style="top:22px"></div><canvas class="duck" data-duck="1"></canvas></div></div></div>
+      <div class="row"><div class="hd"><div class="n">🔊 <b>Звуки 1</b><span class="ms m">M</span><span class="ms s">S</span></div><div class="fd">0 dB<input type="range" value="70"></div></div>
+        <div class="ln" id="s1">
+          <div class="clip sfx sel" style="left:12%;width:4%"><canvas data-w="3"></canvas><div class="pk" style="left:30%"></div><div class="gain" style="top:12px"></div><div class="lbl">бах</div></div>
+          <div class="clip sfx sel" style="left:31%;width:5%"><canvas data-w="4"></canvas><div class="gain" style="top:12px"></div><div class="lbl">pop</div></div>
+          <div class="clip sc" style="left:44%;width:9%"><canvas data-w="5"></canvas><div class="gain" style="top:18px"></div><div class="lbl">🎬 шаги · сц. 4</div></div>
+          <div class="clip sfx sel" style="left:63%;width:6%"><canvas data-w="6"></canvas><div class="gain" style="top:12px"></div><div class="lbl">вжух</div><span class="lock">🔒</span></div>
+        </div></div>
+      <div class="row"><div class="hd"><div class="n">🌧 <b>Шум</b><span class="ms m">M</span><span class="ms s on">S</span></div><div class="fd">−3 dB<input type="range" value="60"></div></div>
+        <div class="ln"><div class="clip amb" style="left:20%;width:38%"><canvas data-w="8" data-loop="3"></canvas><div class="lbl">ambient/rain-light ↻×3</div>
+          <div class="fi" style="border-right-width:40px"></div><div class="fo"></div><div class="gain" style="top:20px"></div>
+          <div class="seam" style="left:33.3%"></div><div class="seam" style="left:66.6%"></div><div class="edge" style="right:0"></div></div>
+          <div class="ghost" style="left:62%;width:16%">+ ambient/rain-light · 9.4 с</div>
+          <div class="snap" style="left:62%"><span>🧲 слово «гроза»</span></div></div></div>
+      <div class="row"><div class="hd"><div class="n dim">＋ <b class="dim">новая дорожка</b></div></div><div class="ln add"><span class="dim" style="position:absolute;left:10px;top:9px;font-size:12px">перетащи звук сюда — появится «Звуки 2»</span></div></div>
+      <div class="ph" style="left:calc(190px + 14.2%)"></div>
+    </div>
+    <div class="selbar">Выделено: 3 звука · тяни — вместе · тяни линию уровня — всем · Delete · Esc</div>
+
+    <div class="menu" style="left:calc(190px + 22%);top:215px">
+      <div>✂ Разрезать по плейхеду <kbd>S</kbd></div><div>⧉ Дублировать <kbd>Ctrl D</kbd></div><div>📋 Копировать <kbd>Ctrl C</kbd></div>
+      <hr><div>🎛 Редактор звука… <kbd>2×клик</kbd></div><div>🔁 Заменить похожим…</div><div>➜ На дорожку ▸</div><div>📚 В библиотеку канала</div>
+      <hr><div style="color:var(--err)">🗑 Удалить <kbd>Del</kbd></div>
+    </div>
+
+    <div class="props">
+      <h4>3 звука · Звуки 1</h4>
+      <div class="pr">Уровень <b>смешанно · ±0 dB</b></div><div class="pr">Фейд вход / выход <b>0.0 / 0.3 с</b></div>
+      <div class="pr">Выравнивать <b>по пику</b></div><div class="pr">Кто поставил <b>Claude · 2, ты · 1 🔒</b></div>
+      <div class="dim" style="margin-top:6px;font-size:11px">🎬 «шаги» — звук сцены 4: правка уйдёт в сцену.</div>
+    </div>
+  </div>
+</div>
+
+<div class="ed">
+  <h3>🎛 Редактор звука — ambient/rain-light <span class="dim" style="font-weight:400">(двойной клик по плашке)</span></h3>
+  <div class="dim">Хвост файла обрывается в тишину. Отрезаем его, выделяем ровный кусок под цикл, смягчаем шов.</div>
+  <div class="big"><canvas data-big="1"></canvas>
+    <div class="cut" style="left:0;width:4%"></div><div class="cut" style="left:86%;right:0"></div>
+    <div class="loopz" style="left:14%;width:64%"><span>цикл 1.3 – 7.3 с</span></div>
+    <div class="xf" style="left:74%;width:4%"></div>
+    <div class="hdl" style="left:4%"><i>in 0.38</i></div><div class="hdl" style="left:86%"><i>out 8.10</i></div>
+  </div>
+  <div class="edrow">
+    <button class="btn">▶ Слушать</button><button class="btn on">🔁 ▶ Слушать шов</button><div class="sep"></div>
+    <button class="btn">✂ Срезать тишину</button><button class="btn">🔁 Найти шов</button>
+    <span class="dim">кроссфейд шва</span><input type="range" value="35" style="width:120px;accent-color:var(--ok)"><b>0.35 с</b>
+    <div class="sep"></div><button class="btn">↺ Сбросить</button><button class="btn">💾 Сохранить как новый звук</button>
+    <span style="margin-left:auto"></span><button class="btn">Отмена</button><button class="btn on">✓ Готово</button>
+  </div>
+  <p class="note">Файл не меняется: на плашку пишутся in / out / loop / xf. На таймлайне плашку можно тянуть дальше конца — повторяется зелёный кусок, на швах видны ↻.</p>
+</div>
+
+<div class="legend">
+  <div><b>Дорожки.</b> Голос, Музыка, Звуки 1…N и свои дорожки (здесь «Шум»). У каждой — имя, фейдер, M (заглушить) и S (слушать только её). Новая дорожка появляется, когда бросаешь звук на «＋».</div>
+  <div><b>Плашка.</b> Волна, белая линия уровня (тянешь вверх-вниз), уголки фейдов, ⚑ пик, ↻ швы цикла, 🔒 — поставил ты. Звуки из сцен отмечены 🎬 и розовой полосой. Тянешь края, Ctrl+тянешь внутри — сдвигаешь звук в плашке, Alt+тянешь — копия.</div>
+  <div><b>Выделение и прилипание.</b> Ctrl/Shift+клик и рамка через дорожки — как у правок. Плашка прилипает к словам, склейкам, плейхеду и краям соседей; с Ctrl прилипает пик, с Shift прилипания нет. Под музыкой видна кривая приглушения под голос.</div>
+</div>
+
+<script>
+function rnd(s){ return () => (s = (s * 16807) % 2147483647) / 2147483647; }
+function wave(cv, seed, opt = {}) {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = r.width * d; cv.height = r.height * d;
+  const c = cv.getContext('2d'), W = cv.width, H = cv.height, R = rnd(seed * 97 + 13), loops = opt.loop || 1;
+  c.fillStyle = opt.col || '#ffffff55';
+  const base = []; for (let i = 0; i < Math.ceil(W / loops); i++) base.push(R());
+  for (let x = 0; x < W; x++) {
+    const i = x % base.length, env = opt.big ? (x / W > 0.86 ? 0.04 : 0.55 + 0.3 * Math.sin(x / 40)) : (seed < 7 ? Math.exp(-((x / W) * 5)) * 1.1 : 0.6 + 0.25 * Math.sin(x / 23));
+    const a = Math.min(1, base[i] * env) * H * 0.45; c.fillRect(x, H / 2 - a, 1, a * 2);
+  }
+}
+document.querySelectorAll('canvas[data-w]').forEach(cv => wave(cv, +cv.dataset.w, { loop: +cv.dataset.loop || 1 }));
+document.querySelectorAll('canvas[data-v]').forEach(cv => wave(cv, 99, { col: '#8b7cf699' }));
+document.querySelectorAll('canvas[data-big]').forEach(cv => wave(cv, 41, { big: 1, col: '#5fd0b4aa' }));
+document.querySelectorAll('canvas[data-duck]').forEach(cv => {
+  const r = cv.getBoundingClientRect(); cv.width = r.width; cv.height = r.height; const c = cv.getContext('2d');
+  c.strokeStyle = '#ffd77a'; c.lineWidth = 1.5; c.beginPath();
+  const seg = [[0.04, 0.2], [0.24, 0.42], [0.47, 0.7], [0.75, 0.93]]; let y = 2; c.moveTo(0, y);
+  for (const [a, b] of seg) { c.lineTo(a * r.width - 6, 2); c.lineTo(a * r.width, r.height - 2); c.lineTo(b * r.width, r.height - 2); c.lineTo(b * r.width + 10, 2); }
+  c.lineTo(r.width, 2); c.stroke();
+});
+const ru = document.getElementById('ruler'); for (let s = 0; s <= 50; s += 5) { const i = document.createElement('i'); i.style.left = (s / 52 * 100) + '%'; i.textContent = s + ' с'; ru.append(i); }
+const ws = 'В пятницу вечером началась гроза и бах всё стихло'.split(' '), wl = document.getElementById('words');
+ws.forEach((w, k) => { const s = document.createElement('span'); s.style.left = (4 + k * 7.5) + '%'; s.textContent = w; wl.append(s); });
+</script>
+</body></html>

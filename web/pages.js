@@ -5,7 +5,8 @@ const STAGES = [['idea', '💡', 'Идея'], ['qa', '❓', 'Вопросы'], [
   ['voice', '🎙', 'Голос'], ['montage', '🎞', 'Монтаж'], ['review', '👀', 'Ревью'], ['pack', '📦', 'Упаковка'], ['scenes', '🎥', 'Сцены']];   // S11: сценарий до препродакшена; «Сцены» — старые видео
 const STAGE_OF = Object.fromEntries(STAGES.map(([k, i, l]) => [k, { icon: i, label: l }]));
 const STATUS_L = { draft: '💡 черновик', prod: '🛠 в работе', out: '✅ вышло', archived: '📦 архив' };
-const LIB = { items: null, q: '', kind: '', cand: null, busy: false };
+const LIB = { items: null, q: '', kind: '', cand: null, busy: false, pick: null, undo: [] };   // pick — выбранные для удаления (Set) или null; undo — убранные на этой странице
+addEventListener('hashchange', () => { LIB.undo = []; LIB.pick = null; });   // ушёл со страницы — «↩ Восстановить» больше не предлагаем
 const KIND_ICON = { char: '🧑', prop: '📦', sound: '🔊' };
 
 const Pages = {
@@ -42,8 +43,12 @@ const Pages = {
   // S12.10: библиотека в новом виде — вкладки видов, поиск, сетка плиток; ниже — готовое к публикации из видео
   libTile(it) {
     const src = it.preview ? `/api/lib/file/${LIB.channel}/${it.preview}` : '';
-    const K = LIB.kinds || {};
-    return h('a.lib-tile', { href: '#/lib/item/' + it.id, title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : '') },
+    const K = LIB.kinds || {}, picking = !!LIB.pick, on = picking && LIB.pick.has(it.id);
+    const stop = e => { e.preventDefault(); e.stopPropagation(); };
+    return h('a.lib-tile', { href: '#/lib/item/' + it.id, class: (picking ? 'picking ' : '') + (on ? 'on' : ''), title: (it.desc || '') + (it.from ? `\nиз видео «${it.from.videoName || it.from.video}»` : ''),
+        onclick: e => { if (!picking) return; stop(e); on ? LIB.pick.delete(it.id) : LIB.pick.add(it.id); App.render(); } },
+      picking ? h('span.lt-check', on ? '✓' : '')
+        : h('button.lt-del', { title: 'Удалить из библиотеки (можно вернуть, пока вы на этой странице)', onclick: e => { stop(e); Pages.libDelete([it]); } }, Icon('trash', 14)),
       h('div.pv', src ? { style: { backgroundImage: `url("${src}")` } } : {}, !src && Icon(it.kind === 'sounds' ? 'music' : 'library', 28)),
       h('div.nm', it.name, it.d3 ? h('span.dim', { title: `есть 3D-версия v${it.d3}` }, ' · 3D') : ''),
       h('div.mt', (K[it.kind] || it.kind || '') + ` · v${it.latest}` + (it.from && it.from.videoName ? ' · ' + it.from.videoName : '')));
@@ -58,14 +63,58 @@ const Pages = {
     return h('div.page.lib-page',
       h('div.page-head', h('div.grow', h('h1', 'Библиотека'),
         h('p.sub', `Утверждённые персонажи, предметы, 3D-модели, звуки и видео канала «${(App.info.channel || {}).name || ''}» — их можно брать в любой ролик. Открой предмет, чтобы покрутить, сравнить версии или поправить с Claude.`))),
-      h('div.lib-tabs', [['', 'Всё'], ...Object.entries(K)].map(([k, l]) => h('button', { class: LIB.kind === k ? 'sel' : '', onclick: () => { LIB.kind = k; Pages.loadLib(); } }, l)), q),
+      h('div.lib-tabs', [['', 'Всё'], ...Object.entries(K)].map(([k, l]) => h('button', { class: LIB.kind === k ? 'sel' : '', onclick: () => { LIB.kind = k; Pages.loadLib(); } }, l)), q,
+        items.length > 0 && (LIB.pick
+          ? [h('button', { onclick: () => { LIB.pick = items.every(x => LIB.pick.has(x.id)) ? new Set() : new Set(items.map(x => x.id)); App.render(); } }, items.every(x => LIB.pick.has(x.id)) ? 'Снять все' : 'Выбрать все'),
+             h('button.danger', { disabled: !LIB.pick.size, onclick: () => Pages.libDelete(items.filter(x => LIB.pick.has(x.id))) }, Icon('trash', 14), ` Удалить (${LIB.pick.size})`),
+             h('button', { onclick: () => { LIB.pick = null; App.render(); } }, 'Отмена')]
+          : h('button', { onclick: () => { LIB.pick = new Set(); App.render(); }, title: 'Выбрать несколько и удалить разом' }, '☐ Выбрать'))),
       LIB.items === null ? h('p.dim', 'Загружаю…') : items.length ? h('div.lib-grid', items.map(Pages.libTile))
         : h('p.dim', LIB.q || LIB.kind ? 'Ничего не нашлось.' : 'Пока пусто. Утверждённое ✓ в препродакшене появится ниже — опубликуйте его сюда.'),
       LIB.cand && cand.length > 0 && [h('div.ws-sec', 'Утверждено в видео — можно в библиотеку', h('span.cnt', String(cand.length))),
         h('div.cands', cand.map(x => h('div.row.cand',
           h('span', KIND_ICON[x.kind] || '•'), h('b', x.name), x.d3 && h('span.small', { title: '3D-пропс: в сцене встанет объёмным' }, '3D'), h('span.dim.small', 'из «' + x.videoName + '»'), h('span.sp'),
           x.lib && h('span.dim.small', `уже: lib:${x.lib.id}@${x.lib.v}`),
-          h('button.small', { onclick: () => Pages.publish(x, x.lib ? x.lib.id : 'new') }, x.lib ? 'Новая версия' : 'В библиотеку'))))]);
+          h('button.small', { onclick: () => Pages.publish(x, x.lib ? x.lib.id : 'new') }, x.lib ? 'Новая версия' : 'В библиотеку'))))],
+      LIB.undo.length > 0 && h('div.lib-undo',
+        h('span', `Удалено: ${LIB.undo.length === 1 ? '«' + LIB.undo[0].name + '»' : LIB.undo.length + ' ' + plural(LIB.undo.length, 'предмет', 'предмета', 'предметов')}`),
+        h('button.primary', { onclick: () => Pages.libRestore() }, '↩ Восстановить'),
+        h('button.icon', { title: 'Скрыть — вернуть будет нельзя (копия останется в _archive/library)', onclick: () => { LIB.undo = []; App.render(); } }, Icon('x', 14))));
+  },
+  // 🗑 удалить из библиотеки: предмет целиком уезжает в _archive/library (studio_api.archive_item); «↩ Восстановить» — пока автор на этой странице
+  async libDelete(list) {
+    if (!list.length) return;
+    if (list.length > 1 && !confirm(`Удалить из библиотеки ${list.length} ${plural(list.length, 'предмет', 'предмета', 'предметов')}?`)) return;
+    const cid = (App.info.channel || {}).id, done = [], used = [];
+    for (const it of list) {
+      try {
+        const r = await api('POST', '/api/lib/archive', { channel: cid, id: it.id });
+        if (r.used) { used.push([it, r.used]); continue; }
+        done.push({ token: r.token, name: it.name, id: it.id });
+      } catch (e) { UI.toast(it.name + ': ' + e.message, 'err'); }
+    }
+    if (used.length) {
+      const where = used.map(([it, u]) => `«${it.name}» — ` + [...new Set(u.map(x => x.videoName || x.video || '?'))].slice(0, 4).join(', ')).join('\n');
+      if (confirm(`Эти предметы стоят в сценах видео:\n\n${where}\n\nВсё равно удалить? В тех сценах предмета не станет, пока не восстановите.`))
+        for (const [it] of used) {
+          try { const r = await api('POST', '/api/lib/archive', { channel: cid, id: it.id, force: true }); done.push({ token: r.token, name: it.name, id: it.id }); }
+          catch (e) { UI.toast(it.name + ': ' + e.message, 'err'); }
+        }
+    }
+    const gone = new Set(done.map(x => x.id));
+    if (LIB.items) LIB.items = LIB.items.filter(x => !gone.has(x.id));
+    LIB.undo = [...LIB.undo, ...done]; LIB.pick = null; LIB.cand = null;
+    App.render();
+  },
+  async libRestore() {
+    const cid = (App.info.channel || {}).id, back = [];
+    for (const u of LIB.undo) {
+      try { await api('POST', '/api/lib/restore', { channel: cid, token: u.token }); back.push(u.name); }
+      catch (e) { UI.toast(u.name + ': ' + e.message, 'err'); }
+    }
+    LIB.undo = []; LIB.items = null; LIB.cand = null;
+    if (back.length) UI.toast('↩ Вернул: ' + back.join(', '));
+    App.render();
   },
   async publish(x, as) {
     try {

@@ -58,6 +58,12 @@ svg.tb-edges path.pend, svg.tb-edges path.tmp { stroke-dasharray: 5 5; stroke: v
 .tb-pi { cursor: pointer; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dim); }
 .tb-pi img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 .tb-pi:hover img { border-color: var(--acc); }
+.tb-node.image .tb-img { background: repeating-conic-gradient(#3a3a3e 0 25%, #2c2c30 0 50%) 0 0 / 16px 16px; }   /* шахматка: картинка без фона (персонаж из библиотеки) */
+.tb-char img { object-fit: contain; background: var(--field); }
+.tb-char b { color: var(--text, inherit); font-size: 12.5px; }
+.tb-emos { display: flex; flex-wrap: wrap; gap: 4px; }
+.tb-emo { background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 2px 8px; font-size: 11.5px; cursor: pointer; }
+.tb-emo:hover { border-color: var(--acc); color: var(--text, inherit); }
 /* режим «Промпт» */
 .tb-pmode { flex: 1; min-height: 0; display: grid; grid-template-columns: 420px minmax(0, 1fr); }
 .tb-pleft { border-right: 1px solid var(--line); overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -71,6 +77,8 @@ svg.tb-edges path.pend, svg.tb-edges path.tmp { stroke-dasharray: 5 5; stroke: v
 .tb-pres { overflow: auto; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; align-content: start; }
 .tb-model { padding: 8px 8px 0; border-top: 1px solid var(--line); }
 .tb-model .tb-sel { width: 100%; max-width: none; }
+.tb-title { display: block; width: 100%; box-sizing: border-box; margin: 6px 0; background: var(--field); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; padding: 6px 8px; color: inherit; }
+.tb-seed { background: var(--field); border: 1px solid var(--line); border-radius: 8px; font-size: 11.5px; padding: 4px 6px; width: 92px; color: inherit; }
 .tb-model + .tb-foot { border-top: 0; }
 
 /* S12.13: узкие окна */
@@ -80,3 +88,8 @@ svg.tb-edges path.pend, svg.tb-edges path.tmp { stroke-dasharray: 5 5; stroke: v
 .tb-pres { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 @media (max-width: 1440px) { .tb-page { grid-template-columns: 200px minmax(0, 1fr); } .tb-pmode { grid-template-columns: 360px minmax(0, 1fr); } }
 @media (max-width: 1200px) { .tb-pmode { grid-template-columns: 320px minmax(0, 1fr); } }
+
+/* выделение рамкой (Shift+тянуть) */
+.tb-box { position: absolute; z-index: 5; border: 1px solid var(--accent, #8b7cf6); background: color-mix(in srgb, var(--accent, #8b7cf6) 14%, transparent); border-radius: 4px; pointer-events: none; }
+
+.tb-boxing, .tb-boxing * { user-select: none !important; }

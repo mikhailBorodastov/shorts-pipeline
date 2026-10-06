@@ -67,22 +67,24 @@ function grainOver(ctx, a = 0.35) {
 
 // a paper cutout: shadow + white torn edge + coloured torn body + grain
 // shape(inf) -> points; o: {seed, amp, step, edge, shadow, grain, noEdge}
+// визуал канала (window.LOOK.paper, S14): множители кромки, тени и зерна — 1 = как было
+const lookK = k => (typeof LOOKV === 'function' ? LOOKV('paper.' + k, 1) : 1);
 function cut(ctx, shape, fill, o = {}) {
-  const seed = o.seed || 1, amp = o.amp == null ? 3.5 : o.amp, step = o.step || 12;
+  const seed = o.seed || 1, amp = (o.amp == null ? 3.5 : o.amp) * lookK('edge'), step = o.step || 12, sh = lookK('shadow');
   const edge = o.edge == null ? 5 : o.edge;
   const body = torn(shape(0), seed, amp, step);
   ctx.save();
   if (edge > 0 && !o.noEdge) {
     const rim = torn(shape(edge), seed + 101, amp * 1.3, step);
-    if (o.shadow !== false) { ctx.shadowColor = 'rgba(20,18,30,0.32)'; ctx.shadowBlur = o.blur || 14; ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 7; }
+    if (o.shadow !== false && sh > 0) { ctx.shadowColor = `rgba(20,18,30,${Math.min(0.9, 0.32 * sh)})`; ctx.shadowBlur = (o.blur || 14) * Math.sqrt(sh); ctx.shadowOffsetX = 3 * sh; ctx.shadowOffsetY = 7 * sh; }
     path(ctx, rim); ctx.fillStyle = o.edgeColor || '#f7f5ef'; ctx.fill();
     noGlow(ctx); ctx.shadowOffsetX = ctx.shadowOffsetY = 0;
-  } else if (o.shadow !== false) {
-    ctx.shadowColor = 'rgba(20,18,30,0.3)'; ctx.shadowBlur = o.blur || 12; ctx.shadowOffsetY = 6;
+  } else if (o.shadow !== false && sh > 0) {
+    ctx.shadowColor = `rgba(20,18,30,${Math.min(0.9, 0.3 * sh)})`; ctx.shadowBlur = (o.blur || 12) * Math.sqrt(sh); ctx.shadowOffsetY = 6 * sh;
   }
   path(ctx, body); ctx.fillStyle = fill; ctx.fill();
   noGlow(ctx); ctx.shadowOffsetY = 0;
-  if (o.grain !== false) { path(ctx, body); grainOver(ctx, o.grainA || 0.4); }
+  if (o.grain !== false && lookK('grain') > 0) { path(ctx, body); grainOver(ctx, Math.min(1, (o.grainA || 0.4) * lookK('grain'))); }
   ctx.restore();
   return body;
 }
@@ -115,6 +117,7 @@ function paperBG(ctx, key, cols, t = 0, drift = 1) {
       g.restore();
     }
   });
+  drift *= lookK('drift');
   const dx = -200 + Math.sin(t * 0.13) * 30 * drift, dy = -200 + Math.cos(t * 0.11) * 20 * drift;
   ctx.drawImage(bg, dx, dy);
 }
@@ -338,8 +341,12 @@ function hogBody(kind, back = false) {
     g.translate(w / 2, h - M * 0.6);
     const cy = -0.52 * S, rx = K.rx * S, ry = K.ry * S;
     const inside = (x, y) => Math.pow(Math.abs(x / rx), 2.6) + Math.pow(Math.abs((y - cy) / ry), 2.6) <= 1;
+    const FLOOR = -0.035 * S;                   // S22: иголки не ниже ступней (автор ×8: «иголки под лапами», «стоит на иголках»)
     const strip = (x, y, ang, len, wd, col) => {
-      const c = Math.cos(ang), s = Math.sin(ang), px = -s * wd / 2, py = c * wd / 2, tip = 0.25 + r() * 0.5;
+      const c = Math.cos(ang), s = Math.sin(ang);
+      const tip = 0.25 + r() * 0.5;
+      if (y + s * len > FLOOR) { if (s <= 0 || y >= FLOOR) { r(); return; } len = (FLOOR - y) / s; if (len < 0.025 * S) { r(); return; } }   // r() — тот же узор шерсти у остальных иголок
+      const px = -s * wd / 2, py = c * wd / 2;
       const pts = [[x + px, y + py], [x + c * len * 0.5 + px * 1.1, y + s * len * 0.5 + py * 1.1], [x + c * len + px * tip, y + s * len + py * tip],
         [x + c * len - px * tip, y + s * len - py * tip], [x + c * len * 0.5 - px, y + s * len * 0.5 - py], [x - px, y - py]];
       g.fillStyle = col; path(g, torn(pts, (r() * 1e6) | 0, wd * 0.12, 8)); g.fill();
@@ -391,10 +398,6 @@ function drawHog(ctx, x, y, size, o = {}) {
   const body = hogBody(kind, !!o.backView), M = 140;
   const paws = {}, base = ctx.getTransform().inverse();
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k * (1 + sq * 0.5), k * breath * (1 - sq));
-  for (const sx of [-1, 1]) {        // feet; o.walk = step phase lifts them in turn
-    const lift = o.walk != null ? Math.max(0, Math.sin(o.walk) * sx) * 0.07 * S : ((sx < 0 ? o.liftL : o.liftR) || 0) * 0.07 * S;
-    cut(ctx, inf => ellP(sx * 0.1 * S, -0.02 * S - lift, 0.06 * S, 0.035 * S, inf), K.mask, { seed: 30 + sx, edge: 0, amp: 3 });
-  }
   const arm = (side, ang, len) => {
     ctx.save(); ctx.translate(side * K.rx * S * 0.86, -0.46 * S); ctx.rotate(side * ang);
     const L = 0.24 * S * (len || 1), Wd = 0.065 * S;
@@ -413,6 +416,10 @@ function drawHog(ctx, x, y, size, o = {}) {
     ctx.save(); ctx.strokeStyle = '#f4f2ec'; ctx.lineWidth = 0.01 * S; ctx.lineCap = 'round';
     for (const sx of [-1, 1]) { ctx.beginPath(); ctx.moveTo(sx * 0.05 * S, -0.43 * S); ctx.lineTo(sx * 0.055 * S, -0.33 * S); ctx.stroke(); }
     ctx.restore();
+  }
+  for (const sx of [-1, 1]) {        // feet — S22: поверх тела и худи, спереди (o.walk = фаза шага: поднимаются по очереди)
+    const lift = o.walk != null ? Math.max(0, Math.sin(o.walk) * sx) * 0.07 * S : ((sx < 0 ? o.liftL : o.liftR) || 0) * 0.07 * S;
+    cut(ctx, inf => ellP(sx * 0.1 * S, -0.02 * S - lift, 0.06 * S, 0.035 * S, inf), K.mask, { seed: 30 + sx, edge: 0, amp: 3 });
   }
   if (o.badge) {           // lanyard + badge
     ctx.save(); ctx.strokeStyle = '#c8372d'; ctx.lineWidth = 0.012 * S; ctx.globalAlpha = 0.9;

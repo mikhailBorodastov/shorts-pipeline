@@ -7,14 +7,19 @@ const SW = { el: null, vid: null, tab: 'board', st: {}, url: null, frame: null, 
 
 // markdown ресерча: заголовки, списки, ссылки, **жирный**, `код`, таблицы
 function mdDoc(src) {
-  const inline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+  const inline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s(«])\*([^*\s][^*]*?)\*(?=[\s.,;:!?)»]|$)/g, '$1<i>$2</i>')
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
     .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
   const L = String(src || '').split('\n'), out = [];
   for (let i = 0; i < L.length; i++) {
     const l = L[i];
     let m;
-    if ((m = /^(#{1,4})\s+(.+)$/.exec(l))) out.push(`<h${m[1].length + 1}>${inline(m[2])}</h${m[1].length + 1}>`);
+    if (/^\s*```/.test(l)) {                            // блок кода — как есть
+      const code = []; i++;
+      while (i < L.length && !/^\s*```/.test(L[i])) code.push(L[i++]);
+      out.push(`<pre class="mdcode">${esc(code.join('\n'))}</pre>`);
+    } else if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) out.push('<hr>');
+    else if ((m = /^(#{1,4})\s+(.+)$/.exec(l))) out.push(`<h${m[1].length + 1}>${inline(m[2])}</h${m[1].length + 1}>`);
     else if (/^\s*\|/.test(l)) {
       const rows = []; while (i < L.length && /^\s*\|/.test(L[i])) rows.push(L[i++]); i--;
       const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
@@ -30,9 +35,10 @@ function mdDoc(src) {
 }
 
 const ScriptWin = {
-  open(d) {
+  open(d, tab) {
     if (SW.el) this.close(true);
-    Object.assign(SW, { vid: d.id, tab: 'board', st: {}, url: null, frame: null, research: null, vers: null, ver: null, err: '' });
+    const bm = typeof BeatMap !== 'undefined' && BeatMap.base(d) && (d.beatmap || {}).status !== 'ok';   // S16: референс подачи, карта не утверждена — начинаем с неё
+    Object.assign(SW, { vid: d.id, tab: tab || (bm ? 'beatmap' : 'board'), st: {}, url: null, frame: null, research: null, vers: null, ver: null, err: '' });
     SW.el = h('div.sw');
     document.body.append(SW.el);
     this.draw();
@@ -71,7 +77,7 @@ const ScriptWin = {
           h('button.claude.sw-apply', { onclick: () => this.applyNotes(), title: 'Claude ответит на каждую правку раскадровки: фактчек — таблицей, переписать — заменой (применишь кнопкой), остальное поправит сам; потом проверка и голос' }, '✨ Применить правки'),
           h('button.primary.sw-save', { disabled: true, onclick: () => { this.cmd('flush'); UI.toast('Сохранено в script.md'); }, title: 'Правки в карточках сохраняются сами через секунду; кнопка — сохранить сейчас' }, 'Сохранить')));
     }
-    const tabs = [['board', 'Раскадровка'], ['research', 'Ресерч и источники'], ['versions', 'Версии']];
+    const tabs = [...(typeof BeatMap !== 'undefined' && BeatMap.base(d) ? [['beatmap', '📐 Карта подачи']] : []), ['board', 'Раскадровка'], ['research', 'Ресерч и источники'], ['versions', 'Версии']];
     SW.el.querySelector('.sw-head').replaceChildren(
       h('b.sw-title', 'Сценарий'), h('span.dim.sw-name', d.name || ''),
       h('div.seg', tabs.map(([k, l]) => h('button', { class: SW.tab === k ? 'sel' : '', onclick: () => this.go(k) }, l))),
@@ -84,8 +90,15 @@ const ScriptWin = {
     board.hidden = SW.tab !== 'board';
     if (SW.err) board.replaceChildren(h('div.badline', '⚠ ' + SW.err));
     side.hidden = SW.tab === 'board';
-    side.replaceChildren(...[SW.tab === 'research' ? this.research() : SW.tab === 'versions' ? this.versions() : null].filter(Boolean));
+    keepScroll(side, () => side.replaceChildren(...[SW.tab === 'research' ? this.research() : SW.tab === 'versions' ? this.versions() : SW.tab === 'beatmap' ? BeatMap.pane(d) : null].filter(Boolean)));
+    SW.bmSig = SW.tab === 'beatmap' ? BeatMap.sig(d) : null;
     this.bar();
+  },
+  // App.render -> только вкладка «📐 Карта подачи» и только если видимое поменялось (задача Claude, разбор, новая версия карты)
+  refresh() {
+    if (!SW.el || SW.tab !== 'beatmap' || typeof BeatMap === 'undefined') return;
+    const d = Store.get('plan:' + SW.vid);
+    if (d && BeatMap.sig(d) !== SW.bmSig) this.draw();
   },
   go(tab) {
     SW.tab = tab;

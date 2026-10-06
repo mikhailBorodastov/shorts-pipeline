@@ -1,6 +1,7 @@
-"""Звуки для препродакшена «Штурма»: поиск (библиотека пайплайна, Freesound, Wikimedia Commons) и скачивание по ссылке.
+"""Звуки для препродакшена «Штурма»: поиск (YouTube, библиотека пайплайна, Freesound, Wikimedia Commons) и скачивание по ссылке.
 
-    python sounds.py search "elevator door" [--n 8] [--src lib,freesound,commons]   -> JSON: кандидаты (так ищет Claude в «Подобрать»)
+    python sounds.py search "elevator door" [--n 8] [--src youtube,lib,freesound,commons]   -> JSON: кандидаты (так ищет Claude в «Подобрать»)
+    python sounds.py peek <ссылка на видео>                                           -> JSON: главы, таймкоды из описания, самые пересматриваемые места
     python sounds.py fetch <ссылка|lib:id> <папка> [--start 1.5] [--end 4]            -> скачать, обрезать, сохранить wav
 
 Кандидат: {src, title, url (что качать), page, dur, license, author, tags}.
@@ -107,9 +108,66 @@ def search_commons(q, n=5):
     return [r for r in (_commons_row(p) for p in pages) if r["url"]]
 
 
-def search(q, n=8, srcs=("lib", "freesound", "commons")):
+def _ytjson(target, flat=False):
+    cmd = [sys.executable, "-m", "yt_dlp", "-J", "--skip-download", "--no-warnings"] + (["--flat-playlist"] if flat else [])
+    r = subprocess.run(cmd + [target], capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NOWIN, timeout=90)
+    if r.returncode or not r.stdout.strip():
+        raise RuntimeError("yt-dlp: " + (r.stderr or "").strip()[-200:])
+    return json.loads(r.stdout)
+
+
+def search_youtube(q, n=8):
+    """YouTube via yt-dlp ytsearch (no key, ~1.5 s). Pieces of long videos are picked with `peek` + start/end."""
+    d = _ytjson(f"ytsearch{n}:{q}", flat=True)
+    out = []
+    for e in d.get("entries") or []:
+        if not e.get("id") or e.get("live_status") in ("is_live", "is_upcoming"):
+            continue
+        v = e.get("view_count")
+        out.append({"src": "youtube", "title": e.get("title") or "", "url": f"https://www.youtube.com/watch?v={e['id']}",
+                    "page": f"https://www.youtube.com/watch?v={e['id']}", "dur": e.get("duration"),
+                    "license": "YouTube (права у автора)", "author": e.get("channel") or e.get("uploader") or "",
+                    "tags": f"{v:,} просмотров".replace(",", " ") if v else ""})
+    return out
+
+
+def _hms(s):
+    s = int(s)
+    return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def peek(url):
+    """What is inside a video, to choose start/end: chapters, timestamps from the description, most replayed spots (heatmap)."""
+    d = _ytjson(url)
+    dur = d.get("duration") or 0
+    stamps = []
+    for line in (d.get("description") or "").splitlines():
+        m = re.search(r"(?<![\d:])((?:\d{1,2}:)?\d{1,2}:\d{2})(?![\d:])", line)
+        if m:
+            p = [int(x) for x in m.group(1).split(":")]
+            t = p[0] * 3600 + p[1] * 60 + p[2] if len(p) == 3 else p[0] * 60 + p[1]
+            stamps.append({"t": t, "at": m.group(1), "text": line.strip()[:120]})
+    hot = []                                    # top replayed spans: merge neighbouring heatmap cells above 0.6 of the max
+    hm = d.get("heatmap") or []
+    if hm and dur > 20:
+        top = max(x["value"] for x in hm) or 1
+        for x in hm:
+            if x["value"] >= 0.6 * top:
+                if hot and x["start_time"] - hot[-1]["end"] < 0.5:
+                    hot[-1]["end"], hot[-1]["v"] = x["end_time"], max(hot[-1]["v"], x["value"] / top)
+                else:
+                    hot.append({"start": x["start_time"], "end": x["end_time"], "v": x["value"] / top})
+        hot = [{"start": round(h["start"], 1), "end": round(h["end"], 1), "at": f"{_hms(h['start'])}–{_hms(h['end'])}", "score": round(h["v"], 2)}
+               for h in sorted(hot, key=lambda h: -h["v"])[:6]]
+    return {"title": d.get("title") or "", "author": d.get("channel") or d.get("uploader") or "", "dur": dur,
+            "chapters": [{"start": c.get("start_time"), "end": c.get("end_time"), "title": c.get("title")} for c in d.get("chapters") or []],
+            "stamps": stamps[:40], "most_replayed": hot, "description": (d.get("description") or "")[:600]}
+
+
+def search(q, n=8, srcs=("youtube", "lib", "freesound", "commons")):
     out, errs = [], []
-    for name, fn, k in (("lib", search_lib, max(3, n // 2)), ("freesound", search_freesound, n), ("commons", search_commons, max(3, n // 2))):
+    for name, fn, k in (("youtube", search_youtube, n), ("lib", search_lib, max(3, n // 2)), ("freesound", search_freesound, n),
+                        ("commons", search_commons, max(3, n // 2))):
         if name not in srcs:
             continue
         try:
@@ -317,8 +375,10 @@ if __name__ == "__main__":
             pass
     a = sys.argv[1:]
     if a and a[0] == "search" and len(a) > 1:
-        srcs = tuple((_opt(a, "--src") or "lib,freesound,commons").split(","))
+        srcs = tuple((_opt(a, "--src") or "youtube,lib,freesound,commons").split(","))
         print(json.dumps(search(a[1], int(_opt(a, "--n", "8")), srcs), ensure_ascii=False, indent=1))
+    elif a and a[0] == "peek" and len(a) > 1:
+        print(json.dumps(peek(a[1]), ensure_ascii=False, indent=1))
     elif a and a[0] == "fetch" and len(a) > 2:
         print(json.dumps(fetch(a[1], a[2], _opt(a, "--start"), _opt(a, "--end")), ensure_ascii=False, indent=1))
     else:

@@ -23,7 +23,8 @@ const BROWSERS = [
   const exe = BROWSERS.find(p => fs.existsSync(p));
   if (!exe) { console.error('Не найден Chrome/Edge (CHROME=путь)'); process.exit(2); }
   const fps = +fpsS || 30, N = Math.max(1, Math.round(+lenS * fps));
-  const tmp = out.replace(/\.mp4$/i, '') + '_frames';
+  await require('./gpulock.js').acquire(process.env.STUDIO_GPU_WHAT || `клип сцены (${path.basename(out)})`, console.log, __dirname);   // S22: видеокарта по очереди; отпускает выход процесса
+  const tmp =out.replace(/\.mp4$/i, '') + '_frames';
   fs.rmSync(tmp, { recursive: true, force: true }); fs.mkdirSync(tmp, { recursive: true });
   const WORKERS = Math.max(1, Math.min(+process.env.WORKERS || 4, Math.ceil(N / 30)));
   const errors = [];
@@ -34,7 +35,7 @@ const BROWSERS = [
     const br = await launch(id);
     try {
       const page = await br.newPage();
-      await page.setViewport({ width: 1080, height: 1920 });
+      await page.setViewport(/[?&]fmt=long\b/.test(url) ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 });   // S22: длинное видео — 16:9 (было всегда 1080×1920)
       await page.setCacheEnabled(false);                       // the stand and the engine change while we work: never an old copy
       let pageErr = [];
       page.on('pageerror', e => pageErr.push('[pageerror] ' + e.message));

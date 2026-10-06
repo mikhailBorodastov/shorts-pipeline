@@ -102,12 +102,14 @@ def _work(A):
             _render(A, it)
             it["status"], it["phase"] = "done", "готово"
             _notify("Рендер готов", f"«{it['video']}» → out/{it['name']}.mp4 — нажмите, чтобы открыть папку", os.path.join(P.video(it["vid"]) or "", "out", it["name"] + ".mp4"))
+            _feed("render", "Ролик собран", f"«{it['video']}» → out/{it['name']}.mp4", it, "🎞")
         except Exception as e:
             if it.get("cancel"):
                 it["status"], it["phase"] = "cancelled", "отменён"
             else:
                 it["status"], it["error"], it["phase"] = "error", str(e)[-500:], "ошибка"
                 _notify("Рендер не получился", f"«{it['video']}»: {str(e)[-120:]}")
+                _feed("error", "Рендер не получился", str(e)[-200:], it, "⚠")
         it["finished"] = int(time.time() * 1000)
         Q["proc"] = None
         _save()
@@ -143,7 +145,7 @@ def _render(A, it):
     env["REVIEW_PORT"] = str(A.stapi().project_port(vdir))
     it["phase"] = "звук"
     t0, base = None, 0
-    pr = Q["proc"] = subprocess.Popen([mn._bash(), "build.sh"], cwd=vdir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True,
+    pr = Q["proc"] = subprocess.Popen([mn._bash(), "build.sh"], cwd=vdir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=mn.bash_env(env), text=True,
                                       encoding="utf-8", errors="replace", creationflags=CF)
     log = []
     for line in pr.stdout:
@@ -157,6 +159,8 @@ def _render(A, it):
             el = max(0.5, time.time() - t0)
             it["fpsr"] = round(max(0, it["done"] - base) / el, 1)
             it["eta"] = round((it["total"] - it["done"]) / max(0.1, it["fpsr"]))
+        elif line.startswith("[gpu]"):                         # S22: ждёт замок видеокарты (другой рендер, TRELLIS)
+            it["phase"] = line[6:].strip()
         elif line.startswith("frames done"):
             it["phase"], it["done"], it["eta"] = "склейка", it["total"] or it["done"], 3
             mm = re.search(r"\(([\d.]+) fps", line)
@@ -389,6 +393,15 @@ def delete(vid, name):
             shutil.move(g, os.path.join(dst, os.path.basename(g)))
             moved.append(os.path.basename(g))
     return {"ok": True, "to": dst, "moved": moved}
+
+
+def _feed(kind, title, text, it, icon):
+    """S20.5: рендер — в ленту 🔔 (клик — страница «Рендеры»)."""
+    try:
+        import notify_api
+        notify_api.add(kind, title, text, it.get("vid"), None, "#/renders", icon, dedup=f"render:{it.get('id')}:{kind}")
+    except Exception as e:
+        print("! notify render:", e)
 
 
 def _notify(title, text, target=None):

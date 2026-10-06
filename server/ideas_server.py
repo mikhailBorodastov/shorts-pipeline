@@ -139,6 +139,13 @@ def serve(open_browser):
     if open_browser:
         webbrowser.open(url)
     threading.Thread(target=ticker, daemon=True).start()
+    try:                                                    # S22: окно-приложение запускает сервер с урезанным PATH — node / ffmpeg / Git-утилиты не находились
+        import paths as _P
+        os.environ["PATH"] = _P.tool_env()["PATH"]
+    except Exception as e:
+        print("! PATH:", e)
+    if hasattr(api(), "restore_jobs"):                     # S22: очередь задач прошлого запуска — назад, осиротевшие claude.exe — стоп
+        threading.Thread(target=lambda: api().restore_jobs(), daemon=True).start()
     srv.serve_forever()
 
 

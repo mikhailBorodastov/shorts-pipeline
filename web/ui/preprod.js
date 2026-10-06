@@ -10,10 +10,10 @@ Object.assign(Plan, {
   // (сервер запускает по «Claude одновременно» из ⚙ Настроек, сцена ждёт черновики своего состава). B-roll — нет: ему нужен источник.
   doAllTodo(d, key, live) {
     const order = { char: 0, prop: 1, vfx: 2, sound: 3, scene: 4 };
-    return live.filter(e => e.kind in order && !(e.from && e.from.scene))
+    return live.filter(e => e.kind in order && !(e.from && e.from.scene) && !Reuse.holds(e))   // S15: ждёт решения «Нашлось в библиотеке»
       .filter(e => e.kind === 'sound' ? !(e.sounds || []).length : !elRender(e) && !(e.own || []).some(x => x.img))   // свой ассет автора — рисовать не надо
       .filter(e => !Claude.running(key, e.kind === 'sound' ? 'sound:' + e.id : 'element:' + e.id))
-      .sort((a, b) => order[a.kind] - order[b.kind]);
+      .sort((a, b) => order[a.kind] - order[b.kind] || !!mainOf(d, a) - !!mainOf(d, b));   // S18: основной образ раньше вариаций — они рисуются от него
   },
   // одна кнопка на всё видео (шапка) или на одну группу (kind — в шапке группы: «все персонажи» и т.п.)
   doAllBtn(d, key, live, kind) {
@@ -69,13 +69,65 @@ Object.assign(Plan, {
     ];
   },
 
+  // 👁 Ревью (#/v/<id>/pre/review[/<el>]): по одному элементу, у которого есть что смотреть или слушать, но он ещё не утверждён и не вычеркнут.
+  // Сверху — полоса «Утвердить и дальше / Не нужен / Пропустить», ниже — обычная карточка элемента (послушать, пины, «Поправить»).
+  // Очередь — по видам в порядке вкладок, с учётом выбранной вкладки (на «Звуках» — только звуки).
+  reviewable(e) {
+    if (e.kind === 'sound') return (e.sounds || []).length > 0;
+    if (e.kind === 'broll') return !!(e.broll && e.broll.file);
+    return !!elRender(e) || (e.own || []).some(x => x.img);
+  },
+  reviewList(d, key) {
+    const kinds = REF.kinds.map(K => K.key).filter(k => PRE.tab === 'all' || k === PRE.tab);
+    const els = (d.elements || []).filter(e => !e.ws && !(e.from && e.from.scene) && kinds.includes(e.kind));
+    els.sort((a, b) => kinds.indexOf(a.kind) - kinds.indexOf(b.kind));
+    const busy = e => Claude.running(key, (e.kind === 'sound' ? 'sound:' : 'element:') + e.id);
+    return { all: els, todo: els.filter(e => !e.status && this.reviewable(e) && !busy(e)), busy: els.filter(e => !e.status && busy(e)).length };
+  },
+  reviewNext(d, key, cur, dir = 1) {
+    const { all, todo } = this.reviewList(d, key), i = all.findIndex(e => e.id === cur);
+    const rest = todo.filter(e => e.id !== cur);
+    const after = rest.filter(e => dir > 0 ? all.indexOf(e) > i : all.indexOf(e) < i);
+    const x = dir > 0 ? (after[0] || rest[0]) : (after[after.length - 1] || rest[rest.length - 1]);
+    go(`#/v/${d.id}/pre/review` + (x ? '/' + x.id : '/done'));
+  },
+  reviewSet(d, key, e, status) { Store.set(key, ['elements', e.id, 'status'], status, true); this.reviewNext(d, key, e.id); },
+  reviewWs(d, key, id) {
+    const { all, todo, busy } = this.reviewList(d, key);
+    const e = id && id !== 'done' ? all.find(x => x.id === id) : id === 'done' ? null : todo[0];
+    const tabName = PRE.tab === 'all' ? 'все виды' : kindFor(d, REF.kinds.find(K => K.key === PRE.tab) || {}).label;
+    const exit = h('a.btn', { href: `#/v/${d.id}/pre`, title: 'Назад к списку (Esc)' }, '✕ Выйти');
+    if (!e) return h('div.ws-pre', h('div.ws-pre-in',
+      h('div.rv-bar', h('b', '👁 Ревью'), h('span.dim', tabName), h('span.sp'), exit),
+      h('div.rv-done', h('div.rv-big', '🎉'), h('h3', 'Всё проверено'),
+        h('p.dim', busy ? `Ещё в работе у Claude: ${busy} — появятся здесь, когда будут готовы.` : 'Непроверенных элементов с черновиком или звуком не осталось.'),
+        h('a.btn.primary', { href: `#/v/${d.id}/pre` }, '← К препродакшену'))));
+    const K = KIND(e.kind), pos = todo.indexOf(e), left = todo.length - (pos >= 0 ? 1 : 0);
+    const st = { ok: '✓ утверждён', drop: '✗ не нужен' }[e.status];
+    const card = Plan.element(d, key, Montage.M(d), e).slice(1);   // без своей навигации «← Все элементы … →» — её заменяет полоса ревью
+    return h('div.ws-pre', h('div.ws-pre-in',
+      h('div.rv-bar',
+        h('b', '👁 Ревью'), h('span.dim', `${tabName} · ${K.icon} ${e.name || 'без названия'}`),
+        h('span.counter', left ? `ещё ${left}` : 'последний'), busy > 0 && h('span.dim.small', `⏳ в работе: ${busy}`),
+        st && h('span.st', { class: e.status }, st),
+        h('span.sp'),
+        h('button', { title: 'Предыдущий непроверенный (←)', onclick: () => this.reviewNext(d, key, e.id, -1) }, '←'),
+        h('button', { title: 'Не нужен — в ролик не пойдёт, дальше', onclick: () => this.reviewSet(d, key, e, 'drop') }, '✗ Не нужен'),
+        h('button', { title: 'Оставить непроверенным, дальше (→)', onclick: () => this.reviewNext(d, key, e.id) }, 'Пропустить →'),
+        h('button.primary', { title: 'Утвердить и к следующему (Ctrl+Enter)', onclick: () => this.reviewSet(d, key, e, 'ok') }, '✓ Утвердить и дальше'),
+        exit),
+      card));
+  },
+
   // препродакшен окна видео: шапка, вкладки видов, разделы (или карточка элемента)
   preWs(d, key, sub) {
     const els = (d.elements || []).filter(e => !e.ws);
+    if (sub === 'review') return Plan.reviewWs(d, key, App.route.sub2);
     if (sub) {
       const e = els.find(x => x.id === sub);
       if (e) return h('div.ws-pre', h('div.ws-pre-in', Plan.element(d, key, Montage.M(d), e)));
     }
+    Reuse.auto(d, key);                                    // S15: нашлось уже сделанное — окно «Нашлось в библиотеке» всплывает само
     const live = els.filter(e => e.status !== 'drop'), ready = live.filter(e => e.status === 'ok').length;
     const SS = Plan.scriptState ? Plan.scriptState(d) : {}, hasScript = SS.project && !SS.template;
     const focus = h('input.box', { key: key + '|pfocus', placeholder: 'чего не хватает? Claude учтёт', style: { width: '240px' },
@@ -93,12 +145,31 @@ Object.assign(Plan, {
         Claude.btn({ label: hasScript ? (live.some(e => e.kind === 'scene') ? 'Накидать ещё' : 'Накидать по сценарию') : live.length ? 'Накидать ещё' : 'Накидать элементы', action: 'elements', key,
           params: () => ({ focus: focus.value, kind: PRE.tab !== 'all' ? PRE.tab : undefined }),
           title: hasScript ? 'Claude разложит сценарий: каждой сцене сценария — сцена препродакшена, персонажи, пропсы, звуки, эффекты и B-roll — из «Картинки» и текста' : 'Claude соберёт элементы по идее и твоим ответам' }),
-        Plan.doAllBtn(d, key, live)),
+        Plan.doAllBtn(d, key, live), Reuse.head(d, key)),
       !hasScript && h('div.ws-pre-note', '📝 Сначала сценарий — сцены препродакшена строятся по нему (каждой сцене сценария — своя). Можно и без него: тогда Claude накидает по идее и ответам.'),
       h('div.seg.ws-pre-tabs', tabs.map(([k, l, [ok, n]]) => h('button', { class: PRE.tab === k ? 'sel' : '', onclick: () => { PRE.tab = k; Local.set('pretab', k); App.render(); } },
         l, n ? h('span.c', { class: ok === n ? 'ok' : '' }, `${ok}/${n}`) : null))),
+      (() => { const n = Plan.reviewList(d, key).todo.length;
+        return n > 0 && h('div.rv-entry', h('span', `👁 Непроверенных с черновиком или звуком${PRE.tab === 'all' ? '' : ' на этой вкладке'}: `, h('b', n)),
+          h('span.dim.small', 'по одному: послушать / посмотреть, поправить, утвердить — и сразу следующий'), h('span.sp'),
+          h('button.primary', { onclick: () => go(`#/v/${d.id}/pre/review`) }, '👁 Ревью')); })(),
       shown.map(K => Plan.kindBox(d, key, K, focus)),
       h('div.ws-pre-foot', h('span.dim.small', 'Всё утверждено и «Для финала» написано — дальше синхронизация и монтаж.'), h('span.sp'),
         h('button.primary', { onclick: () => go(`#/v/${d.id}`), title: 'Назад к превью и таймлайну' }, '▶ К монтажу'))));
   },
+});
+
+// ревью: ← / → — предыдущий / пропустить, Ctrl+Enter — утвердить и дальше, Esc — к списку (в полях ввода стрелки и Esc не перехватываем)
+document.addEventListener('keydown', ev => {
+  const r = App.route;
+  if (r.page !== 'v' || r.tab !== 'pre' || r.sub !== 'review' || document.querySelector('.modal, .lightbox')) return;
+  const d = Store.get('plan:' + r.id); if (!d) return;
+  const key = 'plan:' + r.id, { all, todo } = Plan.reviewList(d, key);
+  const e = r.sub2 && r.sub2 !== 'done' ? all.find(x => x.id === r.sub2) : r.sub2 === 'done' ? null : todo[0];
+  const t = ev.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+  if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && e) { ev.preventDefault(); Plan.reviewSet(d, key, e, 'ok'); return; }
+  if (typing || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+  if (ev.key === 'Escape') { ev.preventDefault(); go(`#/v/${d.id}/pre`); }
+  else if (ev.key === 'ArrowRight' && e) { ev.preventDefault(); Plan.reviewNext(d, key, e.id, 1); }
+  else if (ev.key === 'ArrowLeft' && e) { ev.preventDefault(); Plan.reviewNext(d, key, e.id, -1); }
 });

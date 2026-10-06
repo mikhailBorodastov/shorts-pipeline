@@ -222,8 +222,9 @@ const ELEMENT = { t: 0.6, len: 6, draw(ctx, T) { WORLD.draw(ctx, T, 4, T); } }; 
 ## 9. Звуки 🔊
 
 - **Кандидаты** `sounds[]` `{id, file, title, src, license, author, page, url, dur, peak_t, rms_db, start, end, by, why}` — wav в `files/<plan>/sfx/`.
-  - «✨ Подобрать звук» (`sound`, Sonnet, medium): Claude ищет `python sounds.py search` (библиотека пайплайна, Freesound, Commons) и в интернете,
-    сервер скачивает 3–5 кандидатов. Учитывает «Какой нужен / что не так» (`ask`) и заметку о сведении.
+  - «✨ Подобрать звук» (`sound`, Sonnet, medium): Claude ищет в первую очередь на YouTube (`python sounds.py search "q" --src youtube` — yt-dlp `ytsearch`;
+    у длинного ролика `sounds.py peek <url>` — главы, таймкоды описания, самые пересматриваемые места → `start`/`end`), добавляет 1–2 из библиотеки пайплайна, Freesound, Commons,
+    при нужде — интернет; сервер скачивает 3–5 кандидатов (YouTube — куском через yt-dlp `--download-sections`). Учитывает «Какой нужен / что не так» (`ask`) и заметку о сведении.
   - «🔎 Искать» — то же без Claude, с прослушиванием; «⬇ Взять».
   - «⬇ По ссылке» — любая страница со звуком, прямой файл, Freesound/Commons, **YouTube и видеосайты через yt-dlp**; «с / по» — вырезать кусок.
     Длинное режется до 180 с, большие файлы и куски тянутся потоком ffmpeg.

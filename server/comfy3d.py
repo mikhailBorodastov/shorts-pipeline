@@ -51,20 +51,23 @@ def alive():
         return False
 
 
-def start(log=print, timeout=240):
-    """Поднять ComfyUI Studio (если не поднят). Вывод — tools/comfyui/comfy.log."""
+def start(log=print, timeout=240, need3d=True):
+    """Поднять ComfyUI Studio (если не поднят). Вывод — tools/comfyui/comfy.log.
+    need3d=False — для обложек FLUX.2 (server/flux2.py): модели TRELLIS не нужны, свои модели проверяет flux2."""
     global _PROC
     if alive():
         return True
     st = installed()
     if not st["comfy"]:
-        raise RuntimeError("ComfyUI для 3D не установлен — ⚙ Настройки → «Локальная 3D (TRELLIS.2)» → Установить (или python _studio/tools/comfy_setup.py)")
-    if st["missing"]:
+        raise RuntimeError("ComfyUI Studio не установлен — ⚙ Настройки → «Локальная 3D (TRELLIS.2)» → Установить (или python _studio/tools/comfy_setup.py)")
+    if st["missing"] and need3d:
         raise RuntimeError("не хватает моделей: " + ", ".join(st["missing"]) + " — докачай: python _studio/tools/comfy_setup.py")
-    log("запускаю ComfyUI (TRELLIS.2)…")
+    import paths
+    extra = os.path.join(paths.STATE, "comfy_extra_paths.yaml")                   # доп. папки весов (flux2.config weights_dir) — пишет flux2.write_extra_paths
+    log("запускаю ComfyUI Studio…")
     lf = open(os.path.join(os.path.dirname(ROOT), "comfy.log"), "ab")
     _PROC = subprocess.Popen([PY, "-s", os.path.join(ROOT, "ComfyUI", "main.py"), "--port", str(PORT), "--listen", "127.0.0.1", "--disable-auto-launch",
-                              "--windows-standalone-build"], cwd=ROOT, stdout=lf, stderr=lf, stdin=subprocess.DEVNULL, creationflags=CF)
+                              "--windows-standalone-build"] + (["--extra-model-paths-config", os.path.abspath(extra)] if os.path.isfile(extra) else []), cwd=ROOT, stdout=lf, stderr=lf, stdin=subprocess.DEVNULL, creationflags=CF)
     t0 = time.time()
     while time.time() - t0 < timeout:
         if _PROC.poll() is not None:
@@ -347,7 +350,9 @@ def generate(images, out_dir, log=print, **p):
     api = build(p, up)
     json.dump(api, open(os.path.join(out_dir, "comfy_graph.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     t0 = time.time()
-    h = wait(queue(api), log)
+    import gpulock
+    with gpulock.hold(f"TRELLIS ({os.path.basename(os.path.dirname(os.path.abspath(out_dir)))})", log):   # S22: видеокарта по очереди с рендером
+        h = wait(queue(api), log)
     glb = next((f for f in _files(h, save_id(api)) if f["filename"].lower().endswith((".glb", ".gltf"))), None)
     if not glb:
         glb = next((f for nid in (h.get("outputs") or {}) for f in _files(h, nid) if f["filename"].lower().endswith(".glb")), None)

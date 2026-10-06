@@ -120,7 +120,8 @@ def get(A, vid):
     m = doc.get("montage") or default(A, vid, doc)
     return {"montage": m, "saved": bool(doc.get("montage")), "scenes": scenes(A, vid, doc), "voice": voice(vid), "project": has_project(vid),
             "sources": sources(doc), "lib": lib_sounds(), "fixes": doc.get("fixes") or [], "generated": bool(vdir(vid)) and os.path.isfile(os.path.join(vdir(vid), "src", "montage.js")),
-            "owned": bool(vdir(vid)) and has_project(vid) and studio_owned(vdir(vid)),   # False — рукописный ролик: монтаж его не пересобирает
+            "owned": bool(vdir(vid)) and has_project(vid) and (bool(doc.get("fast")) or studio_owned(vdir(vid))),   # False — рукописный ролик: монтаж его не пересобирает
+                                                                                                         # (код ⚡ быстрого монтажа — тоже Studio: «Сделать заново» можно)
             "folder": vdir(vid), "out": [os.path.basename(x) for x in sorted(glob.glob(os.path.join(vdir(vid) or "", "out", "*.mp4")), key=os.path.getmtime) if not x.endswith("_NO_VO.mp4")][-1:] if vdir(vid) else []}
 
 
@@ -167,6 +168,98 @@ def _sound_files(A, vid, src, pd, tag, base=None):
         _copy(f, os.path.join(pd, rel))
         return [("file:" + rel, 0.0, 1.0)]
     return [(src, 0.0, 1.0)]                                 # lib:<id> пайплайна — audio.py найдёт сам
+
+
+# ---------------------------------------------------------------- S23: звуковой редактор — дорожки и плашки (docs/studio/stage23-audio.md)
+CLIP_KEYS = ("in", "out", "dur", "loop", "fadeIn", "fadeOut")
+DUCK = {"on": True, "depth": -6.0, "attack": 0.15, "release": 0.4}
+
+
+def tracks(M):
+    """Дорожки монтажа: montage.tracks или по умолчанию — голос, музыка, звуки."""
+    T = [dict(t) for t in (M.get("tracks") or []) if isinstance(t, dict) and t.get("id")]
+    for kind, tid, name in (("voice", "voice", "Голос"), ("music", "m1", "Музыка"), ("sfx", "s1", "Звуки")):
+        if not any(t.get("kind") == kind for t in T):
+            T.append({"id": tid, "kind": kind, "name": name})
+    return T
+
+
+def track_of(T, tid, kind):
+    """Дорожка плашки: её track, если он того же вида, иначе первая дорожка вида."""
+    return next((t for t in T if t["id"] == tid and t.get("kind") == kind), None) or next(t for t in T if t.get("kind") == kind)
+
+
+def track_gain(t, preview=False):
+    """Громкость дорожки множителем; заглушённая — 0. Solo — только в живом звуке окна (в экспорт не идёт: забытый solo не испортит ролик)."""
+    if t.get("mute"):
+        return 0.0
+    return 10 ** (float(t.get("gain") or 0) / 20)
+
+
+def clip_of(x, music=False):
+    """Поля плашки для audio.py: {in, out, dur, loop, fadeIn, fadeOut}; старый звук без них — None (как раньше: целиком, авто-затухание)."""
+    if not music and not any(k in x for k in CLIP_KEYS):
+        return None
+    c = {"in": float(x.get("in") if x.get("in") is not None else x.get("from") or 0), "out": x.get("out"), "dur": x.get("dur"),
+         "loop": x.get("loop") or None, "fadeIn": float(x.get("fadeIn") or 0), "fadeOut": x.get("fadeOut")}
+    if music:
+        c["fadeOut"] = float(c["fadeOut"] or 0)
+        c["music"] = True
+    return c
+
+
+def layer_clip(c, dt, layers):
+    """Слой звука (el: из нескольких файлов, сдвиг dt) под окно плашки: -> (сдвиг слоя от начала плашки, его clip) или None — слой вне окна."""
+    if c is None or dt == 0 and layers == 1:
+        return dt, c
+    c = dict(c)
+    inn = c["in"]
+    lin = max(0.0, inn - dt)
+    shift = max(0.0, dt - inn)
+    if c.get("dur") is not None:
+        c["dur"] = float(c["dur"]) - shift
+        if c["dur"] <= 0.01:
+            return None
+    if c.get("out") is not None:
+        c["out"] = float(c["out"]) - dt
+        if c["out"] <= lin:
+            return None
+    c["in"] = lin
+    if layers > 1:
+        c["loop"] = None                                       # цикл составного звука по слоям не повторить — он просто тянется
+    return shift, c
+
+
+def author_changes(old, new):
+    """S23: правки агента задевают ручные плашки автора (by: author)? -> [описание]. Без изменений, но без by — by вернётся сам (fix_by)."""
+    bad = []
+    for lst in ("sfx", "music"):
+        nw = {x.get("id"): x for x in (new or {}).get(lst) or [] if isinstance(x, dict)}
+        for x in (old or {}).get(lst) or []:
+            if x.get("by") != "author":
+                continue
+            y = nw.get(x.get("id"))
+            strip = lambda z: {k: v for k, v in z.items() if k != "by"}
+            if y is None:
+                bad.append(f"{x.get('id')} «{x.get('note') or x.get('src')}» удалён")
+            elif strip(x) != strip(y):
+                bad.append(f"{x.get('id')} «{x.get('note') or x.get('src')}» изменён")
+    return bad
+
+
+def fix_by(old, new):
+    """Агент переписал монтаж целиком: ручные плашки, которые он не менял, остаются ручными; дорожки и приглушение — как были, если их нет в новом."""
+    if not isinstance(new, dict):
+        return new
+    for lst in ("sfx", "music"):
+        mine = {x.get("id"): x for x in (old or {}).get(lst) or [] if x.get("by") == "author"}
+        for y in new.get(lst) or []:
+            if isinstance(y, dict) and y.get("id") in mine and "by" not in y:
+                y["by"] = "author"
+    for k in ("tracks", "duck"):
+        if k in (old or {}) and k not in new:
+            new[k] = old[k]
+    return new
 
 
 def _fwd_map(unit, words):
@@ -289,6 +382,120 @@ def fast_redo(A, vid, wish=""):
     return r
 
 
+def shift(M, frm, delta, what=None):
+    """S22: сдвиг монтажа «всё, что начинается с момента frm, — на delta с» (ripple, как в монтажке): юниты, звуки, музыка, надписи, длина ролика.
+    Автор: агент двигал 17 звуков по одному (17 ходов) после того, как сократил сцену на 0,85 с. -> (новый монтаж, сколько сдвинуто по видам)."""
+    import copy
+    M = copy.deepcopy(M or {})
+    what = set(what or ("units", "sfx", "music", "overlays"))
+    n = {}
+    eps = 1e-6
+    for k in ("units", "sfx", "music", "overlays"):
+        if k not in what:
+            continue
+        for x in M.get(k) or []:
+            at = float(x.get("at") or 0)
+            if at >= frm - eps:
+                x["at"] = round(max(0.0, at + delta), 3)
+                n[k] = n.get(k, 0) + 1
+    if M.get("len"):
+        M["len"] = round(max(0.1, float(M["len"]) + delta), 3)
+    return M, n
+
+
+def script_drift(pd):
+    """S22: сценарий / голос переписали после монтажа — какие сцены быстрого ролика стоят на чужом тексте.
+    Снимок build/vo_montage.json: под какой текст секции написан каждый файл сцены src/scenes/sNN.js (SCENES[k] = …; сцена k — секция k).
+    Файл сцены изменился с прошлой проверки — его правили, он берёт нынешний текст; не менялся, а текст его секции другой — расхождение
+    (держится, пока сцену не поправят). Первая проверка: точка отсчёта — нынешний текст, одной строкой — сцены, чей код старше голоса. -> [строки ⚠]"""
+    import difflib
+    import hashlib
+    vf = os.path.join(pd, "build", "vo_timing.json")
+    try:
+        vo = json.load(open(vf, encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    texts = [" ".join(w.get("w", "") for w in s.get("words") or []).strip() for s in vo.get("sections") or []]
+    sd = os.path.join(pd, "src", "scenes")
+    if not os.path.isdir(sd):
+        return []
+    snap_f = os.path.join(pd, "build", "vo_montage.json")
+    try:
+        snap = json.load(open(snap_f, encoding="utf-8"))
+    except (OSError, ValueError):
+        snap = None
+    first = snap is None
+    vo_mt = os.path.getmtime(vf)
+    files, out, older, rec_by_k = {}, [], [], {}
+    for f in sorted(os.listdir(sd)):
+        if not f.endswith(".js"):
+            continue
+        p = os.path.join(sd, f)
+        code = open(p, encoding="utf-8", errors="replace").read()
+        ks = [int(m) for m in re.findall(r"SCENES\[\s*(\d+)\s*\]\s*=(?!=)", code)]
+        if not ks:
+            continue
+        h = hashlib.sha1(code.encode("utf-8")).hexdigest()
+        was = ((snap or {}).get("files") or {}).get(f)
+        if first or not was or was.get("hash") != h:         # первая проверка или сцену правили — под нынешний текст
+            rec = {"hash": h, "ks": ks, "texts": {str(k): texts[k] if k < len(texts) else None for k in ks}}
+            if first and os.path.getmtime(p) < vo_mt:
+                older += ks
+        else:
+            rec = was
+        files[f] = rec
+        for k in ks:
+            rec_by_k[k] = (f, rec["texts"].get(str(k)))
+    # вставили / убрали секцию: текст, под который написаны сцены (по k), против нынешнего
+    ks_all = sorted(rec_by_k)
+    seq_old = [rec_by_k[k][1] or "" for k in ks_all]
+    shifted = set()
+    for op, a0, a1, b0, b1 in difflib.SequenceMatcher(a=seq_old, b=texts, autojunk=False).get_opcodes():
+        if op == "insert":
+            out.append(f"⚠ добавлена секция {b0}{'–' + str(b1 - 1) if b1 - b0 > 1 else ''} — сцены с {ks_all[a0] if a0 < len(ks_all) else '?'} и дальше стоят на чужом тексте (сдвиг на {b1 - b0})")
+            shifted |= set(ks_all[a0:])
+        elif op == "delete":
+            out.append(f"⚠ убрана секция под сценой {', '.join(str(k) for k in ks_all[a0:a1])} — сцены после неё стоят на чужом тексте (сдвиг на {a1 - a0})")
+            shifted |= set(ks_all[a0:])
+    for k in ks_all:
+        f, old = rec_by_k[k]
+        if k >= len(texts):
+            out.append(f"⚠ сцена {k} ({f}): секции {k} нет (секций {len(texts)}) — сцена без голоса")
+        elif old is not None and old != texts[k] and k not in shifted:
+            out.append(f"⚠ сцена {k} ({f}): текст секции изменился после монтажа — было «{old[:60]}…», стало «{texts[k][:60]}…»")
+    if shifted:
+        out.append(f"⚠ сцены на сдвинутом тексте: {', '.join(str(k) for k in sorted(shifted))}")
+    if older:
+        out.insert(0, f"⚠ первая проверка: код сцен {', '.join(str(k) for k in sorted(older))} старше голоса — проверь их по тексту; дальше проверка точная")
+    os.makedirs(os.path.join(pd, "build"), exist_ok=True)
+    P.write_atomic(snap_f, json.dumps({"files": files, "sections": len(texts)}, ensure_ascii=False, indent=1))
+    return out
+
+
+def project_check(A, vid, run_wt=False):
+    """S22: проверка ролика перед сборкой / по запросу: сценарий новее сцен (script_drift) + промахи WT() (build/wt_check.json от render.js).
+    run_wt — прогнать render.js check сейчас (иначе — то, что записал последний рендер кадров). -> (строки, {"drift": [...], "wt": [...]})"""
+    pd = vdir(vid)
+    drift = script_drift(pd) if A.load("plan:" + vid).get("fast") else []
+    if run_wt:
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", REVIEW_PORT=str(A.stapi().project_port(pd)))
+        subprocess.run(["node", "render.js", "check"], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    wt = []
+    try:
+        r = json.load(open(os.path.join(pd, "build", "wt_check.json"), encoding="utf-8"))
+        for m in r.get("miss") or []:
+            who = ", ".join(f"сцена {k}" for k in m.get("scenes") or []) or "код вне сцен"
+            wt.append(f"❌ {who}: WT({m['i']}, {json.dumps(m['key'], ensure_ascii=False)}) — "
+                      + (f"секции {m['i']} нет (секций {r.get('sections')})" if m.get("why") == "секции нет" else f"в секции {m['i']} нет такого слова — событие встало на начало секции"))
+        for w in (r.get("warn") or [])[:12]:                  # S22: предупреждения и упавшие кадры страницы по сценам («ppObj: нет объекта …»)
+            who = ", ".join(f"сцена {k}" for k in w.get("scenes") or []) or "загрузка / звуки"
+            wt.append(f"{'❌' if w.get('kind') == 'error' else '⚠'} {who}: {w.get('msg')}")
+    except (OSError, ValueError):
+        pass
+    return drift + wt, {"drift": drift, "wt": wt}
+
+
 def fast_done(A, vid):
     """После сборки быстрого монтажа: длина ролика -> montage (таймлайн окна знает длину, шаг «Монтаж» — готов)."""
     pd = vdir(vid)
@@ -348,6 +555,20 @@ def generate(A, vid, montage=None):
     words = (vo or {}).get("words") or [] if (M.get("voice") or {}).get("on") else []
     report = {"copied": [], "units": [], "warn": []}
     unit_js, prefab_scripts, sfx_cues = [], [], []
+    T = tracks(M)                                             # S23: дорожки — громкость и mute каждой плашки
+
+    def cues(x, t0, src_files, gain0, tg, tag_music=False):
+        """плашка (звук монтажа или сцены) -> сигналы audio.py; слои el: — каждый со своим сдвигом под окном плашки."""
+        c = clip_of(x)
+        for f, dt, g in src_files:
+            lc = layer_clip(c, dt, len(src_files))
+            if lc is None:
+                continue
+            sh, cc = lc
+            cue = {"t": round(t0 + sh, 3), "src": f, "gain": round(gain0 * g * tg, 4), "align": x.get("align") or ""}
+            if cc:
+                cue["clip"] = cc
+            sfx_cues.append(cue)
     for u in M.get("units") or []:
         el = u["scene"]
         wd = A.scapi().work_dir(A, vid, el)
@@ -358,21 +579,39 @@ def generate(A, vid, montage=None):
         pairs = _fwd_map(u, words)
         # звуки сцены — по карте времени в ролик
         for s in sc.get("sounds") or []:
-            for f, dt, g in _sound_files(A, vid, s.get("src") or "", pd, f"{el}_{s.get('id')}", wd):
-                sfx_cues.append({"t": round(_scene_to_video(pairs, float(s.get("t") or 0) + dt), 3), "src": f, "gain": round(float(s.get("gain") if s.get("gain") is not None else 1) * g, 3), "align": s.get("align") or ""})
-        json.dump(sc, open(os.path.join(dst, "scene.json"), "w", encoding="utf-8"), ensure_ascii=False)
+            tg = track_gain(track_of(T, s.get("track"), "sfx"))
+            if not tg:
+                continue
+            cues(s, _scene_to_video(pairs, float(s.get("t") or 0)), _sound_files(A, vid, s.get("src") or "", pd, f"{el}_{s.get('id')}", wd),
+                 float(s.get("gain") if s.get("gain") is not None else 1), tg)
+        A.write_text(os.path.join(dst, "scene.json"), json.dumps(sc, ensure_ascii=False))
         unit_js.append({"id": u["id"], "el": el, "name": sc.get("name") or el, "at": float(u.get("at", 0)), "len": float(u.get("len", sc.get("len") or 6)),
                         "map": u.get("map") or [[0, 0], [u.get("len", 6), u.get("len", 6)]], "trans": u.get("trans") or {"type": "cut", "dur": 0}})
         report["units"].append(u["id"])
     for x in M.get("sfx") or []:
-        for f, dt, g in _sound_files(A, vid, x.get("src") or "", pd, "m_" + x["id"]):
-            sfx_cues.append({"t": round(float(x.get("at") or 0) + dt, 3), "src": f, "gain": round(float(x.get("gain") if x.get("gain") is not None else 1) * g, 3), "align": x.get("align") or ""})
+        tg = track_gain(track_of(T, x.get("track"), "sfx"))
+        if tg:
+            cues(x, float(x.get("at") or 0), _sound_files(A, vid, x.get("src") or "", pd, "m_" + x["id"]), float(x.get("gain") if x.get("gain") is not None else 1), tg)
     music = []
+    duck = dict(DUCK, **(M.get("duck") or {}))
     for x in M.get("music") or []:
-        for f, dt, g in _sound_files(A, vid, x.get("src") or "", pd, "mu_" + x["id"]):
+        tr = track_of(T, x.get("track"), "music")
+        tg = track_gain(tr)
+        if not tg:
+            continue
+        files = _sound_files(A, vid, x.get("src") or "", pd, "mu_" + x["id"])
+        for f, dt, g in files:
+            lc = layer_clip(clip_of(x, music=True), dt, len(files))
+            if lc is None:
+                continue
+            sh, cc = lc
             if f.startswith("file:"):
-                music.append({"file": f[5:], "at": float(x.get("at") or 0) + dt, "gain": float(x.get("gain") if x.get("gain") is not None else 1) * g,
-                              "from": x.get("from") or 0, "dur": x.get("dur"), "fadeIn": x.get("fadeIn") or 0, "fadeOut": x.get("fadeOut") or 0})
+                music.append({"file": f[5:], "at": float(x.get("at") or 0) + sh, "gain": float(x.get("gain") if x.get("gain") is not None else 1) * g * tg,
+                              "clip": cc, "duck": tr["id"] not in (duck.get("off") or [])})
+            else:                                             # музыка из библиотеки пайплайна (lib:id) — как звук, без приглушения
+                sfx_cues.append({"t": round(float(x.get("at") or 0) + sh, 3), "src": f, "gain": round(float(x.get("gain") if x.get("gain") is not None else 1) * g * tg, 4), "align": "", "clip": cc})
+    vt_ = track_of(T, "voice", "voice")
+    mixcfg = {"voice": track_gain(vt_), "duck": {k: duck[k] for k in ("on", "depth", "attack", "release")}}
     total = float(M.get("len") or 0) or max([u["at"] + u["len"] for u in unit_js] + [1])
     # --- голос: без голоса — «тихий» vo_timing на длину ролика (tts.py его перепишет, если появится сценарий с голосом)
     if not (M.get("voice") or {}).get("on"):
@@ -387,6 +626,8 @@ def generate(A, vid, montage=None):
             report["warn"].append("в проекте есть голос, а в монтаже он выключен — голос останется в vo_timing.js (выключи его там или включи в монтаже)")
     os.makedirs(os.path.join(pd, "build"), exist_ok=True)
     A.write_text(os.path.join(pd, "build", "music.json"), json.dumps(music, ensure_ascii=False, indent=1))
+    A.write_text(os.path.join(pd, "build", "mixcfg.json"), json.dumps(mixcfg, ensure_ascii=False, indent=1))
+    _sync_audio_py(pd, report)
     vj = os.path.join(pd, "build", "vo_timing.json")              # монтаж длиннее голоса — ролик длиной в монтаж (звук: audio.py читает total отсюда)
     try:
         vo_j = json.load(open(vj, encoding="utf-8"))
@@ -426,6 +667,28 @@ def generate(A, vid, montage=None):
     return report
 
 
+def _sync_audio_py(pd, report):
+    """S23: audio.py проекта без плашек монтажа (render_clip) — обновить из шаблона, сохранив TALK и MUSIC проекта; старый — в build/audio_old.py."""
+    cur = os.path.join(pd, "audio.py")
+    try:
+        old = open(cur, encoding="utf-8").read()
+    except OSError:
+        old = ""
+    if "def render_clip" in old:
+        return
+    new = open(os.path.join(P.TEMPLATE, "audio.py"), encoding="utf-8").read()
+    for name in ("TALK", "MUSIC"):                              # блок «NAME = {…}» до закрывающей скобки в начале строки
+        rx = re.compile(r"^" + name + r" = \{.*?^\}\n", re.S | re.M)
+        mo, mn = rx.search(old), rx.search(new)
+        if mo and mn:
+            new = new[:mn.start()] + mo.group(0) + new[mn.end():]
+    if old:
+        os.makedirs(os.path.join(pd, "build"), exist_ok=True)
+        shutil.copy2(cur, os.path.join(pd, "build", "audio_old.py"))
+    open(cur, "w", encoding="utf-8", newline="\n").write(new)
+    report.setdefault("copied", []).append("audio.py (S23: плашки звука)")
+
+
 def _pack_scene(A, vid, el, sc, wd, S, prefab_scripts, report, lib=None):
     """Сцена редактора -> проект ролика: prefabs.js (в своей области видимости), картинки, библиотека и черновики (lib: / el:), клипы, огибающие липсинка.
     Общее для генератора монтажа и быстрого монтажа (fast_api: препродакшен в коде)."""
@@ -433,7 +696,16 @@ def _pack_scene(A, vid, el, sc, wd, S, prefab_scripts, report, lib=None):
     dst = os.path.join(S, "scenes", el)
     _copy(os.path.join(wd, "prefabs.js"), os.path.join(dst, "prefabs.js"))
     if el not in [x.split("/")[-2] for x in prefab_scripts]:  # у каждой сцены свои префабы — в своей области видимости (одинаковые имена не мешают)
-        _scoped(os.path.join(dst, "prefabs.js"), os.path.join(dst, "prefabs.scoped.js"), el)
+        code = _scoped(os.path.join(dst, "prefabs.js"), el)
+        # файлы черновиков по адресу сервера Studio ('/rscene/<plan>/<эл>/vN/model.glb' — агент сцены вписал пропс прямо в prefabs.js):
+        # у страницы ролика такого адреса нет (404, «Земля не грузится») -> копия в assets/studio/rscene/… и адрес от корня проекта
+        rrefs = set(re.findall(r"/rscene/" + re.escape(vid) + r"/([^'\"\s`)]+)", code))
+        for ref in rrefs:
+            if ".." not in ref:
+                _copy(os.path.join(P.render(vid), *ref.split("/")), os.path.join(S, "rscene", *ref.split("/")))
+        if rrefs:
+            code = code.replace(f"/rscene/{vid}/", f"/{STUDIO_DIR}/rscene/")   # от корня проекта: модели грузятся относительно папки сцены, не страницы
+        P.write_atomic(os.path.join(dst, "prefabs.scoped.js"), code)   # одной записью: тот же текст не трогает файл и кэш кадров
         prefab_scripts.append(f"../{STUDIO_DIR}/scenes/{el}/prefabs.scoped.js")
     # картинки префабов: '/files/<plan>/…' -> assets/studio/files/…
     pf = open(os.path.join(wd, "prefabs.js"), encoding="utf-8").read()
@@ -476,14 +748,14 @@ def _pack_scene(A, vid, el, sc, wd, S, prefab_scripts, report, lib=None):
         if sid and sid in cues:
             env = A.scapi().envelope(cues[sid]["file"])
             os.makedirs(os.path.join(S, "env"), exist_ok=True)
-            json.dump({"sid": sid, "t0": cues[sid]["t"], "fps": 30, "env": env}, open(os.path.join(S, "env", sid + ".json"), "w"))
+            P.write_atomic(os.path.join(S, "env", sid + ".json"), json.dumps({"sid": sid, "t0": cues[sid]["t"], "fps": 30, "env": env}))
     return dst
 
 
-def _scoped(src, dst, el):
-    """prefabs.js сцены -> своя область видимости: window.SCENE_PREFABS[el] = { PREFABS, PICS } (const и function внутри — свои у каждой сцены)."""
+def _scoped(src, el):
+    """prefabs.js сцены -> своя область видимости: window.SCENE_PREFABS[el] = { PREFABS, PICS } (const и function внутри — свои у каждой сцены). Возвращает текст."""
     code = open(src, encoding="utf-8").read()
-    open(dst, "w", encoding="utf-8").write(
+    return (
         "// СГЕНЕРИРОВАНО монтажом (server/montage_api.py _scoped): prefabs.js сцены в своей области видимости — разные локации в одном ролике.\n"
         "window.SCENE_PREFABS = window.SCENE_PREFABS || {};\n"
         f"window.SCENE_PREFABS[{json.dumps(el)}] = (function () {{\n{code}\n;return {{ PREFABS: typeof PREFABS !== 'undefined' ? PREFABS : {{}}, PICS: typeof PICS !== 'undefined' ? PICS : {{}} }};\n}})();\n")
@@ -496,7 +768,7 @@ def _patch_format(pd):
         if os.path.isfile(p):
             s = open(p, encoding="utf-8").read()
             if "format.js" not in s and '<script src="lib.js"></script>' in s:
-                open(p, "w", encoding="utf-8").write(s.replace('<script src="lib.js"></script>', '<script src="format.js"></script>\n<script src="lib.js"></script>', 1))
+                P.write_atomic(p, s.replace('<script src="lib.js"></script>', '<script src="format.js"></script>\n<script src="lib.js"></script>', 1))
 
 
 def _patch_index(pd, prefabs):
@@ -510,7 +782,7 @@ def _patch_index(pd, prefabs):
     else:
         s = s.replace('<script src="chars.js"></script>\n', "")
         s = s.replace('<script src="scenes.js"></script>', block + '<script src="scenes.js"></script>')
-    open(p, "w", encoding="utf-8").write(s)
+    P.write_atomic(p, s)
 
 
 SCENES_JS = r"""// ======================================================================
@@ -587,15 +859,23 @@ const SCENES = MONTAGE.units.map((u, k) => ({
     if (w.S) drawSceneOverlays(w.S, ctx, ts);
     montageOverlays(ctx, T);
   },
-  sfx(add) { if (k === 0) for (const c of MONTAGE_SFX) add(c.t, c.src, c.gain, c.align || undefined); },
+  sfx(add) { if (k === 0) for (const c of MONTAGE_SFX) add(c.t, c.src, c.gain, c.align || undefined, c.clip); },
 }));
 """
 
 
 # ---------------------------------------------------------------- сборка
+def bash_env(env):
+    """build.sh зовёт python, node, ffmpeg: у процесса Studio (окно-приложение, ярлык) PATH бывает без Python — тогда «python: command not found».
+    Папка того Python, на котором работает сервер, — первой в PATH."""
+    return P.tool_env(env)                                    # S22: + утилиты Git Bash, node, ffmpeg (paths.tool_env)
+
+
 def _bash():
-    for c in (shutil.which("bash"), r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe"):
-        if c and os.path.isfile(c):
+    # S22: сначала Git Bash. shutil.which("bash") при урезанном PATH окна-приложения находит C:\Windows\System32\bash.exe — это WSL (Linux):
+    # build.sh шёл внутри Linux, где Windows-Python нет, — отсюда 71 «python: command not found». WSL-обёртку не берём никогда.
+    for c in (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe", shutil.which("bash")):
+        if c and os.path.isfile(c) and "system32" not in c.lower() and "windowsapps" not in c.lower():
             return c
     raise RuntimeError("не найден bash (Git Bash) для build.sh")
 
@@ -616,7 +896,7 @@ def build(A, job):
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     if A.load("plan:" + vid).get("fast"):
         env["FPS"] = "30"                                    # быстрый монтаж: черновая сборка 30 к/с (вдвое меньше кадров); финал — «Экспорт»
-    proc = subprocess.Popen([_bash(), "build.sh"], cwd=pd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True, encoding="utf-8", errors="replace",
+    proc = subprocess.Popen([_bash(), "build.sh"], cwd=pd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=bash_env(env), text=True, encoding="utf-8", errors="replace",
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     job.proc = proc
     log = []
@@ -630,6 +910,8 @@ def build(A, job):
             job.summary = "собираю: звук…"
         elif line.startswith("frames done"):
             job.summary = "кодирую mp4…"
+        elif line.startswith("[gpu]"):                         # S22: ждёт замок видеокарты
+            job.summary = line[6:]
     proc.wait()
     if proc.returncode:
         raise RuntimeError("build.sh: " + "\n".join(log[-12:]))
@@ -637,8 +919,16 @@ def build(A, job):
         fast_done(A, vid)
     outs = sorted(glob.glob(os.path.join(pd, "out", "*.mp4")), key=os.path.getmtime)
     main = [o for o in outs if not o.endswith("_NO_VO.mp4")]
-    job.result = {"file": (main or outs)[-1] if outs else "", "report": rep}
-    job.summary = f"готово: {os.path.basename(job.result['file'])} · {rep['len']:.1f} с"
+    lines, chk = project_check(A, vid)                       # S22: сценарий новее сцен + промахи WT() (их записал рендер кадров)
+    job.result = {"file": (main or outs)[-1] if outs else "", "report": rep, "check": chk}
+    job.summary = f"готово: {os.path.basename(job.result['file'])} · {rep['len']:.1f} с" + (f" · ⚠ проверка: {len(lines)}" if lines else "")
+    if lines:
+        try:
+            import notify_api
+            notify_api.add("error", f"Сборка: {len(chk['wt'])} ❌ привязок, {len(chk['drift'])} ⚠ сценарий новее сцен", "\n".join(lines[:6]), vid, None, None, "⚠",
+                           dedup=f"check:{vid}:{hash(tuple(lines))}")
+        except Exception:
+            pass
 
 
 def run_job(A, job):
@@ -685,12 +975,20 @@ def audiomap(A, vid):
     for s in scenes(A, vid, plan):
         doc = _scene_doc(A, vid, s["el"]) or {}
         lst = []
+        own = None                                              # S13: сцена монтажа — править можно только звуки её оверлея (звуки локации — в локации)
+        if s.get("location"):
+            try:
+                own = {x.get("id") for x in json.load(open(os.path.join(P.render(vid), s["el"], "overlay.json"), encoding="utf-8")).get("sounds") or []}
+            except (OSError, ValueError):
+                own = set()
         for x in doc.get("sounds") or []:
             sr = x.get("src") or ""
             key = f"{s['el']}|{sr}" if sr.startswith("file:") else sr
             if key not in srcs:
                 srcs[key] = _src_urls(A, vid, sr, plan, s["el"] if sr.startswith("file:") else None)
-            lst.append({"t": float(x.get("t") or 0), "src": key, "gain": float(x.get("gain") if x.get("gain") is not None else 1), "align": x.get("align") or ""})
+            lst.append({"id": x.get("id"), "t": float(x.get("t") or 0), "src": key, "raw": sr, "gain": float(x.get("gain") if x.get("gain") is not None else 1), "align": x.get("align") or "",
+                        "note": x.get("note") or "", "by": x.get("by") or "", **({"loc": True} if own is not None and x.get("id") not in own else {}),
+                        **{k: x[k] for k in CLIP_KEYS + ("track",) if k in x}})
         scenes_[s["el"]] = lst
     for sr in want:
         if sr not in srcs:
@@ -831,7 +1129,7 @@ def handle_post(A, h, p, body):
             raise ValueError("нет проекта ролика")
         t0 = time.time()
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-        r = subprocess.run([_bash(), "build.sh", "audio"], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+        r = subprocess.run([_bash(), "build.sh", "audio"], cwd=pd, env=bash_env(env), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.returncode != 0 or not os.path.isfile(os.path.join(pd, "build", "mix.wav")):
             raise ValueError("звук не свёлся: " + (r.stdout + r.stderr)[-400:])
@@ -841,14 +1139,112 @@ def handle_post(A, h, p, body):
         A.apply_ops("plan:" + body["video"], [{"op": "set", "path": ["montage"], "value": M}])
         generate(A, body["video"])
         h._json({"montage": M, "report": rep}); return True
+    if p == "/api/montage/guard":                            # S21 🛡 сторож (без Claude): итог — в video.json guard, засечки на таймлайне
+        text, G = guard(A, body["video"], body.get("args") or [])
+        g = A.load("plan:" + body["video"]).get("guard") or {}                # n — открытые (без «✓ так задумано»)
+        h._json({"ok": G is not None, "text": text, "n": g.get("n", 0), "bad": g.get("bad", 0), "note": (G or {}).get("note") or ""}); return True
     if p == "/api/montage/build":
         j = A.start_job("montagebuild", "plan:" + body["video"], "montage", {})
         h._json({"job": j.info()}); return True
     return False
 
 
+def guard_bad(x):
+    """серьёзная находка: персонаж застрял, рывок, мерцание (z-fighting, моргание объекта, мерцание по mp4 — 2+ вспышки)"""
+    return x.get("type") in ("pop", "zfight", "blink") or (x.get("type") == "flicker" and (x.get("n") or 1) > 1) or bool(x.get("char"))
+
+
+def guard(A, vid, args=(), save=True):
+    """S21 «Сторож монтажа» (docs/studio/stage21-guard.md): stands/guard.js в папке проекта — 3D-объекты не входят друг в друга и не пропадают рывком.
+    args: --scenes 3,5 | --from a --to b | --fps 10 | --no-shots | --no-fix (не раздвигать самому) | --no-video (без проверки мерцания по mp4). Итог -> video.json guard {at, n, bad, issues[], sheet} (засечки на таймлайне). -> (текст, json)."""
+    pd = vdir(vid)
+    if not pd or not has_project(vid):
+        return "у видео нет проекта ролика — studio.py produce " + vid, None
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", REVIEW_PORT=str(A.stapi().project_port(pd)))
+    try:
+        r = subprocess.run(["node", os.path.join(P.STUDIO, "stands", "guard.js"), *args], cwd=pd, env=env, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=900, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        text = (r.stdout + ("\n" + r.stderr if r.returncode else "")).strip()
+    except subprocess.TimeoutExpired:
+        return "сторож не уложился в 15 минут", None
+    try:
+        G = json.load(open(os.path.join(pd, "build", "guard.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return text or "сторож не отработал", None
+    # «Авто + отчёт»: сцены монтажа из данных — пересечения раздвигаются операцией сцены (не анимированный объект, по полу; ручное автора — нет),
+    # потом монтаж пересобирается и сторож проходит ещё раз. Быстрый монтаж (код) — только отчёт: чинит писатель.
+    fixes = [x["fix"] for x in G.get("issues") or [] if x.get("fix")]
+    if fixes and "--no-fix" not in args and not A.load("plan:" + vid).get("fast"):
+        done, skip = [], []
+        for f in fixes:
+            try:
+                r = A.scapi().apply(A, "plan:" + vid, f["el"], [{"op": "set", "path": ["objects", f["id"], "pos"], "value": f["pos"]}],
+                                    by="claude", desc=f"🛡 сторож: «{f['name']}» отодвинут на {round(f['by'] * 100)} см — застревал")
+                (done if r.get("ops") else skip).append(f"«{f['name']}» на {round(f['by'] * 100)} см" if r.get("ops") else f"«{f['name']}»: без изменений")
+            except Exception as e:
+                skip.append(f"«{f['name']}»: {str(e)[:120]}")
+        if done:
+            try:
+                generate(A, vid)
+            except Exception as e:
+                skip.append(f"montage gen: {str(e)[:120]}")
+            text2, G2 = guard(A, vid, [a for a in args if a != "--fix"] + ["--no-fix"], save)
+            return (f"🔧 поправил сам (сдвиг по полу): {', '.join(done)}" + (f"\nне тронул: {'; '.join(skip)}" if skip else "") +
+                    "\nПовторная проверка:\n" + text2), G2
+        if skip:
+            text += "\nавтоисправление не вышло: " + "; ".join(skip)
+    partial = any(a in args for a in ("--scenes", "--from", "--to"))
+    # S21.2 мерцание по ГОТОВОМУ ролику (пиксели: видит и 2D, и 3D, и эффекты) — stands/flicker.py
+    mp4 = fast_out(pd)
+    if mp4 and not partial and "--no-video" not in args:
+        fj = os.path.join(pd, "build", "flicker.json")
+        try:
+            r = subprocess.run([sys.executable, os.path.join(P.STUDIO, "stands", "flicker.py"), mp4, "--json", fj, "--sheet", os.path.join(pd, "build", "flicker.png")],
+                               cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            stale = os.path.getmtime(mp4) < fast_src_mtime(pd)
+            text += "\n" + (r.stdout.strip() or r.stderr.strip()[-400:]) + ("\n⚠ ролик собран до последних правок кода — мерцание проверено по старой сборке; пересоберите и проверьте снова" if stale else "")
+            FL = json.load(open(fj, encoding="utf-8"))
+            Bs = G.get("B") or [0]
+            for x in FL.get("issues") or []:
+                k = max([i for i, b in enumerate(Bs) if b <= x["t0"]] or [0])
+                x.update({"k": k, "scene": (G.get("names") or [""] * (k + 1))[k] if k < len(G.get("names") or []) else "", "a": x["where"], "stale": stale})
+                G.setdefault("issues", []).append(x)
+            G["sheet2"] = FL.get("sheet")
+        except Exception as e:
+            text += f"\nмерцание по mp4 не проверилось: {str(e)[:200]}"
+    elif not mp4 and not partial:
+        text += "\nмерцание по mp4: ролик ещё не собран — проверю после сборки"
+    if save and not partial:   # частичный прогон не затирает общий итог
+        keep = ("type", "k", "scene", "a", "b", "t", "t0", "t1", "lt", "lt0", "lt1", "depth", "dir", "area", "dist", "char", "shot", "tShot",
+                "n", "len", "where", "x", "y", "box", "share", "parts", "stale")
+        iss = [{k: x[k] for k in keep if k in x} for x in G.get("issues") or []]
+        # находки — правки (вкладка «Правки», «Исправить все»): постоянный id (что, кто, сцена) — «✓ так задумано» (status ok) переживает новые прогоны
+        import hashlib
+        was = {x.get("id"): x.get("status") for x in ((A.load("plan:" + vid).get("guard") or {}).get("issues") or []) if x.get("id")}
+        seen = set()
+        for x in iss:
+            ks = ("type", "where", "k") if x.get("type") == "flicker" else ("type", "a", "b", "k", "dir")       # мерцание — место и сцена (время плавает после правок)
+            base = "g" + hashlib.md5("|".join(str(x.get(k, "")) for k in ks).encode("utf-8")).hexdigest()[:8]
+            i, n = base, 2
+            while i in seen:
+                i, n = f"{base}{n}", n + 1
+            seen.add(i)
+            x["id"] = i
+            if was.get(i) == "ok":
+                x["status"] = "ok"
+        live = [x for x in iss if x.get("status") != "ok"]
+        sheet = G.get("sheet") and os.path.join(pd, G["sheet"]).replace("\\", "/")
+        A.apply_ops("plan:" + vid, [{"op": "set", "path": ["guard"], "value": {
+            "at": int(time.time()), "n": len(live), "bad": sum(1 for x in live if guard_bad(x)), "issues": iss[:100], "sheet": sheet,
+            "sheet2": G.get("sheet2") and os.path.join(pd, G["sheet2"]).replace("\\", "/"),
+            "info": G.get("info") or {}, "note": G.get("note") or ""}}])
+    return text, G
+
+
 def cli(A, argv):
-    """montage show <видео> | gen <видео> | build <видео>"""
+    """montage show <видео> | gen <видео> | build <видео> | pp <видео> (быстрый ролик: препродакшен заново в код) | guard <видео> [--scenes 3,5] (сторож: застревания и рывки в 3D)
+    | tracks <видео> (S23: дорожки звука и плашки) | clip <видео> add '<json>' | set <id> '<json>' | del <id> [--force] (S23: плашка звука; 🔒 автора — только с --force)"""
     if len(argv) < 2:
         print(cli.__doc__); return True
     cmd, vid = argv[0], argv[1]
@@ -856,7 +1252,12 @@ def cli(A, argv):
         g = get(A, vid)
         M, vo = g["montage"], g["voice"] or {}
         print(f"Проект: {g['folder']} ({'есть' if g['project'] else 'нет — studio.py produce'}) · монтаж {'сохранён' if g['saved'] else 'по умолчанию'} · длина {M.get('len')} с")
-        print("Монтаж:", json.dumps({k: M.get(k) for k in ("units", "voice", "captions", "sfx", "music", "overlays", "len")}, ensure_ascii=False))
+        print("Монтаж:", json.dumps({k: M.get(k) for k in ("units", "voice", "captions", "sfx", "music", "overlays", "len", "tracks", "duck") if k in M or k not in ("tracks", "duck")}, ensure_ascii=False))
+        print("Дорожки звука (S23): " + "; ".join(f"{t['id']} «{t.get('name')}» {t['kind']}" + (f" {t.get('gain')} dB" if t.get("gain") else "") + (" M" if t.get("mute") else "")
+                                                 for t in tracks(M)) + " · у плашки: track, at, src, gain (множитель), in, out, dur, loop {a, xf}, fadeIn, fadeOut, align, note")
+        mine = [f"{x.get('id')} «{x.get('note') or x.get('src')}»" for lst in ("sfx", "music") for x in M.get(lst) or [] if x.get("by") == "author"]
+        if mine:
+            print("🔒 Поставил / поправил автор (не меняй и не удаляй без его «да» — [[выбор: Меняй | Не трогай]], потом --force): " + ", ".join(mine))
         for s in g["scenes"]:
             print(f"Сцена EL={s['el']} «{s['name']}» {s['len']} с" + (f" · 📝 сцена сценария «{s['script']}»" if s.get("script") else "")
                   + f" · склейки {s['cuts']} · маркеры {[(m['t'], m['name']) for m in s['markers']]} · звуков {s['sounds']}")
@@ -869,6 +1270,53 @@ def cli(A, argv):
             print("Слова (номер:слово@время): " + " ".join(f"{w['i']}:{w['w']}@{w['t']}" for w in W))
         print("Звуки препродакшена:", "; ".join(f"{s['src']} «{s['name']}» {s['dur']} с" for s in g["sources"]) or "—")
         print("Собранный ролик:", (g["out"] or ["ещё нет"])[0])
+        return True
+    if cmd == "tracks":                                      # S23: дорожки и плашки звука коротко
+        M = (A.load("plan:" + vid).get("montage") or {})
+        for t in tracks(M):
+            items = [x for lst in ("sfx", "music") for x in M.get(lst) or [] if track_of(tracks(M), x.get("track"), "music" if lst == "music" else "sfx")["id"] == t["id"]]
+            print(f"{t['id']} «{t.get('name')}» {t['kind']} {t.get('gain') or 0} dB{' · заглушена' if t.get('mute') else ''}: "
+                  + ("; ".join(f"{x['id']}{'🔒' if x.get('by') == 'author' else ''} {x.get('at')} с {x.get('src')}" + (f" dur {x['dur']}" if x.get("dur") else "") + (" ↻" if x.get("loop") else "") for x in items) or "—"))
+        print("приглушение под голос:", json.dumps(dict(DUCK, **(M.get("duck") or {})), ensure_ascii=False))
+        return True
+    if cmd == "clip":                                        # S23: montage clip <видео> add '<json>' | set <id> '<json>' | del <id> [--force]
+        key, M = "plan:" + vid, (A.load("plan:" + vid).get("montage") or {})
+        if not M:
+            print("монтажа ещё нет"); return True
+        import copy as _cp
+        N, act = _cp.deepcopy(M), argv[2] if len(argv) > 2 else ""
+        if act == "add":
+            it = json.loads(argv[3])
+            lst = "music" if (it.pop("kind", "") == "music" or track_of(tracks(M), it.get("track"), "music")["id"] == it.get("track")) else "sfx"
+            it.setdefault("id", A.new_id("x"))
+            N.setdefault(lst, []).append(it)
+        elif act in ("set", "del"):
+            cid = argv[3]
+            lst = next((l for l in ("sfx", "music") if any(x.get("id") == cid for x in N.get(l) or [])), None)
+            if not lst:
+                print(f"нет плашки {cid} (звуки сцен правятся scene ops <видео> <сцена>)"); return True
+            if act == "del":
+                N[lst] = [x for x in N[lst] if x.get("id") != cid]
+            else:
+                x = next(x for x in N[lst] if x.get("id") == cid)
+                for k, v in json.loads(argv[4]).items():
+                    if v is None:
+                        x.pop(k, None)
+                    else:
+                        x[k] = v
+        else:
+            print(cli.__doc__); return True
+        bad = author_changes(M, N)
+        if bad and "--force" not in argv:
+            print("⛔ Это автор поставил или поправил руками (🔒): " + "; ".join(bad) + ". Спроси [[выбор: Меняй | Не трогай]], после «Меняй» — тот же вызов с --force."); return True
+        A.apply_ops(key, [{"op": "set", "path": ["montage"], "value": N}])
+        print("ок:", act, "— montage gen, чтобы услышать в проекте")
+        return True
+    if cmd == "pp":                                          # быстрый ролик: препродакшен видео заново в код проекта (src/montage.js: PP_ALL, ppAdd, PP2D, звуки) — после lib import / нового элемента
+        if not has_project(vid):
+            print("у видео нет проекта ролика"); return True
+        text, n = A.fsapi().pack_preprod(A, vid)
+        print(f"препродакшен в проекте обновлён: {n} строк\n{text}")
         return True
     if cmd in ("tts", "check", "snap"):                      # S7: голос, проверка сценария, кадры ролика — в папке проекта
         pd = vdir(vid)
@@ -886,6 +1334,11 @@ def cli(A, argv):
             print(out.replace("\\", "/") if os.path.isfile(out) else "кадры не снялись", *err[:5], sep="\n")
             return True
         script = "tts.py" if cmd == "tts" else "check_script.py"
+        if cmd == "check":                                   # S16: свежая карта подачи для сверки сценария с ней
+            try:
+                A.rbapi().export(A, vid)
+            except Exception as e:
+                print("! карта подачи:", e)
         if cmd == "tts":                                     # S11: голос — запись диктора: нейросеть её не затирает (переозвучить — на этапе «Голос»)
             try:
                 if json.load(open(os.path.join(pd, "build", "vo", "source.json"), encoding="utf-8")).get("kind") == "rec":
@@ -906,8 +1359,30 @@ def cli(A, argv):
         else:
             print(json.dumps(M, ensure_ascii=False))
         return True
+    if cmd == "guard":                                       # S21 сторож монтажа: застревания и рывки в 3D (без картинок) -> build/guard.json + лист кадров
+        text, _ = guard(A, vid, argv[2:])
+        print(text); return True
     if cmd == "gen":
         print(json.dumps(generate(A, vid), ensure_ascii=False, indent=1)); return True
+    if cmd in ("needs", "verify", "continuity"):            # S22: чек-лист «🎬 для финала» / проверка по кадрам (Sonnet) / таблица преемственности
+        import needs_api
+        print(needs_api.needs_text(A, vid) if cmd == "needs" else needs_api.verify(A, vid) if cmd == "verify"
+              else needs_api.continuity_text(A, vid, "--rebuild" in argv)); return True
+    if cmd == "shift":                                       # S22: montage shift VID FROM DELTA [--only units,sfx,music,overlays] — всё после FROM на DELTA одной командой
+        frm, delta = float(argv[2]), float(argv[3])
+        only = (A._opt(argv, "--only", "") or "").split(",") if A._opt(argv, "--only") else None
+        key = "plan:" + vid
+        M, n = shift(A.load(key).get("montage") or {}, frm, delta, [x for x in only or [] if x] or None)
+        run = A.agapi().current_run()
+        if run:                                              # «↺ отменить» в чате вернёт монтаж целиком
+            A._journal_set(run, key, ["montage"], f"сдвиг монтажа с {frm} с на {delta:+} с")
+        A.apply_ops(key, [{"op": "set", "path": ["montage"], "value": M}])
+        print(f"сдвинуто с {frm} с на {delta:+} с: " + (", ".join(f"{k} {v}" for k, v in n.items()) or "ничего") + f"; длина ролика {M.get('len')} с"); return True
+    if cmd == "drift":                                       # S22: сценарий новее сцен + привязки WT(), которые не нашлись (render.js check)
+        if not has_project(vid):
+            print("у видео нет проекта ролика"); return True
+        lines, _ = project_check(A, vid, run_wt=True)
+        print("\n".join(lines) or "✓ сцены совпадают со сценарием, все привязки к словам нашлись"); return True
     if cmd == "build":
         class J:
             key, params, summary, result, proc, cancelled, meta = "plan:" + vid, {}, "", None, None, False, {}

@@ -2,7 +2,7 @@
 'use strict';
 
 const App = {
-  info: {}, plans: [], planSig: null, route: route(),
+  info: {}, plans: [], planSig: null, route: route(), scrolls: new Map(), lastHash: null,
 
   async boot() {
     AgentPanel.init();                                 // 💬 панель агента справа (S7)
@@ -40,6 +40,9 @@ const App = {
   },
 
   async navigate() {
+    // прокрутка каждой страницы запоминается по адресу: вернулся в список препродакшена из элемента — стоишь там же, где заходил
+    if (this.lastHash != null) { this.scrolls.set(this.lastHash, ScrollKeep.save($('#main'))); if (this.scrolls.size > 60) this.scrolls.delete(this.scrolls.keys().next().value); }
+    this.lastHash = location.hash;
     this.route = route();
     const r = this.route;
     Shell.remember(r);                                 // «Редактор» в боковой панели — последнее открытое видео
@@ -53,6 +56,8 @@ const App = {
       UI.toast(e.message, 'err');
     }
     this.render({ top: true });
+    const back = this.scrolls.get(location.hash);
+    if (back) ScrollKeep.restore($('#main'), back);
     StageEditor.follow(r);
     MontagePreview.follow(r);                          // 🎞 предпросмотр монтажа — своё окно поверх страницы (S6)
     AgentPanel.follow(r);
@@ -63,26 +68,37 @@ const App = {
     if (!App.plans.some(p => p.id === r.id)) return '#/lib';          // служебное видео (мастерская) — их больше нет в интерфейсе
     const tab = { idea: 'brief', qa: 'brief', title: 'brief', ideas: 'brief', beats: 'brief', images: 'brief', structure: 'brief',
       voice: 'voice', pack: 'pack', results: 'pack', pre: 'pre', scenes: 'pre' }[r.tab] || '';
-    if (r.tab === 'script') setTimeout(() => { const d = Store.get('plan:' + r.id); if (d && window.ScriptWin) ScriptWin.open(d); }, 600);
+    if (r.tab === 'script') setTimeout(() => { const d = Store.get('plan:' + r.id); if (d && typeof ScriptWin !== 'undefined') ScriptWin.open(d); }, 600);
     if (r.tab === 'thumbs') return '#/thumbs/' + r.id;
     return `#/v/${r.id}` + (tab ? '/' + tab : '') + (tab === 'pre' && r.sub ? '/' + r.sub + (r.sub2 ? '/' + r.sub2 : '') : '');
   },
 
   banner(msg) { const b = $('#banner'); b.textContent = msg; b.classList.toggle('show', !!msg); },
 
+  resume() {
+    if (typeof Workspace !== 'undefined' && Workspace.holding()) return;
+    if (this.deferred) this.render();
+    else if (typeof Montage !== 'undefined' && Montage.redrawPending) Montage.redraw();
+  },
   render(opts = {}) {
+    // окно видео: пока открыта карточка правки или тянется правка на таймлайне — не перестраиваем страницу (опрос раз в 2 с, работа Claude),
+    // иначе таймлайн мигает и перетаскивание слетает; отложенное догоняет App.resume() после действия
+    if (!opts.top && !opts.force && this.route.page === 'v' && typeof Workspace !== 'undefined' && Workspace.holding && Workspace.holding()) { this.deferred = true; return; }
+    this.deferred = false;
     if (this.route.page === 'v' && !document.hidden) Unread.seen(this.route.id, this.route.tab || 'montage');
     const a = document.activeElement, fk = a && a.dataset ? a.dataset.key : null;
     const range = fk && typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd] : null;
-    const main = $('#main'), top = main.scrollTop;
+    const main = $('#main');
     const playing = $$('audio').filter(x => !x.paused).map(x => [x.getAttribute('src'), x.currentTime]);   // a re-render must not cut a sound you listen to
     let page;
     try { page = this.page(); } catch (e) { console.error(e); page = h('div.card.empty', '⚠ Ошибка отрисовки: ' + e.message); }
-    $('#view').replaceChildren(page);
-    $('#side').replaceChildren(...[Shell.side()].flat(Infinity).filter(x => x instanceof Node));   // S12: новая боковая панель (ui/shell.js)
+    // keepScroll: прокрутка #main И внутренних панелей (бриф, препродакшен, списки, поля) переживает перерисовку — раньше прыгала наверх
+    if (opts.top) $('#view').replaceChildren(page); else keepScroll(main, () => $('#view').replaceChildren(page));   // переход — с начала новой страницы
+    keepScroll($('#side'), () => $('#side').replaceChildren(...[Shell.side()].flat(Infinity).filter(x => x instanceof Node)));   // S12: новая боковая панель (ui/shell.js)
     NewVideo.refresh();                               // поп-ап «Новое видео» (шаг 2: вопросы Claude) — до восстановления фокуса
+    if (typeof ScriptWin !== 'undefined') ScriptWin.refresh();        // S16: окно «Сценарий» — вкладка «📐 Карта подачи» (задача Claude закончилась)
     this.shown = this.shownSig();
-    main.scrollTop = opts.top ? 0 : top;
+    if (opts.top) main.scrollTop = 0;
     if (fk) {
       const e = document.querySelector(`[data-key="${CSS.escape(fk)}"]`);
       if (e && e !== document.activeElement) { e.focus({ preventScroll: true }); if (range && e.setSelectionRange) try { e.setSelectionRange(range[0], range[1]); } catch {} }

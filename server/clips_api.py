@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 
 import paths as P
@@ -41,7 +42,7 @@ def _file(p):
 
 def _engine_sig(A):
     fs = [os.path.join(P.ENGINE, f) for f in ("scene.js", "stage3d.js", "lib.js", "props3d.js", "rig.js", "moves3d.js")] + [os.path.join(P.TPL_SRC, "main.js")]
-    return [round(os.path.getmtime(f)) for f in fs if os.path.isfile(f)]
+    return [hashlib.sha1(open(f, "rb").read()).hexdigest()[:12] for f in fs if os.path.isfile(f)]   # по содержимому: перезапись тем же текстом клипы не старит
 
 
 def fps_of(plan):
@@ -61,7 +62,8 @@ def segments(A, vid):
     words = vo.get("words") or [] if (M.get("voice") or {}).get("on") else []
     total = max(float(M.get("len") or 0), max(float(u.get("at") or 0) + float(u.get("len") or 0) for u in units), float(vo.get("total") or 0) if words else 0)
     N = math.ceil(total * fps)
-    glob_sig = _h(M.get("overlays") or [], (M.get("captions") or {}).get("on", True), plan.get("mode"), fps, _engine_sig(A))
+    glob_sig = _h((M.get("captions") or {}).get("on", True), plan.get("mode"), fps, _engine_sig(A))   # надписи монтажа — у клипа только свои (ниже)
+    ovs = M.get("overlays") or []
     starts = []
     for u in units:
         a = max(0, min(N, round(float(u.get("at") or 0) * fps)))
@@ -89,7 +91,8 @@ def segments(A, vid):
         if u and (u.get("trans") or {}).get("type", "cut") != "cut":
             k = units.index(u)
             prev = scene_sig(units[k - 1]["scene"]) if k > 0 else None
-        key = _h(glob_sig, u or "gap", scene_sig(u["scene"]) if u else "", prev, w, a, b)
+        ov = [o for o in ovs if float(o.get("at") or 0) < t1 + 0.5 and float(o.get("at") or 0) + float(o.get("dur") or 0) > t0 - 0.5]   # правка плашки старит только свой клип
+        key = _h(glob_sig, u or "gap", scene_sig(u["scene"]) if u else "", prev, w, a, b, ov)
         out.append({"i": len(out), "a": a, "b": b, "t0": round(t0, 3), "t1": round(t1, 3), "unit": (u or {}).get("id"), "scene": (u or {}).get("scene"),
                     "key": key, "fresh": os.path.isfile(os.path.join(cdir(pd), key + ".mp4")) and key in done})
     return out, fps
@@ -116,8 +119,20 @@ def fast_state(A, vid):
     job = next((j.info() for j in A.JOBS.values() if j.kind in ("fastmontage", "montagebuild") and j.key == "plan:" + vid and j.status in ("running", "queued")), None)
     agent = A.agapi().SESS.get(vid)
     busy = bool(agent and agent.busy and agent.alive())
+    parts, pstamp = [], 0                                     # сцены, уже написанные писателями (src/scenes/sNN.js): пока ролика нет — превью играет их вживую
+    sd = os.path.join(pd, "src", "scenes") if pd else ""
+    if sd and os.path.isdir(sd):
+        for f in sorted(os.listdir(sd)):
+            m = re.match(r"s(\d+)\.js$", f)
+            if m:
+                parts.append(int(m.group(1)))
+                pstamp = max(pstamp, int(os.path.getmtime(os.path.join(sd, f)) * 1000))
+        try:
+            pstamp = max(pstamp, int(os.path.getmtime(os.path.join(pd, "src", "scenes.js")) * 1000))
+        except OSError:
+            pass
     return {"segments": [], "fps": 30, "stale": [] if fresh else ["all"], "playback": bool(out), "playbackFresh": fresh, "fast": True,
-            "stamp": int(os.path.getmtime(out) * 1000) if out else 0, "job": job, "agent": busy}
+            "stamp": int(os.path.getmtime(out) * 1000) if out else 0, "job": job, "agent": busy, "parts": parts, "partsStamp": pstamp}
 
 
 def state(A, vid):
@@ -134,7 +149,7 @@ def state(A, vid):
 
 
 def _bash_env(A, pd):
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    env = P.tool_env(dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))   # S22: урезанный PATH окна-приложения
     env["REVIEW_PORT"] = str(A.stapi().project_port(pd))
     return env
 
@@ -172,8 +187,10 @@ def render(A, job, export=False):
             if m:
                 job.meta = {"done": int(m.group(1)), "total": int(m.group(2))}
                 job.summary = f"рендер клипов: {len(todo)} из {len(segs)} · кадры {m.group(1)} из {m.group(2)}"
+            if line.startswith("[gpu]"):                       # S22: ждёт замок видеокарты
+                job.summary = f"рендер клипов: {line[6:].strip()}"
             if job.cancelled:
-                proc.kill()
+                P.kill_tree(proc)                              # S22: с render.js и Chrome под ним
         proc.wait()
         if job.cancelled:
             raise RuntimeError("отменено")
@@ -210,8 +227,8 @@ def export_av(A, vid, pb):
     """Экспорт: склейка клипов + звук (render.js sfx -> audio.py -> build/mix.wav) -> out/<папка>.mp4 и _NO_VO. Без рендера кадров."""
     pd = P.video(vid)
     env = _bash_env(A, pd)
-    subprocess.run(["node", "render.js", "sfx"], cwd=pd, env=env, check=True, capture_output=True, creationflags=CF)
-    subprocess.run(["python", "audio.py"], cwd=pd, env=env, check=True, capture_output=True, creationflags=CF)
+    # S22: звук — render.js audio (список звуков и сведение только при изменённых входах; render.js проекта обновляет generate перед клипами)
+    subprocess.run(["node", "render.js", "audio"], cwd=pd, env=dict(env, PYTHON=sys.executable), check=True, capture_output=True, creationflags=CF)
     os.makedirs(os.path.join(pd, "out"), exist_ok=True)
     name = os.path.basename(pd).replace(" ", "_")
     out = os.path.join(pd, "out", name + ".mp4")
@@ -246,6 +263,13 @@ def handle_post(A, h, p, body):
                     raise RuntimeError("Claude ещё пишет ролик — соберу, когда закончит")
                 if not A.mnapi().fast_out(P.video(vid) or "") and not body.get("force"):   # первый раз ролик собирает сам Claude (montage build)
                     raise RuntimeError("ролика ещё нет — его соберёт Claude")
+                if body.get("auto"):                              # превью само просит пересборку: упала — не долбить по кругу, пока код ролика не поменяется
+                    last = max((j for j in A.JOBS.values() if j.kind == "montagebuild" and j.key == "plan:" + vid), key=lambda j: j.started, default=None)
+                    if last and last.status == "error":
+                        src = os.path.join(P.video(vid) or "", "src")
+                        newest = max((os.path.getmtime(os.path.join(r, f)) for r, _, fs in os.walk(src) for f in fs), default=0) if os.path.isdir(src) else 0
+                        if newest <= (last.finished or last.started):
+                            raise RuntimeError("прошлая сборка не вышла — жду правки кода или «Пересобрать»: " + (last.error or "")[:200])
                 j = A.start_job("montagebuild", "plan:" + vid, "montage", {})
                 h._json({"job": j.info()}); return True
             j = A.start_job("clips", "plan:" + vid, "clips", {})

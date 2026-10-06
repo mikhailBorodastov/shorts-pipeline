@@ -226,6 +226,65 @@ def fade_out(y):
     return y
 
 
+# ---------------- S23: плашка звука монтажа (Claude Studio) ----------------
+# clip = {in, out, dur, loop: {a, xf} | null, fadeIn, fadeOut} (секунды файла / ролика). Тот же расчёт — MSnd.pieces в web/audio_tl.js (живой звук окна).
+def clip_pieces(clip, src_len):
+    """-> [(t на плашке, с какой секунды файла, длина, xf входа, xf выхода)] — куски файла по порядку; цикл — повторы [a, out) со швом xf."""
+    inn = max(0.0, float(clip.get("in") or 0))
+    out = clip.get("out")
+    out = min(src_len, float(out)) if out not in (None, "") else src_len
+    out = max(out, inn + 0.02)
+    seg = out - inn
+    dur = clip.get("dur")
+    dur = float(dur) if dur not in (None, "") else seg
+    lp = clip.get("loop")
+    if not lp or dur <= seg + 1e-3:
+        return [(0.0, inn, min(dur, seg), 0.0, 0.0)]
+    a = min(max(float(lp.get("a") if lp.get("a") is not None else inn), 0.0), out - 0.05)
+    body = out - a
+    xf = min(max(float(lp.get("xf") or 0), 0.0), body * 0.45, seg * 0.45)
+    P_, t = [(0.0, inn, seg, 0.0, xf)], seg - xf
+    while t < dur - 1e-3 and len(P_) < 2000:
+        ln = min(body, dur - t)
+        P_.append((t, a, ln, xf, xf if t + ln < dur - 1e-3 else 0.0))
+        t += body - xf
+    return P_
+
+
+def render_clip(y, clip, sfx=True):
+    """y (весь файл) -> звук плашки: срез in/out, цикл со швом (равномощный кроссфейд), фейды плашки. fadeOut = None у звука — авто-затухание (FADE)."""
+    L = len(y) / SR
+    P_ = clip_pieces(clip, L)
+    total = max(p[0] + p[2] for p in P_)
+    out = np.zeros(int(total * SR) + 2)
+    for t, off, ln, xi, xo in P_:
+        a = int(off * SR); seg = y[a:a + int(ln * SR)].copy()
+        if not len(seg):
+            continue
+        if xi > 0:
+            n = min(len(seg), int(xi * SR)); seg[:n] *= np.sin(np.linspace(0, np.pi / 2, n))
+        if xo > 0:
+            n = min(len(seg), int(xo * SR)); seg[len(seg) - n:] *= np.cos(np.linspace(0, np.pi / 2, n))
+        s = int(t * SR); out[s:s + len(seg)] += seg[:len(out) - s]
+    out = out[:int(total * SR)]
+    fi = float(clip.get("fadeIn") or 0)
+    if fi > 0:
+        n = min(len(out), int(fi * SR)); out[:n] *= np.linspace(0, 1, n)
+    fo = clip.get("fadeOut")
+    if fo is None and sfx:
+        out = fade_out(out)
+    elif fo:
+        n = min(len(out), int(float(fo) * SR)); out[len(out) - n:] *= np.linspace(1, 0, n)
+    return out
+
+
+def _clip_peak(y, pk, clip):
+    """Пик плашки от её начала (для align: 'peak'): пик файла минус in, если пик попал в играемый кусок."""
+    inn = float((clip or {}).get("in") or 0)
+    p = (pk if pk is not None else float(np.argmax(np.abs(y))) / SR) - inn
+    return p if p >= 0 else 0.0
+
+
 def build_sfx():
     out = np.zeros(N)
     try:
@@ -249,6 +308,15 @@ def build_sfx():
             y = np.frombuffer(raw, dtype=np.float32).astype(float)
             if not len(y): print("  ! нет файла:", path); continue
             y = y / max(1e-9, np.abs(y).max()) * 0.9
+            if e.get("clip"):                    # S23: плашка монтажа — срез, цикл, фейды
+                cl = e["clip"]
+                start = t - (_clip_peak(y, None, cl) if e.get("align") == "peak" else 0)
+                y = render_clip(y, cl, not cl.get("music"))
+                if start < 0:
+                    y = y[int(-start * SR):]; start = 0
+                put(out, start, y * gain)
+                resolved.append({**rec, "src": typ, "start": round(start, 3), "dur": round(len(y) / SR, 3), "play_gain": round(gain, 3), "preview": "/" + path})
+                continue
             start = t - (np.argmax(np.abs(y)) / SR if e.get("align") == "peak" else 0)
             put(out, max(0, start), y * gain)
             resolved.append({**rec, "src": typ, "start": round(start, 3), "dur": round(len(y) / SR, 3), "play_gain": round(gain, 3), "preview": "/" + path})
@@ -266,6 +334,16 @@ def build_sfx():
             if y is not None and cut:
                 y = y[int(cut[0] * SR):int((cut[0] + cut[1]) * SR)].copy()
                 f = min(len(y), int(0.08 * SR)); y[len(y) - f:] *= np.linspace(1, 0, f)
+            if y is not None and e.get("clip"):    # S23: плашка монтажа (срез lib:id|с|длина уже взят — in/out считаются от него)
+                cl = e["clip"]
+                start = t - (_clip_peak(y, pk if not cut else None, cl) if e.get("align") == "peak" else 0)
+                y = render_clip(y, cl, not cl.get("music"))
+                if start < 0:
+                    y = y[int(-start * SR):]; start = 0
+                put(out, start, y * gain); used_lib += 1
+                resolved.append({**rec, "src": "lib:" + sid, "start": round(start, 3), "dur": round(len(y) / SR, 3),
+                                 "play_gain": round(gain, 3), "preview": "/sfxlib/" + sid + ".wav", "slice": list(cut) if cut else None})
+                continue
             if y is not None:
                 start = t + peak_at - pk if peak_at is not None else t
                 if start < 0:                         # peak-aligned sound that would start before 0: trim its head
@@ -307,10 +385,19 @@ def put(out, t, y):
 
 
 # ---------------- music ----------------
-def build_music_files(items):
-    """Музыка монтажа Claude Studio (S6): build/music.json = [{file, at, gain, from, dur, fadeIn, fadeOut}] — файлы на таймлайне ролика."""
-    out = np.zeros(N)
+def build_music_files(items, split=False):
+    """Музыка монтажа Claude Studio (S6): build/music.json = [{file, at, gain, from, dur, fadeIn, fadeOut}] — файлы на таймлайне ролика.
+    S23: у плашки clip {in, out, dur, loop, fadeIn, fadeOut} и duck (приглушать под голос); split=True -> (приглушаемая, остальная)."""
+    out, keep = np.zeros(N), np.zeros(N)
     for m in items:
+        if m.get("clip"):
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", m["file"], "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"], capture_output=True).stdout
+            y = np.frombuffer(raw, dtype=np.float32).astype(float)
+            if not len(y):
+                print("! музыка не прочиталась:", m["file"]); continue
+            y = render_clip(y, dict(m["clip"], music=True), sfx=False)
+            put(out if (m.get("duck", True) or not split) else keep, float(m.get("at") or 0), y * float(m.get("gain", 1)))
+            continue
         cmd = ["ffmpeg", "-v", "error"] + (["-ss", str(m["from"])] if m.get("from") else []) + (["-t", str(m["dur"])] if m.get("dur") else []) + \
               ["-i", m["file"], "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"]
         y = np.frombuffer(subprocess.run(cmd, capture_output=True).stdout, dtype=np.float32).astype(float)
@@ -320,8 +407,36 @@ def build_music_files(items):
         fi, fo = float(m.get("fadeIn") or 0), float(m.get("fadeOut") or 0)
         if fi: y *= np.minimum(1, t / fi)
         if fo: y *= np.minimum(1, np.maximum(0, (len(y) / SR - t) / fo))
-        put(out, float(m.get("at") or 0), y * float(m.get("gain", 1)))
-    return out
+        put(out if (m.get("duck", True) or not split) else keep, float(m.get("at") or 0), y * float(m.get("gain", 1)))
+    return (out, keep) if split else out
+
+
+# S23: build/mixcfg.json (монтаж Studio) — {voice: множитель голоса, duck: {on, depth dB, attack, release}}; нет файла — старое сведение
+def mixcfg():
+    try:
+        return json.load(open("build/mixcfg.json", encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def duck_words(depth=-10.0, attack=0.15, release=0.4, gap=0.35):
+    """Огибающая приглушения по словам голоса (vo_timing): внутри фраз — depth dB, паузы короче gap не отпускают. Тот же расчёт — MSnd.duckEnv в web/audio_tl.js."""
+    ws = sorted((s["start"] + w["t"], s["start"] + w["t"] + w.get("d", 0)) for s in VO["sections"] for w in s.get("words") or [])
+    runs = []
+    for a, b in ws:
+        if runs and a - runs[-1][1] < gap:
+            runs[-1][1] = max(runs[-1][1], b)
+        else:
+            runs.append([a, b])
+    low = 10 ** (float(depth) / 20)
+    env = np.ones(N)
+    t = np.arange(N) / SR
+    for a, b in runs:
+        i0, i1 = max(0, int((a - attack) * SR)), min(N, int((b + release) * SR) + 1)
+        tt = t[i0:i1]
+        k = np.minimum(np.clip((tt - (a - attack)) / max(attack, 1e-3), 0, 1), np.clip(((b + release) - tt) / max(release, 1e-3), 0, 1))
+        env[i0:i1] = np.minimum(env[i0:i1], 1 - (1 - low) * k)
+    return env
 
 
 def build_music():
@@ -419,6 +534,20 @@ def write(path, x):
 
 
 if __name__ == "__main__":
+    cfg = mixcfg() if os.path.isfile("build/music.json") else None
+    if cfg:                                                  # S23: монтаж Studio — дорожки, громкость голоса, приглушение по словам
+        md, mk = build_music_files(json.load(open("build/music.json", encoding="utf-8")), split=True); print("music ok")
+        sfx = build_sfx(); print("sfx ok")
+        vo = load_vo() * float(cfg.get("voice", 1)); print("vo ok")
+        talk = build_talk(); print("talk ok")
+        D = cfg.get("duck") or {}
+        env = duck_words(D.get("depth", -10), D.get("attack", 0.15), D.get("release", 0.4)) if D.get("on", True) else 1
+        music = md * env + mk
+        write("build/mix_no_vo.wav", music * 0.55 + sfx * 0.45 + talk * 0.5)
+        write("build/vo.wav", vo)
+        write("build/mix.wav", music * MUSIC["level"] + sfx * 0.4 + vo + talk * 0.8)
+        print("done")
+        sys.exit(0)
     music = build_music(); print("music ok")
     sfx = build_sfx(); print("sfx ok")
     vo = load_vo(); print("vo ok")

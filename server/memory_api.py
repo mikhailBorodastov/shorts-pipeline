@@ -34,10 +34,7 @@ def _read(p):
 
 def _write(p, rules):
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(rules, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+    P.write_atomic(p, json.dumps(rules, ensure_ascii=False, indent=1))
 
 
 def rules(ch=None):
@@ -81,7 +78,7 @@ def _norm(s):
     return " ".join((s or "").lower().split())
 
 
-def add(text, why="", scope="channel", status="on", by="author", video=None, ch=None):
+def add(text, why="", scope="channel", status="on", by="author", video=None, ch=None, frm=None):
     text = (text or "").strip()
     if not text:
         raise ValueError("пустое правило")
@@ -93,8 +90,7 @@ def add(text, why="", scope="channel", status="on", by="author", video=None, ch=
     R = _read(p)
     if any(_norm(x.get("text")) == _norm(text) for x in R):
         return {"ok": True, "dup": True}
-    frm = None
-    if video:
+    if video and not frm:
         try:
             v = json.load(open(P.video_json(video), encoding="utf-8"))
             frm = {"video": video, "name": v.get("name", "")}

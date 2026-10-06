@@ -452,10 +452,11 @@ async function loadSceneEnvs(scene, plan, el) {
 function rigSceneLayer(char, o, T, base, env) {
   let p = base || {};
   const FADE = 0.2;
-  let legsBusy = false;
+  let legsBusy = false, clipW = 0;
   for (const c of (o.clips || []).slice().sort((a, b) => a.t - b.t)) {
     const a = RIG.anims[c.anim]; if (!a) continue;
     const dur = c.dur || a.dur || 1; if (T < c.t || T > c.t + dur) continue;
+    clipW = Math.max(clipW, Math.max(0, Math.min(1, (T - c.t) / FADE, (c.t + dur - T) / FADE, 1)));
     const w = Math.max(0, Math.min(1, (T - c.t) / FADE, (c.t + dur - T) / FADE, 1));
     if (a.proc === 'gait') { p = rigBlend(p, rigGaitLayer(char, (T - c.t) * (c.speed || 1) * TAU), w); legsBusy = true; continue; }
     let lt = (T - c.t) * (c.speed || 1); lt = c.loop || a.loop ? lt % (a.dur || 1) : Math.min(lt, a.dur || dur);
@@ -463,8 +464,10 @@ function rigSceneLayer(char, o, T, base, env) {
     if (L.bones && (L.bones.legL || L.bones.legR)) legsBusy = true;
     p = rigBlend(p, L, w);
   }
+  let walkW = 0;
   if (o.walk !== 'off' && !legsBusy) {
     const { dist, speed } = rigPath(o, T), w = Math.max(0, Math.min(1, speed / 0.25));
+    walkW = w;
     if (w > 0.01) { const st = (RIG.anims[(o.walk && o.walk !== 'auto') ? o.walk : 'hog/walk'] || {}).stride || 0.32; p = rigBlend(p, rigGaitLayer(char, dist / st * Math.PI), w); }
   }
   // ключи позы: по каналам между ключами, у которых этот канал задан
@@ -502,6 +505,17 @@ function rigSceneLayer(char, o, T, base, env) {
     p = rigBlend(p, L, 1);
     if (L.ik) p._ikw = Object.assign({}, p._ikw, IW);
   }
+  // S22: жизнь в покое — персонаж без клипа и не на ходу не стоит «истуканом» (автор про героев Майнкрафта): дыхание карточки и лёгкое покачивание
+  // головы поверх позы, плавно гаснет, когда начинается клип или шаг. У бумажного ёжика дыхание уже в drawHog — ему только голова. o.idle === false — выключить.
+  const idleW = o.idle === false ? 0 : Math.max(0, 1 - Math.max(clipW, walkW));
+  if (idleW > 0.01) {
+    let ph = 0; for (const ch of String(o.id || o.name || '')) ph = (ph * 31 + ch.charCodeAt(0)) % 628;
+    ph /= 100;
+    p = Object.assign({}, p);
+    if (!(char.rig === 'param' || char.skeleton === 'hog')) p.card = Object.assign({}, p.card, { sy: ((p.card || {}).sy || 0) + idleW * 0.012 * Math.sin(T * 2.1 + ph) });
+    const hd = (p.bones || {}).head;
+    if (hd && typeof hd.rot === 'number') p.bones = Object.assign({}, p.bones, { head: Object.assign({}, hd, { rot: hd.rot + idleW * 0.03 * Math.sin(T * 0.9 + ph) }) });
+  }
   p = rigSolveIK(char, p);
   if (env != null && o.lipsync) { const e = env(T); if (e > (o.lipsync.threshold || 0.12)) p = rigPose(p, { face: { mouth: 'open' } }); }
   return p;
@@ -532,7 +546,7 @@ function rigDraw(ctx, char, pose, x, y, h, T) {
 // ---------------------------------------------------------------- 3D: бумажная карточка персонажа
 // o: name, h (рост, м), px ([w, h] холста), size (рост на холсте), o (объект сцены: params.pose / params.emotion, keys pose.* / face.* / wear.*)
 // c.pose — текущая поза (поведение сцены или клип S5 пишут сюда); Paper Mario: channel rules — PAPER_RULES
-const PAPER_RULES = { paperFacing: true, facingMaxDeg: 40 };
+const PAPER_RULES = { paperFacing: typeof LOOKV === 'function' ? !!LOOKV('cards.facing', true) : true, facingMaxDeg: 40 };   // визуал канала (S14): cards.facing
 // S10.2 хват: char.grips[<предмет>] = { off: [dx, dy] (доли роста, оси карточки), rot (рад, к направлению предплечья), scale, back, follow, pose }
 // ключ предмета — ссылка без версии: 'props/trubka' (lib:props/trubka@N) | 'el:<id>' ; '*' — по умолчанию для любого
 function rigGripKey(ref) { const m = /^lib:([a-z]+\/[a-z0-9-]+)@/.exec(ref || ''); if (m) return m[1]; const e = /^el:([A-Za-z0-9_-]+)@/.exec(ref || ''); return e ? 'el:' + e[1] : ref; }

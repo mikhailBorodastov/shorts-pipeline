@@ -15,13 +15,29 @@ const isRigChar = e => e.kind === 'char' && e.form === 'rig';
 const elRenders = e => { const rs = e.renders || [];
   if (e.kind === 'char') { const rg = isRigChar(e); return rs.filter(r => !!r.rigchar === rg); }
   if (e.kind !== 'prop') return rs; const d3 = dimOf(e) === '3d'; return rs.filter(r => !!r.three3 === d3); };
+// подпись референса из поиска: искал не название элемента («G-Man» в сцене «Коридор») — подписываем запросом, искал само название — пусто, как раньше
+const refNote = (found, name) => { const n = x => (x || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' '); return found && n(found) !== n(name) ? found.trim() : ''; };
 const elRender = e => { const rs = elRenders(e); return rs.find(r => r.id === e.render) || rs[rs.length - 1]; };
-// layers of a sound element (e.mix; old plans — the single chosen e.sound): [{id, sid, at, gain, note, s: candidate}]
+// layers of a sound element (e.mix; old plans — the single chosen e.sound): [{id, sid, at, gain, from, to (кусок звука, с), note, s: candidate}]
 const elMix = e => {
   const ss = e.sounds || [], mix = e.mix != null ? e.mix : e.sound ? [{ id: 'l1', sid: e.sound, at: 0, gain: 1, note: '' }] : [];
   return mix.map(m => ({ ...m, at: +m.at || 0, gain: m.gain === '' || m.gain == null ? 1 : +m.gain, s: ss.find(s => s.id === m.sid) })).filter(m => m.s);
 };
 const elSound = e => { const m = elMix(e); return m.length ? m[0].s : null; };
+// S18: вариации персонажа / пропса — отдельные элементы с variantOf (старые 3D-вариации — from3d.mode 'vary'; явный null — «не вариация»),
+// в препродакшене — одна карточка семьи. Как preprod.main_of / family
+const mainOf = (d, e) => { const f = e.from3d || {}, m = 'variantOf' in e ? e.variantOf : f.mode === 'vary' ? f.el : null; return m && m !== e.id ? (d.elements || []).find(x => x.id === m) || null : null; };
+const familyOf = (d, e) => { const m = mainOf(d, e) || e; return [m, ...(d.elements || []).filter(x => x !== m && x.status !== 'drop' && mainOf(d, x) === m)]; };
+const VAR_SEL = {};                                         // какая вариация открыта в карточке семьи (id основного -> id)
+function addVariant(d, key, main) {
+  const name = prompt(`Новый образ «${main.name}» — название:`, main.name + ' — ');
+  if (!name || !name.trim()) return;
+  const id = uid('e');
+  Store.add(key, ['elements'], { id, kind: main.kind, name: name.trim(), desc: '', why: '', q: '', status: '', refs: [], by: 'me', variantOf: main.id,
+    ...(main.dim ? { dim: main.dim } : {}), ...(main.form ? { form: main.form } : {}) });
+  VAR_SEL[main.id] = id;
+  go(`#/v/${d.id}/pre/${id}`);
+}
 // every text of an element (where @-links can be) — mirrors preprod.el_texts
 const elTexts = e => { const fx = (e.fx || {}).main || {}; return [e.desc, e.why, fx.text, e.ask, e.mixNote, ...(fx.pins || []).map(p => p.text), ...(e.final || []).map(f => f.text), ...(e.mix || []).map(m => m.note), ...(e.assets || []).map(a => a.why), e.aask].filter(Boolean); };
 const elMentions = (d, e) => { const out = []; for (const t of elTexts(e)) for (const x of mentionsIn(t, d)) if (x !== e && !out.includes(x)) out.push(x); return out; };
@@ -57,7 +73,7 @@ function trellisDlg(key, e, cur, mode = 'draft') {
     h: (cur && cur.meta && cur.meta.h) || e.h || 0.6, crops: Object.assign({}, (cur && cur.meta && cur.meta.crops) || {}), focus: null };
   const SL = [['front', 'спереди'], ['left', 'слева'], ['back', 'сзади'], ['right', 'справа']];
   const body = h('div.trellis');
-  const draw = () => {
+  const draw = () => keepScroll(body, () => {
     body.replaceChildren(...[
       mode === 'draft' && h('div.seg', [['pixal3d', 'Pixal3D — точно по картинке'], ['trellis', 'TRELLIS.2 — свободнее достроит'], ['multiview', 'по ракурсам (2–4 картинки)']]
         .map(([k, l]) => h('button', { class: st.engine === k ? 'sel' : '', onclick: () => { st.engine = k; draw(); } }, l))),
@@ -86,7 +102,7 @@ function trellisDlg(key, e, cur, mode = 'draft') {
         if (mode === 'retex') Object.assign(x, st.texref ? { texref: st.texref } : {});
         charModel(key, e.id, 'trellis', undefined, x);
       } }, mode === 'retex' ? (st.texref ? '🎨 Перекрасить по картинке' : '🎲 Новая раскраска') : '🖥 Лепить черновик'))].filter(Boolean));
-  };
+  });
   // рамка: если на картинке лист (несколько видов, подписи, другие герои) — обведи нужный предмет мышью; без рамки берётся вся картинка
   function cropBox() {
     const img = st.focus || (mode === 'retex' ? st.texref : st.engine === 'multiview' ? Object.values(st.views).slice(-1)[0] : st.ref);
@@ -129,7 +145,7 @@ async function libImport(d, key, K) {
   if (!items.length) return UI.toast(`В библиотеке канала пока нет: ${K.label.toLowerCase()}`, 'err');
   const chan = (App.info.channel || {}).id, st = { id: '', why: '' };
   const body = h('div.libimp');
-  const draw = () => {
+  const draw = () => keepScroll(body, () => {
     const q = (st.q || '').toLowerCase();
     body.replaceChildren(...[
       h('input.box', { placeholder: '🔎 найти', value: st.q || '', key: 'limq', oninput: e => { st.q = e.target.value; draw(); } }),
@@ -142,7 +158,7 @@ async function libImport(d, key, K) {
         catch (e) { UI.toast(e.message, 'err'); }
       } }, '📚 Взять в видео'))].filter(Boolean));
     const t = body.querySelector('textarea'); if (t) t.value = st.why;
-  };
+  });
   draw();
   const close = UI.modal(`📚 ${K.label} из библиотеки`, body, { wide: true });
 }
@@ -159,7 +175,7 @@ const sceneCastOf = (d, e) => {
     if (!out.some(z => z.x === v)) out.push({ x: v, via: 'variant', of: o });
   return out;
 };
-const elPic = x => { const r = elRender(x); return r ? r.img : ((x.refs || []).find(f => f.img) || {}).img; };
+const elPic = x => { const o = (x.own || []).find(f => f.img); if (o) return o.img; const r = elRender(x); return r ? r.img : ((x.refs || []).find(f => f.img) || {}).img; };   // свой ассет — главнее
 const sndSrc = u => ((u || '').startsWith('lib:') ? '/sfxlib/' + u.slice(4) + '.wav' : u);
 const isUrl = s => /^https?:\/\//i.test(s || '');
 
@@ -169,19 +185,22 @@ Object.assign(Plan, {
   sres: {},                                           // sound search results per element (page memory only): {q, list, errs, busy}
 
   refAdd(d, key) {
-    const inp = h('input.box.grow', { key: key + '|refadd', placeholder: 'ссылка на ролик (YouTube, TikTok, VK…) или путь к видео / папке на диске',
-      value: Local.get('refadd:' + d.id) || '', oninput: e => Local.set('refadd:' + d.id, e.target.value) });
-    const add = kind => {
-      const v = inp.value.trim().replace(/^"|"$/g, '');
+    const inp = h('input.box.grow', { key: key + '|refadd', placeholder: 'ссылка на ролик или статью (YouTube, TikTok, VK…), несколько — через пробел; или путь к видео / папке на диске',
+      value: Local.get('refadd:' + d.id) || '', oninput: e => Local.set('refadd:' + d.id, e.target.value),
+      onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); add(); } } });
+    const add = async () => {
+      const v = inp.value.trim();
       if (!v) return UI.toast('Вставь ссылку или путь', 'err');
-      const id = uid('r'), url = isUrl(v);
-      Store.add(key, ['refs'], { id, kind, url: url ? v : '', path: url ? '' : v, title: '', note: '', parse: {} });
-      inp.value = ''; Local.set('refadd:' + d.id, '');
-      if (kind === 'video') Plan.parseRef(key, id);
+      try {
+        const { items } = await api('POST', '/api/refs/add', { key, src: v });
+        inp.value = ''; Local.set('refadd:' + d.id, '');
+        await Store.load(key, true);
+        const nv = items.filter(x => x.kind === 'video').length;
+        UI.toast(items.length ? `+ ${items.length} ${plural(items.length, 'референс', 'референса', 'референсов')}` + (nv ? ' — видео разбираются: кадры и расшифровка' : '') : 'Такие ссылки уже есть');
+      } catch (e) { UI.toast(e.message, 'err'); }
     };
     return h('div.row.refadd', inp,
-      h('button.primary', { onclick: () => add('video'), title: 'Скрипт скачает ролик (если это ссылка), нарежет кадры и расшифрует речь' }, '📼 Добавить видео'),
-      h('button', { onclick: () => add('link'), title: 'Статья или страница: Claude прочитает её, если включён 🌐' }, '🔗 Ссылка'));
+      h('button.primary', { onclick: add, title: 'Видео (YouTube и всё, что умеет yt-dlp, или файл) скачается, нарежется на кадры и расшифруется — Claude прочитает его целиком. Статья — ссылкой, её Claude откроет сам' }, '＋ Добавить'));
   },
 
   parseRef(key, id) { Claude.run({ action: 'refparse', key, scope: 'refparse:' + id, params: { key, ref: id } }); },
@@ -189,21 +208,35 @@ Object.assign(Plan, {
   refRow(d, key, r) {
     const ps = r.parse || {}, P = ['refs', r.id], src = r.url || r.path || '';
     const running = !!Claude.running(key, 'refparse:' + r.id) || ps.status === 'running';
-    return h('div.ref',
+    const title = r.title || ps.title, ch = r.channel || ps.channel, dur = r.dur || ps.dur;
+    const mm = s => (s = Math.round(s || 0), s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+    const short = src.replace(/^https?:\/\/(www\.)?/, '');
+    const name = title || (running ? 'узнаю название…' : short.length > 70 ? short.slice(0, 68) + '…' : short);
+    const state = running ? h('span.dim.small.refst', h('span.spin'), ' ', ps.msg || 'разбираю…')
+      : ps.status === 'done' ? h('span.small.refst.ok', { title: ps.text_from || '' }, '✓ разобран')
+      : ps.status === 'error' ? h('span.small.refst.bad', '⚠ не разобран')
+      : r.kind === 'video' ? h('span.dim.small.refst', 'не разобран') : h('span.dim.small.refst', 'статья — Claude откроет ссылку');
+    const base = r.role === 'base', bs = ps.base || {};
+    return h('div.ref', { class: base ? 'base' : '' },
       h('div.row',
-        h('span', r.kind === 'video' ? '📼' : '🔗'),
-        line(key, [...P, 'title'], { ph: ps.title || 'название', cls: 'grow reftitle' }),
-        isUrl(src) ? h('a.small', { href: src, target: '_blank', rel: 'noopener', title: src }, '🔗 открыть')
-          : h('span.dim.small', { title: src }, src.length > 50 ? '…' + src.slice(-48) : src),
-        r.kind === 'video' && (running ? h('span.dim.small', h('span.spin'), ' разбираю…')
-          : h('button.small', { onclick: () => Plan.parseRef(key, r.id), title: 'Скачать (если ссылка), нарезать кадры и расшифровать речь' }, ps.status === 'done' ? '🔄 Заново' : '📼 Разобрать')),
+        h('span', { title: r.kind === 'video' ? 'видео' : 'ссылка' }, r.kind === 'video' ? '📼' : '🔗'),
+        h('div.grow.reftitle',
+          isUrl(src) ? h('a.reflink', { href: src, target: '_blank', rel: 'noopener', title: src }, name) : h('span.reflink', { title: src }, name),
+          (ch || dur) && h('span.dim.small', ' · ' + [ch, dur && mm(dur)].filter(Boolean).join(' · ')),
+          base && h('span.refbase-tag', { title: 'Наш ролик расскажет тему в подаче этого видео: карта «их бит → наш бит» — в окне «Сценарий»' }, '📐 основа подачи')),
+        state,
+        r.kind === 'video' && h('button.small', { class: base ? 'ghost' : '', title: base ? 'Снять: сценарий будет писаться как обычно' : 'Рассказать нашу тему в подаче этого ролика: те же биты, приёмы, длина фраз — карта «их бит → наш бит» перед сценарием',
+          onclick: () => BeatMap.setBase(d, r.id, !base) }, base ? 'снять основу' : '📐 За основу'),
+        r.kind === 'video' && !running && h('button.small', { onclick: () => Plan.parseRef(key, r.id), title: 'Скачать (если ссылка), нарезать кадры и расшифровать речь' }, ps.status === 'done' ? '🔄 Заново' : '📼 Разобрать'),
+        r.kind === 'link' && h('button.small', { title: 'Это видео — скачать и разобрать', onclick: () => { Store.set(key, [...P, 'kind'], 'video', true); setTimeout(() => Plan.parseRef(key, r.id), 300); } }, '📼 Это видео'),
         h('button.icon.del', { title: 'Убрать референс', onclick: () => Store.del(key, ['refs'], r.id) }, '×')),
-      area(key, [...P, 'note'], { ph: 'что берём из референса: подачу, темп, структуру, шутки, визуал, звук…', cls: 'box' }),
+      area(key, [...P, 'note'], { ph: 'что берём из референса: факты, истории, подачу, темп, структуру, шутки, визуал, звук…', cls: 'box' }),
       ps.status === 'error' && h('div.badline', '⚠ ' + (ps.err || 'не получилось')),
       ps.status === 'done' && h('div.refparse',
         h('div.sheets', (ps.sheets || []).map(s => h('img', { src: '/' + s, alt: '', title: 'Открыть крупно', onclick: () => UI.lightbox('/' + s) }))),
-        h('div.grow', h('div.dim.small', `${Math.round(ps.dur || 0)} с · кадры каждые ${ps.step} с`),
-          h('details', h('summary', '📄 Расшифровка речи'), h('pre.transcript', ps.text || '(речи нет)')))));
+        h('div.grow', h('div.dim.small', `${mm(ps.dur)} · кадры каждые ${ps.step} с · текст: ${ps.text_from || '—'}` + (ps.chars ? ` · ${ps.chars} знаков` : '')
+            + (bs.status === 'done' ? ` · подача: ${(bs.rhythm || {}).wps} сл/с, фраза ~${(bs.rhythm || {}).phrase} сл., склеек ${bs.cuts}` : bs.status === 'running' ? ' · разбираю подачу…' : bs.status === 'error' ? ' · ⚠ подача: ' + (bs.err || '') : '')),
+          h('details', h('summary', '📄 Расшифровка речи'), h('pre.transcript', (ps.text || '(речи нет)') + (ps.chars > (ps.text || '').length ? '\n\n…(дальше — в файле, Claude читает целиком)' : ''))))));
   },
 
   refImages(d, key) {
@@ -223,7 +256,18 @@ Object.assign(Plan, {
       h('div.grow',
         h('div.qq', G && h('span.qg', { style: { borderColor: G.color, color: G.color } }, G.label), area(key, ['qa', q.id, 'q'], { cls: 'qtext' }), q.by === 'claude' && h('span.by', '🤖')),
         q.why && h('div.qwhy', q.why),
-        !q.skip && area(key, ['qa', q.id, 'a'], { ph: 'твой ответ — можно коротко, можно «не знаю, предложи»', cls: 'ans',
+        !q.skip && (q.opts || []).length > 0 && h('div.qopts', q.opts.map(o => {          // 💡 варианты Claude: клик — в ответ (повторный — убрать), своё — в поле ниже
+          const has = a => (a || '').split(/\s*;\s*/).includes(o);
+          return h('button.qopt', { class: has(q.a) ? 'on' : '', title: 'Взять этот вариант (можно несколько, можно дописать своё)', onclick: e => {
+            const cur = ((Store.get(key) || {}).qa || []).find(x => x.id === q.id) || q, parts = (cur.a || '').split(/\s*;\s*/).filter(Boolean);
+            const next = has(cur.a) ? parts.filter(x => x !== o) : [...parts, o], v = next.join('; ');
+            Store.set(key, ['qa', q.id, 'a'], v);
+            const row = e.target.closest('.qrow'), ta = row && row.querySelector('textarea.ans');
+            if (ta) { ta.value = v; autosize(ta); }
+            e.target.classList.toggle('on', next.includes(o)); if (row) row.classList.toggle('done', !!v.trim());
+          } }, o);
+        })),
+        !q.skip && area(key, ['qa', q.id, 'a'], { ph: (q.opts || []).length ? 'выбери вариант выше или напиши свой' : 'твой ответ — можно коротко, можно «не знаю, предложи»', cls: 'ans',
           onInput: (v, el) => el.closest('.qrow').classList.toggle('done', !!v.trim()) })),
       h('button.tgl', { class: q.skip ? 'on skipb' : '', title: q.skip ? 'Вернуть вопрос' : 'Не важно — пропустить', onclick: () => Store.set(key, ['qa', q.id, 'skip'], !q.skip, true) }, '–'),
       h('button.icon.del', { title: 'Удалить вопрос', onclick: () => Store.del(key, ['qa'], q.id) }, '×'));
@@ -250,35 +294,76 @@ Object.assign(Plan, {
         K.key !== 'broll' && Plan.doAllBtn && Plan.doAllBtn(d, key, all.filter(e => e.status !== 'drop'), K.key),
         Claude.btn({ label: 'Ещё', action: 'elements', key, scope: 'elements:' + K.key, params: () => ({ kind: K.key, focus: focus.value }), cls: 'mini',
           title: `Claude предложит ещё: ${K.label.toLowerCase()} (учтёт поле «чего не хватает?»)` })),
+      h('div.prenote', { title: 'Комментарий ко всей категории: Claude учтёт его, когда накидывает элементы («Накидать», «Ещё»), и в каждом черновике этой категории' },
+        Icon('message', 14), area(key, ['preNotes', K.key], { cls: 'box', ph: 'комментарий ко всем: ' + ({ char: 'в стиле Майнкрафта, квадратные головы', prop: 'всё из блоков, как в Майнкрафте', scene: 'пиксельные локации Майнкрафта', sound: '8-бит, звуки из игры', vfx: 'пиксельные частицы', broll: 'только геймплей' }[K.key] || 'в стиле…') })),
       K.key === 'scene' && cast.length > 0 && castOk < cast.length && h('p.warnline', `Персонажи и пропсы утверждены: ${castOk} из ${cast.length}. `,
         'Сцены лучше рисовать после них — утверждённые черновики Claude ставит прямо в сцену.'),
-      list.length ? h('div.elgrid', { class: K.key === 'sound' ? 'snd' : '' }, list.map(e => Plan.elCard(d, key, e))) : h('p.dim', 'Пока пусто.'),
+      list.length ? h('div.elgrid', { class: K.key === 'sound' ? 'snd' : '' }, list.filter(e => !mainOf(d, e)).map(e => {   // S18: вариации — внутри карточки основного
+        const fam = familyOf(d, e);
+        if (fam.length < 2) return Plan.elCard(d, key, e);
+        const cur = fam.find(x => x.id === VAR_SEL[e.id]) || e;
+        return Plan.elCard(d, key, cur, fam);
+      })) : h('p.dim', 'Пока пусто.'),
       addLine(`+ ${K.one}: название | как выглядит${K.key === 'sound' ? ' / звучит' : ''} — Enter`, t => {
         const [n, ...rest] = t.split('|');
         Store.add(key, ['elements'], { id: uid('e'), kind: K.key, name: n.trim(), desc: rest.join('|').trim(), why: '', q: '', status: '', refs: [], by: 'me' });
       }, key + '|adde' + K.key));
   },
 
-  elCard(d, key, e) {
+  // S18: вкладки семьи вариаций на странице элемента: у каждой свои описание, референсы, черновики, правки и ✓
+  famTabs(d, key, e) {
+    const fam = familyOf(d, e), main = fam[0];
+    if (fam.length < 2) return null;
+    return h('div.famtabs', h('span.dim.small', e.kind === 'char' ? 'Образы персонажа:' : 'Вариации:'),
+      fam.map((x, i) => { const p = elPic(x);
+        return h('a.famtab', { href: `#/v/${d.id}/pre/${x.id}`, class: (x === e ? 'sel ' : '') + (x.status || 'new'), onclick: () => { VAR_SEL[main.id] = x.id; } },
+          p ? h('img', { src: '/' + p, alt: '' }) : h('span', KIND(x.kind).icon), h('span', x.name), i === 0 && h('span.dim.small', 'основной'), x.status === 'ok' && h('span.ok', '✓')); }),
+      h('button.mini', { onclick: () => addVariant(d, key, main), title: 'Тот же ' + (e.kind === 'char' ? 'персонаж' : 'предмет') + ' в другом образе' }, '＋ вариация'),
+      h('span.sp'),
+      e !== main && h('button.mini.ghost', { title: 'Это не вариация, а отдельный ' + (e.kind === 'char' ? 'персонаж' : 'предмет') + ' — своей карточкой',
+        onclick: () => Store.set(key, ['elements', e.id, 'variantOf'], null, true) }, 'Отделить'),
+      e !== main && h('button.mini.ghost', { title: 'Сделать этот образ основным: от него рисуются первые черновики новых вариаций',
+        onclick: () => { fam.forEach((x, i) => Store.set(key, ['elements', x.id, 'variantOf'], x === e ? null : e.id, i === fam.length - 1)); } }, 'Сделать основным'));
+  },
+
+  elCard(d, key, e, fam) {
     const r = elRender(e), s = elSound(e), K = KIND(e.kind), nfx = fxCount((e.fx || {}).main), nmix = elMix(e).length, nfin = (e.final || []).filter(f => (f.text || '').trim()).length;
     const busy = Claude.running(key, 'element:' + e.id) || Claude.running(key, 'sound:' + e.id);
-    const pic = r ? r.img : e.kind === 'broll' && e.broll && e.broll.thumb ? e.broll.thumb : ((e.refs || []).find(x => x.img) || {}).img;
+    const own = (e.own || []).filter(x => x.img);              // свой ассет автора — главнее черновика: его и показываем
+    const pic = own.length ? own[0].img : r ? r.img : e.kind === 'broll' && e.broll && e.broll.thumb ? e.broll.thumb : ((e.refs || []).find(x => x.img) || {}).img;
     const open = () => go(`#/v/${d.id}/pre/${e.id}`);
     return h('div.elcard', { class: e.status || 'new', title: 'Открыть', tabindex: 0, role: 'link', 'aria-label': `${K.one}: ${e.name || 'без названия'}, ${{ ok: 'утверждён', drop: 'не нужен' }[e.status] || 'предложен'}`,
       onclick: ev => { if (!ev.target.closest('audio,button,a')) open(); },
       onkeydown: ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target === ev.currentTarget) { ev.preventDefault(); open(); } } },
+      h('div.elacts',                                          // быстрые действия прямо в списке, не заходя в элемент
+        e.status !== 'ok' && h('button.icon', { title: 'Утвердить', onclick: () => Store.set(key, ['elements', e.id, 'status'], 'ok', true) }, '✓'),
+        (e.kind === 'char' || e.kind === 'prop') && !fam && h('button.icon', { title: 'Добавить вариацию — тот же ' + (e.kind === 'char' ? 'персонаж' : 'предмет') + ' в другом образе (одна карточка)', onclick: () => addVariant(d, key, mainOf(d, e) || e) }, '＋'),
+        h('button.icon', { title: e.status === 'drop' ? 'Вернуть (снова нужен)' : 'Не нужен — в ролик не пойдёт', onclick: () => Store.set(key, ['elements', e.id, 'status'], e.status === 'drop' ? '' : 'drop', true) }, e.status === 'drop' ? '↺' : '✗'),
+        h('button.icon.del', { title: 'Удалить элемент', onclick: () => { if (confirm(`Удалить «${e.name || 'без названия'}»?`)) Store.del(key, ['elements'], e.id, false); } }, Icon('trash', 14))),
       e.kind !== 'sound'
         ? h('div.elpic', { class: pic ? '' : 'noimg' }, pic ? h('img', { src: '/' + pic, alt: '' }) : h('span.elph', K.icon),
-          busy && h('span.elbusy', h('span.spin'), ' рисую…'), e.kind === 'broll' && e.broll ? h('span.eltag', `🎞 ${(e.broll.dur || 0).toFixed(1)} с`) : !r && pic && h('span.eltag', 'референс'))
+          busy && h('span.elbusy', h('span.spin'), ' рисую…'), e.kind === 'broll' && e.broll ? h('span.eltag', `🎞 ${(e.broll.dur || 0).toFixed(1)} с`) : own.length ? h('span.eltag.own', { title: 'свой ассет — в ролик как есть' }, '📎 свой ассет' + (own.length > 1 ? ` · ${own.length} сост.` : '')) : !r && pic && h('span.eltag', 'референс'))
         : h('div.elsnd', s ? h('audio', { controls: true, preload: 'none', src: '/' + s.file })
           : h('span.dim.small', busy ? '⏳ ищу звук…' : (e.sounds || []).length ? `кандидатов: ${e.sounds.length}, не выбран` : 'звук не выбран')),
-      h('div.elbody', h('b', e.name || '(без названия)'), e.desc && h('div.eldesc', e.desc),
+      fam && h('div.elvars', { title: 'Вариации: тот же ' + (e.kind === 'char' ? 'персонаж' : 'предмет') + ' в разных образах — у каждой свои черновик, правки и референсы' },
+        fam.map((x, i) => { const p = elPic(x);
+          return h('button.elvar', { class: (x === e ? 'sel ' : '') + (x.status || 'new'), title: x.name + (i ? '' : ' · основной') + (x.status === 'ok' ? ' · ✓' : ''),
+            onclick: ev => { ev.stopPropagation(); VAR_SEL[fam[0].id] = x.id; App.render(); } }, p ? h('img', { src: '/' + p, alt: '' }) : h('span', KIND(x.kind).icon)); }),
+        h('button.elvar.add', { title: 'Добавить вариацию', onclick: ev => { ev.stopPropagation(); addVariant(d, key, fam[0]); } }, '＋'),
+        h('span.elvar-n', `${fam.filter(x => x.status === 'ok').length}/${fam.length} ✓`)),
+      h('div.elbody', h('b', e.name || '(без названия)'), fam && e !== fam[0] && h('span.dim.small', ' · вариация'), e.desc && h('div.eldesc', e.desc),
         h('div.elmeta', h('span.st', { class: e.status || 'new' }, { ok: '✓ утверждён', drop: '✗ не нужен' }[e.status] || '💡 предложен'),
+          own.length > 0 && h('span', { title: 'свой ассет: ' + own.map(x => x.state || '—').join(', ') }, `🖼${own.length}`),
           (e.refs || []).length > 0 && h('span', { title: 'референсов' }, `📎${e.refs.length}`), r && h('span', { title: 'версия черновика' }, `🎨 v${r.v}`),
           nfx > 0 && h('span', { title: 'неотправленных правок' }, `✏️${nfx}`), r && (r.three || r.three3) && h('span', { title: r.three3 ? '3D-пропс — можно покрутить' : '3D-сцена — можно смотреть живьём' }, '🧊'),
           nmix > 1 && h('span', { title: 'звук сведён из нескольких слоёв' }, `🎚${nmix}`), nfin > 0 && h('span', { title: 'пунктов «для финала»' }, `🎬${nfin}`),
-          e.by === 'claude' && h('span', { title: 'предложил Claude' }, '🤖'),
+          e.by === 'claude' && h('span', { title: 'предложил Claude' }, '🤖'), Reuse.tag(d, key, e),
           e.script && e.script.title && h('span', { title: 'сцена сценария: ' + e.script.title }, '📝 ' + e.script.title.slice(0, 28))),
+        (e.kind === 'char' || e.kind === 'prop') && h('div.seg.small.eldim', { class: e.dimBy ? 'byc' : '', title: (e.dimBy ? `🤖 Claude предположил: ${(isRigChar(e) || isProp3(e)) ? '3D' : '2D'}${e.dimBy.why ? ' — ' + e.dimBy.why : ''}. ` : '')
+            + '2D — рисунок-карточка; 3D — объёмная версия для 3D-сцен. Черновик и «Сделать всё» сделают то, что выбрано' },
+          ['2d', '3d'].map(k => h('button', { class: ((isRigChar(e) || isProp3(e)) ? '3d' : '2d') === k ? 'sel' : '', disabled: !!busy,
+            onclick: () => { if (e.dimBy) Store.set(key, ['elements', e.id, 'dimBy'], null, false);   // автор решил сам — подсказка Claude больше не нужна
+              Store.set(key, ['elements', e.id, e.kind === 'char' ? 'form' : 'dim'], e.kind === 'char' ? (k === '3d' ? 'rig' : '') : k, true); } }, k.toUpperCase()))),
         e.kind === 'scene' && sceneCastOf(d, e).length > 0 && Plan.castRow(d, e, true)));
   },
 
@@ -334,6 +419,8 @@ Object.assign(Plan, {
     return [
       !d.service && h('div.row.elnav', h('a.btn', { href: `#/v/${d.id}/pre` }, '← Все элементы'), h('span.dim', `${K.icon} ${K.label} · ${i + 1} из ${same.length}`), h('span.sp'),
         nav(same[i - 1], '← ' + (same[i - 1] || {}).name), nav(same[i + 1], (same[i + 1] || {}).name + ' →')),
+      (e.kind === 'char' || e.kind === 'prop') && Plan.famTabs(d, key, e),   // S18: вариации — вкладки одной семьи
+      Reuse.panel(d, key, e),                                  // S15: нашлось уже сделанное — решить, прежде чем рисовать
       h('div.eldetail', h('div.elleft',
         h('section.card.elinfo',
           h('div.row', sel(REF.kinds.map(k => ({ value: k.key, label: k.icon + ' ' + k.one })), e.kind, v => Store.set(key, [...P, 'kind'], v, true), { class: 'box' }),
@@ -351,7 +438,11 @@ Object.assign(Plan, {
           h('div.row', { style: { marginTop: '10px' } }, e.by === 'claude' && h('span.dim.small', '🤖 предложил Claude'), h('span.sp'),
             h('button.icon.del', { title: 'Удалить элемент', onclick: () => { if (confirm(`Удалить «${e.name}»?`)) { Store.del(key, ['elements'], e.id, false); go(`#/v/${d.id}/pre`); } } }, '🗑 удалить'))),
           e.kind !== 'sound' && e.kind !== 'broll' && Plan.assetBox(d, key, e)),
-        h('div.elright', h('section.card.elwork', e.kind === 'sound' ? Plan.elSound(d, key, e) : e.kind === 'broll' ? Plan.elBroll(d, key, e) : Plan.elDraw(d, key, e)), Plan.finalBox(d, key, e))),
+        h('div.elright', h('section.card.elwork', e.kind === 'sound' ? Plan.elSound(d, key, e) : e.kind === 'broll' ? Plan.elBroll(d, key, e) : Plan.elDraw(d, key, e),
+          e.kind !== 'sound' && e.kind !== 'broll' && h('div.own-box',                // свой ассет автора — готовый, вместо черновика Claude
+            h('div.card-head', h('h3', '📎 Свой ассет'), h('span.dim.small', (e.own || []).some(x => x.img) ? 'в ролик как есть — Claude не рисует, а вклеивает' : 'есть готовая картинка? положи — Claude не будет рисовать')),
+            h('p.dim.small', 'PNG с прозрачностью лучше всего; «+ состояние» — ещё варианты (закрыт / открыт, спокойный / злой…).'),
+            Plan.elOwn(d, key, e))), Plan.finalBox(d, key, e))),
     ];
   },
 
@@ -426,13 +517,35 @@ Object.assign(Plan, {
       } }, '→ в правку черновика'));
   },
 
+  // свой 2D-ассет автора: картинки по состояниям («закрыт», «открыт», «злой»…) — быстрый монтаж вклеивает их как есть (fast_api.pack_preprod)
+  elOwn(d, key, e) {
+    const P = ['elements', e.id, 'own'];
+    return h('div.refimgs.small.own',
+      (e.own || []).map((r, i) => h('div.refimg',
+        imgSlot({ key, path: [...P, r.id, 'img'], planId: d.id, aspect: '4/3', onSet: p => (p ? Store.set(key, [...P, r.id, 'img'], p, true) : Store.del(key, P, r.id)) }),
+        line(key, [...P, r.id, 'state'], { ph: i ? 'состояние: открыт, злой…' : 'состояние (основное)', cls: 'box' }))),
+      (() => {                                                  // «+ состояние»: 📎 / перетащить — один или сразу несколько файлов; каждый — своё состояние, подпись — имя файла
+        const many = async files => {
+          files = [...files].filter(f => f.type.startsWith('image/'));
+          if (!files.length) return;
+          if (files.length > 1) UI.toast(`⬆ загружаю ${files.length}…`);
+          let n = (e.own || []).length;
+          for (const f of files) {
+            try { const p = await uploadImage(d.id, f); Store.add(key, P, { id: uid('w'), img: p, state: f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || (n ? '' : 'основное') }); n++; }
+            catch (er) { UI.toast(f.name + ': ' + er.message, 'err'); }
+          }
+        };
+        return h('div.refimg', imgSlot({ key, path: null, planId: d.id, aspect: '4/3', label: (e.own || []).length ? '+ состояние' : '+ свой ассет', q: e.name, onFiles: many,
+          onSet: p => p && Store.add(key, P, { id: uid('w'), img: p, state: (e.own || []).length ? '' : 'основное' }) }));
+      })());
+  },
   elRefs(d, key, e) {
     const P = ['elements', e.id, 'refs'];
     return h('div.refimgs.small',
       (e.refs || []).map(r => h('div.refimg',
         imgSlot({ key, path: [...P, r.id, 'img'], planId: d.id, aspect: '4/3', onSet: p => (p ? Store.set(key, [...P, r.id, 'img'], p, true) : Store.del(key, P, r.id)) }),
         line(key, [...P, r.id, 'note'], { ph: 'что взять', cls: 'box' }))),
-      h('div.refimg', imgSlot({ key, path: null, planId: d.id, aspect: '4/3', label: '+ референс', q: e.name, onSet: p => p && Store.add(key, P, { id: uid('f'), img: p, note: '' }) })));
+      h('div.refimg', imgSlot({ key, path: null, planId: d.id, aspect: '4/3', label: '+ референс', q: e.name, onSet: (p, found) => p && Store.add(key, P, { id: uid('f'), img: p, note: refNote(found, e.name) }) })));
   },
 
   // 🎨 draft by our engine (ideas_claude.element_spec) + edits by pins, like the video review
@@ -474,6 +587,7 @@ Object.assign(Plan, {
         cur && cur.three && !(e.stage && e.stage.work) && h('button', { onclick: () => Plan.view3d(d, e, cur, true), title: 'Переставить объекты сцены: мышью или с клавиатуры — сдвиг, поворот, размер. Сохраняется новой версией без Claude.' }, '✋ Расставить'),
         cur && cur.three && !cur.stage && h('button' + (e.stage && e.stage.work ? '' : '.primary'), { onclick: () => Plan.view3d(d, e, cur), title: 'Сцена играет живьём, камеру можно крутить мышью' }, '🧊 Смотреть в 3D'),
         (p3 || (rc && cur.model3d)) && h('button.primary', { onclick: () => Plan.viewProp(d, e, cur), title: 'Покрутить мышью; клик по модели ставит пин с правкой' }, '🧊 Покрутить · 📍 пины'),
+        rc && !cur.model3d && h('button.primary', { onclick: () => Plan.viewChar(e, cur), title: 'Персонаж из частей на костях — покрутить мышью в 3D (правки — словами «в целом»)' }, '🧊 Покрутить'),
         trl && cur.meta.stage === 'draft' && h('button.primary', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => charModel(key, e.id, 'trellis', undefined, { mode: 'final', base: cur.id }),
           title: 'Та же фигура (те же сиды), но 1536³, текстура 2048 и полная сетка — 3–8 минут' }, '⬆ Довести'),
         trl && h('button', { disabled: !!Claude.running(key, 'charmodel:' + e.id), onclick: () => trellisDlg(key, e, cur, 'retex'), title: 'Форма та же — новая раскраска: по другой картинке или новым сидом' }, '🎨 Перекрасить'),
@@ -636,6 +750,12 @@ Object.assign(Plan, {
     return h('span.mk3', h('button' + (again ? '' : '.primary'), { disabled: !!run, onclick: () => go3(), title: 'Claude выберет способ из того, что у вас есть, и сделает 3D-версию' }, again ? '✨ Сделать 3D заново' : '✨ Сделать 3D'),
       h('button.mk3more', { disabled: !!run, onclick: menu, title: 'Выбрать способ самому' }, '▾'));
   },
+  // 🧊 персонаж из частей (rig 'parts', бумажная карточка на костях): тот же поворотный стол, что у 3D-пропса, без пинов
+  viewChar(e, r) {
+    const src = `/tpl/stand3d.html?prop=${encodeURIComponent('/rscene/' + r.dir + '/prefab.js')}&view=1`;
+    UI.modal(`🧊 ${e.name} · v${r.v}`, h('div.view3d', h('iframe', { src, title: '3D-персонаж' }),
+      h('p.dim.small', 'Тяни мышью — крутить, колесо — ближе, пробел — вращение. Правки — словами в «в целом».')), { wide: true });
+  },
   viewModel(title, url) {
     const src = `/tpl/stand3d.html?model=${encodeURIComponent(url)}&view=1`;
     UI.modal('🧊 ' + title, h('div.view3d', h('iframe', { src, title: '3D-модель' }),
@@ -749,18 +869,19 @@ Object.assign(Plan, {
       ss.length ? h('div.sndlist', ss.map(s => Plan.sndRow(d, key, e, s))) : h('p.dim', 'Кандидатов пока нет: ✨ Подобрать, поиск или ссылка ниже.'),
       fetching > 0 && h('p.dim.small', h('span.spin'), ` качаю: ${fetching}…`),
       h('h4.sub', '🔎 Найти самому'),
-      h('div.row', q, h('button', { onclick: search, disabled: !!S.busy }, S.busy ? '⏳ ищу…' : '🔎 Искать'), h('span.dim.small', 'библиотека пайплайна · Freesound · Commons')),
+      h('div.row', q, h('button', { onclick: search, disabled: !!S.busy }, S.busy ? '⏳ ищу…' : '🔎 Искать'), h('span.dim.small', 'YouTube · библиотека пайплайна · Freesound · Commons')),
       (S.errs || []).length > 0 && h('p.dim.small', '⚠ ' + S.errs.join('; ')),
       S.list && !S.busy && !S.list.length && h('p.dim.small', 'Ничего не нашлось — попробуй другие слова по-английски.'),
       (S.list || []).length > 0 && h('div.sres', S.list.map(r => {
         const got = ss.some(s => s.url === r.url), busy = Claude.running(key, `sndfetch:${e.id}:${r.url}`);
         return h('div.sresrow',
-          h('span.srcb', { class: r.src }, { lib: 'библиотека', freesound: 'Freesound', commons: 'Commons' }[r.src] || r.src),
+          h('span.srcb', { class: r.src }, { lib: 'библиотека', freesound: 'Freesound', commons: 'Commons', youtube: 'YouTube' }[r.src] || r.src),
           h('div.grow', h('b', r.title),
             h('div.dim.small', [r.dur ? (+r.dur).toFixed(1) + ' с' : '', r.license, r.author].filter(Boolean).join(' · '),
               r.page && [' · ', h('a', { href: r.page, target: '_blank', rel: 'noopener' }, 'страница')]),
             r.tags && h('div.dim.small.clamp1', r.tags)),
-          h('audio', { controls: true, preload: 'none', src: sndSrc(r.url) }),
+          r.src === 'youtube' ? h('a.small', { href: r.url, target: '_blank', rel: 'noopener' }, '▶ YouTube')
+            : h('audio', { controls: true, preload: 'none', src: sndSrc(r.url) }),
           got ? h('span.ok-t.small', '✓ взят') : h('button', { disabled: !!busy, onclick: () => take(r.url) }, busy ? '⏳' : '⬇ Взять'));
       })),
       h('h4.sub', '⬇ По ссылке'),
@@ -774,8 +895,10 @@ Object.assign(Plan, {
   },
 
   // the mix is e.mix (layers); e.sound mirrors its first layer for old readers
+  // list собран из снимка на момент отрисовки — а заметки, сдвиг и громкость слоёв пишутся без перерисовки. Свежие поля берём из документа, иначе новый слой затирал набранные заметки
   setMix(key, e, list) {
-    Store.set(key, ['elements', e.id, 'mix'], list.map(({ s, ...m }) => m));
+    const cur = getPath(Store.get(key), ['elements', e.id, 'mix']) || [];
+    Store.set(key, ['elements', e.id, 'mix'], list.map(({ s, ...m }) => ({ ...m, ...(cur.find(c => c.id === m.id) || {}) })));
     Store.set(key, ['elements', e.id, 'sound'], list.length ? list[0].sid : '', true);
   },
   mixBox(d, key, e) {
@@ -783,13 +906,19 @@ Object.assign(Plan, {
     if (!mix.length) return h('p.warnline', 'В ролике пока нет звука: отметь ✓ у кандидата ниже (можно несколько — получится микс).');
     return h('div.mixbox',
       h('div.row', h('b', mix.length > 1 ? `🎚 В ролике — микс из ${mix.length} слоёв` : '🎚 В ролике'), h('span.sp'),
-        mix.length > 1 && h('button', { class: playing ? 'sel' : '', onclick: () => Plan.playMix(e) }, playing ? '⏹ Стоп' : '▶ Слушать вместе')),
+        mix.length > 1 && h('button', { class: playing && !Plan.mixPlay.layer ? 'sel' : '', onclick: () => Plan.playMix(e) }, playing && !Plan.mixPlay.layer ? '⏹ Стоп' : '▶ Слушать вместе')),
       mix.map((m, i) => h('div.mixrow',
         h('span.fnum', i + 1),
-        h('div.grow', h('div.clamp1', h('b', m.s.title || '(без названия)'), h('span.dim.small', ` · ${m.s.dur} с`)),
+        h('button.icon', { class: playing && Plan.mixPlay.layer === m.id ? 'sel' : '', title: (m.from || m.to) ? 'Послушать этот кусок' : 'Послушать этот слой',
+          onclick: () => Plan.playMix(e, m.id) }, playing && Plan.mixPlay.layer === m.id ? '⏹' : '▶'),
+        h('div.grow', h('div.clamp1', h('b', m.s.title || '(без названия)'), h('span.dim.small', (m.from || m.to) ? ` · кусок ${+m.from || 0}–${m.to || m.s.dur} из ${m.s.dur} с` : ` · ${m.s.dur} с`)),
           line(key, [...P, m.id, 'note'], { cls: 'box', ph: mix.length > 1 ? 'что это и куда: «лязг на открытии дверей», «фон под всей сценой»… можно @' : 'что это и куда (необязательно), можно @' })),
-        h('label.mixnum', { title: 'Сдвиг от начала звука, секунды' }, 'с', h('input.box', { type: 'number', step: '0.1', min: '0', key: key + '|mixat|' + m.id, value: m.at,
-          oninput: ev => Store.set(key, [...P, m.id, 'at'], +ev.target.value || 0) }), 'сек'),
+        h('label.mixnum', { title: 'Какой кусок звука взять: от и до какой секунды (пусто — весь звук). Сам звук не портится — можно поменять в любой момент' }, 'кусок',
+          ...['from', 'to'].map((f, j) => [j ? '–' : '', h('input.box.trim', { type: 'number', step: '0.1', min: '0', max: m.s.dur || null, placeholder: j ? String(m.s.dur ?? '') : '0',
+            key: key + '|mix' + f + '|' + m.id, value: m[f] ?? '',
+            onchange: ev => { const v = ev.target.value.trim(); Store.set(key, [...P, m.id, f], v === '' ? '' : Math.max(0, +v)); App.render(); } })]).flat(), 'с'),
+        h('label.mixnum', { title: 'Когда слой вступает: секунд от начала звука-микса' }, 'вступает', h('input.box', { type: 'number', step: '0.1', min: '0', key: key + '|mixat|' + m.id, value: m.at,
+          oninput: ev => Store.set(key, [...P, m.id, 'at'], +ev.target.value || 0) }), 'с'),
         h('label.mixnum', { title: 'Громкость слоя' }, h('input.box', { type: 'number', step: '10', min: '0', max: '200', key: key + '|mixg|' + m.id, value: Math.round(m.gain * 100),
           oninput: ev => Store.set(key, [...P, m.id, 'gain'], Math.max(0, +ev.target.value || 0) / 100) }), '%'),
         h('button.icon', { title: 'Выше', disabled: i === 0, onclick: () => { const l = mix.slice(); [l[i - 1], l[i]] = [l[i], l[i - 1]]; Plan.setMix(key, e, l); } }, '↑'),
@@ -797,13 +926,13 @@ Object.assign(Plan, {
       mix.length > 1 && [h('label', 'Как свести', h('span.dim', ' — порядок, что громче, где тишина; реализатор прочитает это вместе со слоями')),
         area(key, ['elements', e.id, 'mixNote'], { cls: 'box', ph: '«сначала лязг, через полсекунды гул; гул тише и тянется под всей сценой @[Лифт]»' })]);
   },
-  // ▶ the layers together, the way audio.py mixes file: sounds (each peak-normalised × its volume, at its offset)
-  async playMix(e) {
+  // ▶ the layers together, the way audio.py mixes file: sounds (each peak-normalised × its volume, at its offset); layer — только этот слой, без сдвига
+  async playMix(e, layer) {
     const P = Plan.mixPlay;
-    if (P) { Plan.mixPlay = null; try { P.ctx.close(); } catch {} App.render(); if (P.el === e.id) return; }
-    const ctx = new AudioContext(), comp = ctx.createDynamicsCompressor(), mix = elMix(e);
+    if (P) { Plan.mixPlay = null; try { P.ctx.close(); } catch {} App.render(); if (P.el === e.id && (P.layer || null) === (layer || null)) return; }
+    const ctx = new AudioContext(), comp = ctx.createDynamicsCompressor(), mix = elMix(e).filter(m => !layer || m.id === layer).map(m => layer ? { ...m, at: 0 } : m);
     comp.connect(ctx.destination);
-    Plan.mixPlay = { el: e.id, ctx }; App.render();
+    Plan.mixPlay = { el: e.id, layer: layer || null, ctx }; App.render();
     try {
       const bufs = await Promise.all(mix.map(m => fetch('/' + m.s.file).then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b))));
       let end = 0;
@@ -812,8 +941,9 @@ Object.assign(Plan, {
         for (let c = 0; c < b.numberOfChannels; c++) { const x = b.getChannelData(c); for (let k = 0; k < x.length; k += 7) peak = Math.max(peak, Math.abs(x[k])); }
         const g = ctx.createGain(), src = ctx.createBufferSource();
         g.gain.value = 0.9 / peak * mix[i].gain * 0.7;
-        src.buffer = b; src.connect(g).connect(comp); src.start(ctx.currentTime + 0.05 + mix[i].at);
-        end = Math.max(end, mix[i].at + b.duration);
+        const a = Math.min(+mix[i].from || 0, b.duration), z = mix[i].to > a ? Math.min(+mix[i].to, b.duration) : b.duration;   // кусок from–to
+        src.buffer = b; src.connect(g).connect(comp); src.start(ctx.currentTime + 0.05 + mix[i].at, a, z - a);
+        end = Math.max(end, mix[i].at + z - a);
       });
       setTimeout(() => { if (Plan.mixPlay && Plan.mixPlay.ctx === ctx) { Plan.mixPlay = null; ctx.close(); App.render(); } }, (end + 0.4) * 1000);
     } catch (err) { UI.toast('Не проигралось: ' + err.message, 'err'); Plan.mixPlay = null; ctx.close(); App.render(); }

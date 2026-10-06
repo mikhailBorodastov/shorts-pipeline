@@ -23,7 +23,7 @@ const Panels = {
     const focus = h('input.box', { key: key + '|qfocus', placeholder: 'о чём ещё спросить (можно пусто)', style: { width: '240px' },
       value: Local.get('qfocus:' + d.id) || '', oninput: e => Local.set('qfocus:' + d.id, e.target.value) });
     return [
-      h('div.brief-facts', facts.map(([k, v]) => h('span.pill', h('span.dim', k + ' '), v))),
+      this.base(d, key, DL, LK) || h('div.brief-facts', facts.map(([k, v]) => h('span.pill', h('span.dim', k + ' '), v))),
       h('section.card',
         h('div.card-head', h('h3', 'Идея'), h('span.dim.small', 'одна-две фразы: о чём ролик и где крючок')),
         area(key, ['idea'], { cls: 'big', ph: 'Например: детская поликлиника — советские Backrooms…' }),
@@ -43,6 +43,48 @@ const Panels = {
           : h('div.empty', 'Вопросов нет. Claude задаёт их на втором шаге поп-апа «Новое видео» — или нажмите «✨ Задать вопросы».'),
         addLine('+ свой вопрос — Enter', q => Store.add(key, ['qa'], { id: uid('q'), q, a: '', why: '', group: '', round: Math.max(1, ...qa.map(x => x.round || 1)), by: 'me' }), key + '|addq')),
     ];
+  },
+
+  // ---------------- основа видео: формат, подача, визуал, длина — менять можно до монтажа ----------------
+  base(d, key, DL, LK) {
+    const b = d.brief || {}, units = ((d.montage || {}).units || []).length;
+    if (!d.brief) return null;                         // видео до поп-апа: брифа нет — старые плашки
+    const mm = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    const secs = v => { const m = /^\s*(\d+)(?::(\d{1,2}))?\s*$/.exec(v || ''); return m ? (m[2] != null ? +m[1] * 60 + +m[2] : +m[1] * 60) : 0; };
+    const drafts = (d.elements || []).filter(e => e.status !== 'drop' && (e.renders || []).length).length;
+    const save = async (patch, what) => {
+      const lookOf = k => LK.find(x => x.key === k) || {};
+      const warn = [];
+      if (units) warn.push('Монтаж уже начат — сцены собраны под старую основу.');
+      if (patch.look && drafts && (lookOf(patch.look).engine || '2d') !== (lookOf(b.look).engine || '2d')) warn.push(`Черновики препродакшена (${drafts}) нарисованы в другом движке — их придётся перерисовать.`);
+      else if (patch.look && drafts) warn.push(`Черновики препродакшена (${drafts}) нарисованы в старом визуале — останутся как есть, перерисуете по желанию.`);
+      if (patch.mode && d.project) warn.push('Проект ролика переключится на кадр ' + (patch.mode === 'long' ? '16:9 (1920×1080).' : '9:16 (1080×1920).'));
+      if (warn.length && !confirm(`Сменить ${what}?\n\n` + warn.join('\n'))) return App.render();
+      try {
+        const { script } = await api('POST', '/api/videos/brief', { id: d.id, ...patch, force: units ? true : undefined });
+        await Store.load(key, true);
+        UI.toast(`✓ ${what[0].toUpperCase() + what.slice(1)} — сменено. Контекст для Claude обновлён`);
+        if (d.project && script && confirm(`Сценарий уже написан под старую основу. Переписать его под новую (${what})?\n\nClaude перечитает бриф, референсы и ответы и напишет заново; старая версия останется во «Версиях».`)) {
+          AgentPanel.toggle(true);
+          AgentPanel.say(`📝 Я сменил основу видео (${what}). Перепиши сценарий заново под новый бриф: перечитай show (подача, визуал, длина, формат), мои референсы (ref list) и ответы; research.md можно взять старый. Потом montage check и montage tts.`, { mode: 'script', model: 'opus' });
+        }
+      } catch (e) { UI.toast(e.message, 'err'); App.render(); }
+    };
+    const pick = (list, cur, k, what) => sel(list.map(x => ({ value: x.key, label: x.label })), cur, v => v !== cur && save({ [k]: v }, what), { class: 'box' });
+    const dl = DL.find(x => x.key === b.delivery), lk = LK.find(x => x.key === b.look);
+    const len = h('input.box.len', { key: key + '|blen', value: b.len ? mm(b.len) : '', placeholder: '1:30', style: { width: '80px' },
+      onkeydown: e => { if (e.key === 'Enter') e.target.blur(); },
+      onchange: e => { const s = secs(e.target.value); if (!s) { UI.toast('Длина — как 1:30 или 10', 'err'); return App.render(); } if (s !== b.len) save({ len: s }, 'длину'); } });
+    return h('section.card.brief-base',
+      h('div.card-head', h('h3', 'Основа видео'),
+        h('span.dim.small', units ? 'монтаж уже начат — менять можно, но сцены собраны под старую основу' : 'формат, подача, визуал и длина — можно поменять, пока не начат монтаж')),
+      h('div.bb-grid',
+        h('div.bb-f', h('label', 'Формат'), h('div.seg', [['short', 'tall', 'Шортс 9:16'], ['long', 'wide', 'Длинное 16:9']].map(([k, ic, l]) =>
+          h('button', { class: (d.mode === 'long' ? 'long' : 'short') === k ? 'sel' : '', onclick: () => (d.mode === 'long' ? 'long' : 'short') !== k && save({ mode: k, ...(k === 'long' && (b.len || 0) < 180 ? { len: 600 } : k === 'short' && (b.len || 0) > 180 ? { len: 60 } : {}) }, 'формат') }, Icon(ic, 14), l)))),
+        h('div.bb-f', h('label', 'Подача'), pick(DL, b.delivery, 'delivery', 'подачу'), dl && h('p.hint', dl.desc)),
+        h('div.bb-f', h('label', 'Визуал'), (typeof Looks !== 'undefined' && Looks.picker(b.look, v => v !== b.look && save({ look: v }, 'визуал'))) || pick(LK, b.look, 'look', 'визуал'), lk && h('p.hint', lk.desc)),
+        h('div.bb-f', h('label', 'Длина'), h('div.row', len, h('span.dim.small', b.len ? `≈ ${Math.round(b.len * 2.65)} слов` : '')))),
+      typeof Pages.lkOverride === 'function' && Pages.lkOverride(d, key));   // S14: ручки и герои лука только для этого видео
   },
 
   // ---------------- озвучка ----------------

@@ -114,6 +114,44 @@ function sceneObjectAt(o, t) {
   };
 }
 
+// ---------------------------------------------------------------- S21 «Сторож монтажа»: вход и уход без рывка
+// Каждое переключение keys.hide посреди сцены проигрывается анимацией: появление — [t, t+d], уход — [t−d, t] (к ключу объекта уже нет).
+// o.life = { in, out: 'popUp' | 'pop' | 'drop' | 'cut', d, dOut } | false. По умолчанию персонаж (src — lib:characters / char) — popUp, предмет — pop;
+// 'cut' и склейка камеры в момент ключа (cutAt(t) — да) — жёстко, как раньше. Ключ в первые 0.05 с — исходное состояние, без анимации.
+// -> null (анимации нет) | { move, p 0..1 (1 — объект целиком в кадре), dir: 'in' | 'out' }
+function sceneLifeAt(o, t, cutAt) {
+  const L = o.life;
+  if (L === false) return null;
+  const K = scnSorted(o.keys && o.keys.hide).filter(k => typeof k.v === 'boolean');
+  if (!K.length) return null;
+  const lo = L || {}, ch = /characters|"char"|kind":"char/.test(JSON.stringify(o.src || {}));
+  const di = lo.d || 0.4, dd = lo.dOut || lo.d || 0.35;
+  let prev = !!o.hide;
+  for (const k of K) {
+    if (k.v === prev) continue;
+    const tk = k.t; prev = k.v;
+    if (tk <= 0.05 || (cutAt && cutAt(tk))) continue;
+    if (!k.v && t >= tk && t < tk + di) { const mv = lo.in || (ch ? 'popUp' : 'pop'); if (mv !== 'cut') return { move: mv, p: (t - tk) / di, dir: 'in' }; }
+    if (k.v && t >= tk - dd && t < tk) { const mv = lo.out || (ch ? 'popUp' : 'pop'); if (mv !== 'cut') return { move: mv, p: (tk - t) / dd, dir: 'out' }; }
+  }
+  return null;
+}
+// склейка камеры в момент t: камера прыгнула (ключи с hold, смена ракурса)
+function sceneCamCut(cam, t) {
+  if (!cam || !cam.keys || cam.keys.length < 2) return false;
+  const a = sceneCamAt(cam, t - 0.02), b = sceneCamAt(cam, t + 0.02);
+  const d = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1], u[2] - v[2]);
+  return d(a.pos, b.pos) > 0.15 || d(a.target, b.target) > 0.25 || Math.abs(a.fov - b.fov) > 2;
+}
+const SCN_LIFE_E = { back: t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+  backBig: t => { const c1 = 2.6, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); } };
+function scnLifeApply(h, lf) {
+  const p = Math.max(0, Math.min(1, lf.p)), q = lf.dir === 'in' ? p : p;     // p: 0 — нет, 1 — целиком
+  if (lf.move === 'popUp') h.rotation.x += -Math.PI / 2 * (1 - (lf.dir === 'in' ? SCN_LIFE_E.back(q) : q * q));
+  else if (lf.move === 'drop') h.position.y += lf.dir === 'in' ? 1.4 * (1 - SCN_LIFE_E.back(q)) : 2 * Math.pow(1 - q, 3);
+  else { const s = Math.max(0.0001, lf.dir === 'in' ? SCN_LIFE_E.backBig(q) : 1 - Math.pow(1 - q, 3)); h.scale.multiplyScalar(s); }
+}
+
 // ---------------------------------------------------------------- привязки (links): «как Parent в After Effects / Child Of в Blender», но с момента
 // o.links = [{ id, to: <id объекта>, from: t0, until?: t1 }] — с t0 объект едет за `to`: всё, что `to` сделал после t0, добавляется поверх своих ключей объекта
 // (свои ключи и клипы работают как раньше). В t0 ничего не прыгает; после until набранный сдвиг остаётся (объект не телепортируется назад), следующая
@@ -514,8 +552,12 @@ function applyScene(S, t) {
       h.rotation.set(st.rot[0], st.rot[1], st.rot[2], 'YXZ');
       h.scale.set(st.scale[0], st.scale[1], st.scale[2]);
     }
-    h.visible = !st.hide && !(S.editHidden && S.editHidden.has(id));
-    rec.hidden = st.hide;
+    // S21: переключение hide — с анимацией (уход доигрывает до ключа, появление — после); склейка камеры — жёстко
+    const lf = o.keys && o.keys.hide ? sceneLifeAt(o, t, S.cutAt || (S.cutAt = tk => sceneCamCut(S.scene.camera, tk))) : null;
+    if (lf && !(S.hold && S.hold.has(id))) scnLifeApply(h, lf);
+    const hid = st.hide && !(lf && lf.dir === 'out');
+    h.visible = !hid && !(S.editHidden && S.editHidden.has(id));
+    rec.hidden = hid;
     if (rec.pivot) {                                         // привязки (links): сдвиг «за родителем» поверх своих ключей
       const M = o.links && o.links.length ? scnPivotMatrix(byId, o, t, memo) : null;
       if (M) rec.pivot.matrix.copy(M); else rec.pivot.matrix.identity();
@@ -573,5 +615,5 @@ function sceneWorld(scene, PREFABS, LIB, extra = {}) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, sceneHoldSlots, sceneHoldAt, sceneHoldRefs, sceneChAt, sceneBlink, sceneMediaRefs, sceneMediaFrame, SCENE_MEDIA, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
+  module.exports = { sceneLifeAt, sceneCamCut, sceneWorldMatrixAt, scnPivotMatrix, scenePropRefs, sceneHoldSlots, sceneHoldAt, sceneHoldRefs, sceneChAt, sceneBlink, sceneMediaRefs, sceneMediaFrame, SCENE_MEDIA, scenePropUrl, sceneAnimRefs, SCN_EASE, evalKeys, unwrapAngle, sceneShotOf, sceneCamAt, sceneHandheld, sceneObjectAt, sceneOrder, sceneKeyTimes, scnLerpV };
 }

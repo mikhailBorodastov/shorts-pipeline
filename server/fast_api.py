@@ -4,9 +4,12 @@
    голос (tts.py), если его нет или сценарий новее.
 2. plan — Opus (claude -p): читает сценарий, тайминги, prompts/fastkit.md (шпаргалка движка — вместо чтения движка), пишет ОБЩЕЕ в src/scenes.js
    (ASSETS, палитра, общие функции, 3D-мир и места; `const SCENES = []`, `const SCENE_COUNT = N`) и отдаёт план сцен + группы для писателей.
-3. write — писатели параллельно (по умолчанию Sonnet, 3–5 сразу): каждая группа сцен -> src/scenes/sNN.js (`SCENES[k] = {…}`), проверка своими кадрами.
+2b. smoke — общий код должен открываться (кадр без ошибок страницы), иначе Opus чинит scenes.js: писатели не пишут вслепую.
+3. write — писатели параллельно (Sonnet, effort medium, 3–5 сразу; writer/writerEffort в params — другой): каждая группа сцен -> src/scenes/sNN.js (`SCENES[k] = {…}`), проверка кадрами обязательна.
    Недописанная сцена не ломает ролик: заглушка-заполнитель в index.html.
-4. review — Opus-агент в панели Claude (режим fast, автор видит шаги и пишет правки): стыки и кадры, правка ошибок, переиспользуемое -> kit*.js + KIT.md,
+   Шаги 1–3 (голос, план, каждый писатель) пишутся в чат видео (agent.post) — панель Claude показывает их и «Стоп» ещё до сводки;
+   превью окна видео играет написанные сцены вживую (clips_api.fast_state: parts), пока ролик не собран.
+4. review — Opus-агент в панели Claude (режим fast, автор видит шаги и пишет правки): кадры каждой сцены, наложения, смысл, стыки — до 4 кругов, переиспользуемое -> kit*.js + KIT.md,
    montage build (черновик: 30 к/с).
 5. Препродакшен задним числом — элементы из плана (персонажи, предметы, места), без дублей.
 """
@@ -16,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 
 import paths as P
@@ -54,7 +58,7 @@ def _set_parts(ih, n):
         html = re.sub(re.escape(PARTS_A) + r".*?" + re.escape(PARTS_B), lambda m: block, html, flags=re.S)
     else:
         html = html.replace('<script src="scenes.js"></script>', '<script src="scenes.js"></script>\n' + block)
-    open(ih, "w", encoding="utf-8").write(html)
+    P.write_atomic(ih, html)
 
 
 def prep(A, job, vid):
@@ -73,7 +77,7 @@ def prep(A, job, vid):
         need = [t for t in ("paper.js", "kit2d.js", "kit3d.js") if f'src="{t}"' not in html]
         if need and '<script src="scenes.js"></script>' in html:
             html = html.replace('<script src="scenes.js"></script>', "".join(f'<script src="{t}"></script>\n' for t in need) + '<script src="scenes.js"></script>')
-            open(ih, "w", encoding="utf-8").write(html)
+            P.write_atomic(ih, html)
     # голос: нет таймингов или сценарий новее — tts (запись диктора не трогаем)
     vt, sm = os.path.join(pd, "build", "vo_timing.json"), os.path.join(pd, "script.md")
     rec = False
@@ -87,10 +91,89 @@ def prep(A, job, vid):
         stub = True
     if not rec and (stub or os.path.getmtime(sm) > os.path.getmtime(vt)):
         job.summary = "озвучиваю сценарий…"
+        st = _step(A, vid, "🎙 озвучиваю сценарий (черновой голос)")
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-        r = subprocess.run(["python", "tts.py"], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900, creationflags=CF)
+        r = subprocess.run([sys.executable, "tts.py"], cwd=pd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900, creationflags=CF)
         if r.returncode != 0:
+            _res(A, vid, st, (r.stdout + r.stderr)[-400:], True)
             raise RuntimeError("озвучка: " + (r.stdout + r.stderr)[-400:])
+        _res(A, vid, st, "голос готов")
+
+
+def _spent(job, sub=None, label=""):
+    """Стоимость всех вызовов Claude задачи (план, починка, писатели) — в job.meta: журнал задач (.jobs/log.txt) видел только последний вызов."""
+    m = (sub or job).meta or {}
+    acc = getattr(job, "spent", None) or {"cost": 0.0, "turns": 0, "parts": {}}
+    acc["cost"] += m.get("cost") or 0
+    acc["turns"] += m.get("turns") or 0
+    if label:                                                   # разбивка: план / починка / сцены 1–4 … — видно, кто съел лимит
+        acc["parts"][label] = round(acc["parts"].get(label, 0) + (m.get("cost") or 0), 2)
+    job.spent = acc
+    if sub is None:
+        job.meta = {}
+
+
+def _step(A, vid, text):
+    """Шаг быстрого монтажа в чат видео (панель Claude справа): автор видит, что идёт, ещё до сводки."""
+    try:
+        return A.agapi().post(vid, "step", text, tool="fast")["i"]
+    except Exception:
+        return None
+
+
+def _res(A, vid, i, res, err=False):
+    try:
+        i and A.agapi().post_res(vid, i, res, err)
+    except Exception:
+        pass
+
+
+def _note(A, vid, text, kind="note"):
+    try:
+        A.agapi().post(vid, kind, text)
+    except Exception:
+        pass
+
+
+def _snap_errors(vid, ts="1"):
+    """montage snap: страница проекта открывается? -> строки ошибок страницы ([pageerror] …) или пусто."""
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    try:
+        r = subprocess.run([sys.executable, STUDIO_PY, "montage", "snap", vid, ts], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=400, creationflags=CF)
+    except subprocess.TimeoutExpired:
+        return ["снимок кадра не уложился в 400 с"]
+    out = (r.stdout + r.stderr).splitlines()
+    return [ln for ln in out if "pageerror" in ln or "Error" in ln or "кадры не снялись" in ln][:8]
+
+
+def smoke(A, job, vid):
+    """Перед писателями: общий код (src/scenes.js) должен грузиться. Иначе каждый писатель снимает кадры сломанной страницы и пишет вслепую
+    (так было с `const SFX`, занятым движком). Ошибки — Opus правит scenes.js, до 2 кругов."""
+    pd = P.video(vid)
+    from ideas_claude import S, STR
+    st = _step(A, vid, "🧪 проверяю, что общий код открывается (кадр без ошибок страницы)")
+    job.summary = "проверяю общий код…"
+    errs = _snap_errors(vid)
+    for rnd in range(2):
+        if not errs:
+            break
+        job.summary = f"чиню общий код (круг {rnd + 1})…"
+        spec = {"system": _sys(A, "plan:" + vid), "timeout": 900, "model": A.VISUAL_MODEL, "effort": "medium", "cwd": pd, "dirs": [P.STUDIO],
+                "tools": ["Read", "Edit", "Grep"], "allowed": ["Read", "Edit", "Grep"],
+                "prompt": f"""Общий код ролика src/scenes.js не грузится — страница падает с ошибками:
+{chr(10).join(errs)}
+Почини ТОЛЬКО src/scenes.js (Edit), сцены src/scenes/sNN.js ещё не написаны. Частая причина — глобальная const с именем движка (W, H, B, C, E, P, IMG, TOTAL, canvas, ctx, font, pill, mix, glow…):
+переименуй свою (и все её упоминания в scenes.js). Шпаргалка движка — {FASTKIT.replace(chr(92), '/')}, раздел «Частые ошибки». Ответ: ok и note — что поправил.""",
+                "schema": S({"ok": {"type": "boolean"}, "note": STR}, ["ok", "note"])}
+        try:
+            A.run_claude(job, spec)
+            _spent(job, label="починка общего кода")
+        except Exception as e:
+            errs = [str(e)[:300]]
+            break
+        errs = _snap_errors(vid)
+    _res(A, vid, st, "страница открывается, ошибок нет" if not errs else "ошибки остались: " + " · ".join(errs)[:350], bool(errs))
 
 
 def sections(pd):
@@ -263,8 +346,8 @@ def pack_preprod(A, vid):
         dst = os.path.join(S, "pp2d", e["id"] + ".js")
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         ret = ", ".join(fns + ["ELEMENT: typeof ELEMENT !== 'undefined' ? ELEMENT : null", "PICS: typeof PICS !== 'undefined' ? PICS : {}"])
-        open(dst, "w", encoding="utf-8").write(f"// СГЕНЕРИРОВАНО быстрым монтажом: 2D-черновик «{e.get('name')}» v{r.get('v')} в своей области видимости.\n"
-                                               f"window.PP2D = window.PP2D || {{}};\nwindow.PP2D[{json.dumps(e['id'])}] = (function () {{\n{code}\n;return {{ {ret} }};\n}})();\n")
+        P.write_atomic(dst, f"// СГЕНЕРИРОВАНО быстрым монтажом: 2D-черновик «{e.get('name')}» v{r.get('v')} в своей области видимости.\n"
+                       f"window.PP2D = window.PP2D || {{}};\nwindow.PP2D[{json.dumps(e['id'])}] = (function () {{\n{code}\n;return {{ {ret} }};\n}})();\n")
         pp2d.append(f"../{M.STUDIO_DIR}/pp2d/{e['id']}.js")
         lines.append(f"- 2D {'ПЕРСОНАЖ' if e['kind'] == 'char' else 'МЕСТО' if e['kind'] == 'scene' else 'ПРЕДМЕТ'} «{e.get('name')}»{' ✓' if e.get('status') == 'ok' else ''} — "
                      f"PP2D['{e['id']}'].{fns[0] if fns else 'ELEMENT.draw'}(…); функции: {', '.join(fns[:8])}. {_head_comment(code)[:400]}")
@@ -287,7 +370,7 @@ def pack_preprod(A, vid):
     m0 = re.search(r"<!-- studio.*?<!-- /studio -->\n", h0, flags=re.S)
     if m0:
         out = h0[:m0.start()].replace('<script src="paper.js"></script>\n', "") + m0.group(0) + h0[m0.end():].replace('<script src="paper.js"></script>\n', "")
-        open(ih, "w", encoding="utf-8").write(out)
+        P.write_atomic(ih, out)
     rv = os.path.join(pd, "src", "review.html")              # ревью грузит те же скрипты
     if os.path.isfile(rv):
         h_ = _read(rv)
@@ -297,7 +380,7 @@ def pack_preprod(A, vid):
                 h_ = re.sub(r"<!-- studio.*?<!-- /studio -->\n", lambda m: blk.group(0), h_, flags=re.S)
             elif '<script src="scenes.js"></script>' in h_:
                 h_ = h_.replace('<script src="scenes.js"></script>', blk.group(0) + '<script src="scenes.js"></script>')
-            open(rv, "w", encoding="utf-8").write(h_)
+            P.write_atomic(rv, h_)
     head = ("ПРЕПРОДАКШЕН ВИДЕО — что уже есть (✓ — утверждено автором). ОБЯЗАТЕЛЬНО бери это, а не рисуй своё: места — ppWorld, герои и предметы — ppAdd / PP2D, звуки — add(...). "
             "Рисуй сам только то, чего здесь нет. ASSETS.images дополни PP_IMAGES: const ASSETS = { images: Object.assign({ /* свои */ }, PP_IMAGES), sequences: {} };")
     return (head + "\n" + "\n".join(lines)) if lines else "ПРЕПРОДАКШЕН ВИДЕО: пусто — всё рисуй сам.", len(lines)
@@ -362,9 +445,14 @@ def write_group(A, job, vid, grp, P_, secs, inv=""):
 Проект: {pd.replace(chr(92), '/')}. Шпаргалка движка — {FASTKIT.replace(chr(92), '/')} (прочитай целиком). Общий код уже написан — src/scenes.js (прочитай: функции, мир, палитра);
 готовые детали — src/kit2d.js, src/kit3d.js. Сценарий — script.md (найди свои секции по заголовкам).
 Каждую сцену k — ОТДЕЛЬНЫМ файлом src/scenes/sNN.js (NN = k двумя цифрами): `SCENES[k] = {{ name, trans, draw(ctx, lt, D, T) {{…}}, sfx(add) {{…}} }};`
+Ходы: всё, что нужно прочитать (шпаргалку, src/scenes.js, script.md, kit-файлы), запрашивай ОДНИМ ответом — несколько Read / Grep сразу, а не по одному: каждый лишний ход перечитывает всю историю заново.
 Только свои файлы ({files}); src/scenes.js и чужие сцены НЕ меняй — нужна общая функция, которой нет, — объяви её в своём файле с префиксом s{grp[0]:02d}_.
 События — к словам: WT(k, 'кусок слова') (берёт первое слово с подстрокой — уникальные куски). Стиль, раскладка кадра, плавные появления — по шпаргалке.
-Проверь себя: python {STUDIO_PY} montage snap {vid} <3–5 секунд внутри твоих сцен через запятую> → Read PNG; ошибки страницы — в выводе. Поправь и проверь ещё раз (максимум 3 круга).
+ПРОВЕРКА ГЛАЗАМИ ОБЯЗАТЕЛЬНА — без неё сцену не сдавай: python {STUDIO_PY} montage snap {vid} <по 2–3 секунды внутри КАЖДОЙ своей сцены: начало, середина, конец — через запятую> → Read PNG; ошибки страницы — в выводе.
+Смотри на кадр как зритель: герои и предметы НЕ налезают друг на друга и не обрезаны краем 9:16, лица не закрыты, плашки не в зоне субтитров (y 1400–1540),
+в кадре понятно, о чём говорит голос в эту секунду, предметы препродакшена узнаваемы и в своём масштабе, нет пустых и тёмных кадров. Что не так — поправь и сними снова (до 4 кругов).
+СТОРОЖ ОБЯЗАТЕЛЕН для 3D-сцен: python {STUDIO_PY} montage guard {vid} --scenes {','.join(str(k) for k in grp)} --no-shots → каждое ❌ почини и прогони снова (до 3 кругов; что задумано — пометь, не прячь). СТОРОЖ (3D): герои и предметы не входят друг в друга и в декорации, не пропадают и не возникают рывком. Появление и уход — life3(obj, lt, {{in, out}}) / enter3 / exit3 из kit3d.js (по умолчанию персонаж — popUp, предмет — pop; жёсткий 'cut' — только на склейке камеры), а не obj.visible = …; задуманное касание (сидит, держит) — w.touch('A', 'B'), задуманная подмена — w.guard('Имя', {{pop: false}}).
+Если снимок не получился из-за ошибки страницы в src/scenes.js (общий код, не твой) — НЕ пиши вслепую: в note начни с «ОШИБКА ОБЩЕГО КОДА:» и процитируй её.
 
 План сцен:
 {chr(10).join(f"[{k}] {secs[k]['start']}–{round(secs[k]['start'] + secs[k]['dur'], 2)} с «{secs[k]['title']}». Слова: {secs[k]['words'][:900]}" + chr(10) + f"    что в кадре: {briefs.get(k, {}).get('brief', '')}" + (f" · общие функции: {briefs[k].get('uses')}" if briefs.get(k, {}).get('uses') else '') for k in grp if k < len(secs))}
@@ -372,9 +460,9 @@ def write_group(A, job, vid, grp, P_, secs, inv=""):
 {inv}
 
 Ответ: ok и note — 1–2 фразы, что сделано и что не вышло."""
-    spec = {"system": _sys(A, key), "prompt": prompt, "timeout": 1500, "model": job.params.get("writer") or A.TEXT_MODEL, "effort": "medium", "cwd": pd, "dirs": [P.STUDIO],
+    spec = {"system": _sys(A, key), "prompt": prompt, "timeout": 2700, "model": job.params.get("writer") or A.TEXT_MODEL, "effort": job.params.get("writerEffort") or "medium", "cwd": pd, "dirs": [P.STUDIO],
             "tools": ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
-            "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(python {STUDIO_PY} montage snap:*)"],
+            "allowed": ["Read", "Write", "Edit", "Glob", "Grep", f"Bash(python {STUDIO_PY} montage snap:*)", f"Bash(python {STUDIO_PY} montage guard:*)"],
             "schema": S({"ok": {"type": "boolean"}, "note": STR}, ["ok", "note"])}
 
     class Sub:                                                  # своя «задача» для run_claude (свой процесс, отмена — общая)
@@ -382,10 +470,14 @@ def write_group(A, job, vid, grp, P_, secs, inv=""):
             s.id = f"{job.id}-w{grp[0]}"; s.proc = None; s.cancelled = False; s.summary = ""; s.meta = {}
     sj = Sub()
     job.subs.append(sj)
+    rng = f"{grp[0] + 1}" if len(grp) == 1 else f"{grp[0] + 1}–{grp[-1] + 1}"
+    st = _step(A, vid, f"✍️ пишу {'сцену' if len(grp) == 1 else 'сцены'} {rng} (Sonnet, с проверкой кадров): " + " · ".join((secs[k]["title"] or "")[:40] for k in grp if k < len(secs)))
     try:
         r = A.run_claude(sj, spec) or {}
     except Exception as e:
         r = {"ok": False, "note": str(e)[:300]}
+    _res(A, vid, st, r.get("note") or ("готово" if r.get("ok") else "не вышло"), not r.get("ok"))
+    _spent(job, sj, "сцены " + rng)
     return grp, r
 
 
@@ -397,13 +489,25 @@ def run(A, job):
         raise ValueError("у видео ещё нет проекта ролика — сначала сценарий («Начать»)")
     t0 = time.time()
     job.subs = []
-    prep(A, job, vid)
-    job.summary = "беру препродакшен: места, героев, предметы, звуки…"
-    inv, n_pp = pack_preprod(A, vid)
-    res, secs = plan(A, job, vid, job.params.get("wish") or "", inv)
-    res = res or {}
+    wish = job.params.get("wish") or ""
+    _note(A, vid, "⚡ Быстрый монтаж" + (f": {wish}" if wish else ""), "you")
+    _note(A, vid, "Как идёт: план и общий код (Opus) → сцены пишут параллельно (Sonnet) → сводка и сборка черновика — здесь же. "
+                  "Готовые сцены видно в превью сразу, недописанные — тёмным кадром «Claude пишет…». Правки пишите после сводки.")
+    try:
+        prep(A, job, vid)
+        job.summary = "беру препродакшен: места, героев, предметы, звуки…"
+        inv, n_pp = pack_preprod(A, vid)
+        st = _step(A, vid, "🧭 план сцен и общий код: места, герои, палитра (Opus, 3–8 мин)")
+        res, secs = plan(A, job, vid, wish, inv)
+        _spent(job, label="план")
+        res = res or {}
+        _res(A, vid, st, f"секций {len(secs)} · групп писателей {len(res.get('groups') or [])}" + (f" · из препродакшена: {n_pp}" if n_pp else ""))
+    except Exception as e:
+        _note(A, vid, str(e)[:300], "err")
+        raise
     n = len(secs)
     set_parts(pd, n)
+    smoke(A, job, vid)
     groups = [g for g in (res.get("groups") or []) if g] or [list(range(n))]
     seen = {k for g in groups for k in g}
     if len(seen) < n:                                           # потерянные секции — к последней группе
@@ -420,9 +524,10 @@ def run(A, job):
                 for s in job.subs:
                     s.cancelled = True
                     try:
-                        s.proc and s.proc.kill()
+                        s.proc and P.kill_tree(s.proc)              # S22: со всеми детьми
                     except Exception:
                         pass
+                _note(A, vid, "Быстрый монтаж остановлен — написанные сцены остались в проекте", "err")
                 raise RuntimeError("отменено")
             g, r = f.result()
             done += 1
@@ -443,10 +548,14 @@ def run(A, job):
         A.apply_ops(key, ops)
     # сводка и проверка — Opus в панели Claude: автор видит и пишет правки по ходу
     text = (f"⚡ Быстрый монтаж — ШАГ 3 (сводка). Общий код (src/scenes.js) и сцены (src/scenes/sNN.js) уже написаны параллельно за {int(t_write // 60)} мин. "
-            "НЕ переписывай их заново и не улучшай то, что работает: ОДИН montage snap на все сцены (по кадру из середины каждой) → поправь только явные ошибки — пустые и сломанные кадры, "
-            "ошибки страницы, наложения на субтитры (Edit), ещё один snap по исправленным — и всё. Не больше 2 снимков. "
+            "Ты — режиссёр монтажа: не переписывай сцены с нуля, но доведи их до нормального вида. montage snap по кадру из середины каждой сцены — одной командой, все секунды через запятую (это одна картинка-лист; так дешевле), второй кадр — только подозрительным сценам → "
+            "найди и поправь (Edit в src/scenes/sNN.js): герои и предметы налезают друг на друга или обрезаны краем 9:16, лица закрыты, пустые / тёмные / сломанные кадры, "
+            "ошибки страницы, плашки в зоне субтитров, кадр не про то, что говорит голос, стыки сцен (разный масштаб, прыжки камеры), предметы препродакшена не похожи на себя. "
+            "Снимай только исправленные — до 3 кругов, пока кадры не станут чистыми. "
+            f"Затем СТОРОЖ: python {STUDIO_PY} montage guard {vid} (весь ролик, ~20 с) → Read лист кадров → каждое ❌ почини (life3 / enter3 / exit3 из kit3d.js вместо visible, сдвинь путь; задуманное — w.touch / w.guard) и прогони снова, пока не станет чисто. "
             f"Что вышло переиспользуемым (место, предмет, движение героя) — перенеси функцией в {P.STUDIO.replace(chr(92), '/')}/engine/kit2d.js или kit3d.js и строкой в KIT.md. "
-            "Потом montage build (черновик, 30 к/с). В ответе — что поправил и что автору посмотреть.\nОтчёты писателей:\n" + "\n".join("- " + x for x in notes))
+            "Потом montage build (черновик, 30 к/с). В ответе — что поправил, итог сторожа (сколько было ❌ → осталось) и что автору посмотреть.\nОтчёты писателей:\n" + "\n".join("- " + x for x in notes))
+    _note(A, vid, f"Сцены написаны за {int(t_write // 60)} мин" + (f", в препродакшен добавлено: {len(ops)}" if ops else "") + ". Дальше Claude сводит ролик и собирает черновик.")
     s = A.agapi().get_session(A, vid, A.VISUAL_MODEL, "fast")
     s.say(text, None)
     time.sleep(5)
@@ -455,4 +564,6 @@ def run(A, job):
             s.stop(); raise RuntimeError("отменено")
         job.summary = "Claude сводит ролик и собирает черновик (панель справа)…"
         time.sleep(5)
+    sp = getattr(job, "spent", None) or {}
+    job.meta = {"cost": sp.get("cost"), "turns": sp.get("turns"), "parts": sp.get("parts")}         # план + писатели (сводка в панели считается отдельно, в чате)
     job.summary = f"готово за {int((time.time() - t0) // 60)} мин · в препродакшен добавлено: {len(ops)}"

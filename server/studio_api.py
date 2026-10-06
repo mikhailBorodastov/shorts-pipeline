@@ -402,11 +402,16 @@ def handle_post(A, h, p, body):
         h._json(r); return True
     if p == "/api/el/render/archive":                         # 🗑 версия черновика элемента — в архив (не понравилась лепка, сделать заново)
         h._json(el_render_archive(A, body.get("key", ""), body.get("el", ""), body.get("rid", ""), bool(body.get("force")))); return True
+    if p.startswith("/api/lib/reuse") and A.rsapi().handle_post(A, h, p, body):   # S15 «Уже было»: решение по находке, поиск заново
+        return True
     if p == "/api/lib/import":                                # 📚 из библиотеки в препродакшен видео
         h._json(import_to_video(A, body.get("key", ""), body.get("id", ""), body.get("v"), body.get("why") or "", body.get("name") or "")); return True
     if p == "/api/lib/archive":
         c = channel_dir(body.get("channel") or None)
         h._json(archive_item(A, c, body.get("id", ""), body.get("v"), bool(body.get("force")))); return True
+    if p == "/api/lib/restore":                               # ↩ вернуть убранный предмет (плашка после 🗑 в библиотеке)
+        c = channel_dir(body.get("channel") or None)
+        h._json(restore_item(A, c, body.get("token", ""))); return True
     if p == "/api/lib/fix":                                   # ✏️ правка предмета библиотеки: Claude делает новую версию (ideas_claude.libfix_spec)
         c = channel_dir(body.get("channel") or None)
         j = A.start_job("libfix", "channel:" + c["id"], "libfix:" + body.get("id", ""),
@@ -576,9 +581,13 @@ def archive_item(A, c, lid, v=None, force=False):
     items = lib_index(c)
     if v is None or len(card["versions"]) <= 1:
         src = os.path.join(lib_dir(c), *lid.split("/"))
-        shutil.move(src, os.path.join(dst_root, "whole-" + stamp))
+        dst = os.path.join(dst_root, "whole-" + stamp)
+        shutil.move(src, dst)
+        entry = next((i for i in items if i["id"] == lid), None)
+        with open(os.path.join(dst, "_lib_entry.json"), "w", encoding="utf-8") as f:   # запись каталога — чтобы «↩ Восстановить» вернул предмет как был
+            json.dump({"id": lid, "entry": entry}, f, ensure_ascii=False)
         lib_save_index(A, c, [i for i in items if i["id"] != lid])
-        return {"archived": lid, "to": os.path.join(dst_root, "whole-" + stamp)}
+        return {"archived": lid, "to": dst, "token": os.path.relpath(dst, P.ARCHIVE).replace("\\", "/")}
     v = int(v)
     src = os.path.join(lib_dir(c), *lid.split("/"), f"v{v}")
     if not os.path.isdir(src):
@@ -591,6 +600,27 @@ def archive_item(A, c, lid, v=None, force=False):
     A.write_text(cp, json.dumps(card, ensure_ascii=False, indent=1))
     set_meta(A, c, lid, {})
     return {"archived": f"{lid}@{v}"}
+
+
+def restore_item(A, c, token):
+    """↩ Вернуть предмет, убранный целиком (archive_item): папка из _archive/library/<канал>/<id>/whole-… — назад в библиотеку, запись — в каталог."""
+    src = os.path.normpath(os.path.join(P.ARCHIVE, token or ""))
+    root = os.path.normpath(os.path.join(P.ARCHIVE, "library", c["id"]))
+    if not src.startswith(root + os.sep) or not os.path.isdir(src) or not os.path.basename(src).startswith("whole-"):
+        raise ValueError("нечего восстанавливать (архивной копии нет)")
+    meta = json.load(open(os.path.join(src, "_lib_entry.json"), encoding="utf-8"))
+    lid = meta["id"]
+    dst = os.path.join(lib_dir(c), *lid.split("/"))
+    if os.path.exists(dst):
+        raise ValueError(f"в библиотеке уже есть {lid} — восстановить поверх нельзя")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    os.remove(os.path.join(src, "_lib_entry.json"))
+    shutil.move(src, dst)
+    items = [i for i in lib_index(c) if i["id"] != lid]
+    if meta.get("entry"):
+        items.append(meta["entry"])
+    lib_save_index(A, c, sorted(items, key=lambda i: (i["kind"], i["name"].lower())))
+    return {"restored": lid}
 
 
 def el_render_archive(A, key, eid, rid, force=False):
@@ -636,9 +666,10 @@ def el_render_archive(A, key, eid, rid, force=False):
     return {"archived": f"v{r.get('v')}", "left": len(rest)}
 
 
-def import_to_video(A, key, lid, v=None, why="", name=""):
+def import_to_video(A, key, lid, v=None, why="", name="", into=None, status="ok"):
     """📚 Из библиотеки в препродакшен видео: копия версии -> preprod/<el>/v1 (её файлы — готовый черновик элемента), элемент утверждён ✓,
-    why — что это в ролике и где использовать (Claude читает его при сценах). Сцены видео ставят его как el:<id>@v1, источник — в e.lib."""
+    why — что это в ролике и где использовать (Claude читает его при сценах). Сцены видео ставят его как el:<id>@v1, источник — в e.lib.
+    into — залить в уже заведённый элемент (S15 «Уже было»: id, имя, why и связи сцен остаются), версией после его черновиков; status '' — «за основу»."""
     pid = key[5:]
     c = channel_dir(P.index()["videos"].get(pid, {}).get("channel"))
     cp, card = _card(c, lid)
@@ -650,16 +681,21 @@ def import_to_video(A, key, lid, v=None, why="", name=""):
     ver = next((x for x in card["versions"] if x["v"] == v), None)
     if not ver:
         raise ValueError(f"нет версии v{v}")
-    eid = A.new_id("e")
+    cur = A._by_id(A.load(key).get("elements"), into) if into else None
+    if into and not cur:
+        raise ValueError("элемент не найден")
+    eid = into or A.new_id("e")
+    nv = max([r.get("v", 0) for r in (cur or {}).get("renders") or []] + [0]) + 1
     src = os.path.join(lib_dir(c), *lid.split("/"), f"v{v}")
-    wd = os.path.join(P.render(pid), eid, "v1")
+    wd = os.path.join(P.render(pid), eid, f"v{nv}")
+    shutil.rmtree(wd, ignore_errors=True)
     shutil.copytree(src, wd)
     has = lambda f: os.path.isfile(os.path.join(wd, f))
     img = A.save_file(pid, open(os.path.join(wd, ver["preview"].split("/", 1)[1]), "rb").read()) if ver.get("preview") and has(ver["preview"].split("/", 1)[1]) else ""
     extra = [A.save_file(pid, open(os.path.join(wd, "_shots", f), "rb").read()) for f in ("element_1.png", "element_3.png", "element_5.png", "element_7.png") if has(os.path.join("_shots", f))]
     rid = A.new_id("r")
     ref = f"lib:{lid}@{v}"
-    r = {"id": rid, "v": 1, "dir": f"{pid}/{eid}/v1", "img": img, "extra": extra, "fn": ver.get("fn", ""), "lib": ref, "feedback": "",
+    r = {"id": rid, "v": nv, "dir": f"{pid}/{eid}/v{nv}", "img": img, "extra": extra, "fn": ver.get("fn", ""), "lib": ref, "feedback": "",
          "summary": f"из библиотеки {ref}" + (f" — {ver.get('summary')}" if ver.get("summary") else ""), "ts": now_ms()}
     e = {"id": eid, "kind": ek, "name": name or card["name"], "desc": card.get("desc", ""), "why": why, "status": "ok", "by": "lib", "lib": {"id": lid, "v": v},
          "refs": [], "q": "", "renders": [r], "render": rid}
@@ -673,15 +709,22 @@ def import_to_video(A, key, lid, v=None, why="", name=""):
         e["form"] = "rig"
         if ver.get("rig") == "model" or has("model.glb"):
             r["model3d"] = True
-    A.apply_ops(key, [{"op": "add", "path": ["elements"], "item": e}])
-    return {"el": eid, "ref": ref, "name": e["name"]}
+    if cur:
+        e.update(name=cur.get("name") or e["name"], desc=cur.get("desc") or e["desc"], why=cur.get("why") or why, status=status)
+        ops = [{"op": "add", "path": ["elements", eid, "renders"], "item": r}]
+        ops += [{"op": "set", "path": ["elements", eid, k], "value": e[k]} for k in ("status", "lib", "render", "dim", "form") if k in e]
+        A.apply_ops(key, ops)
+    else:
+        A.apply_ops(key, [{"op": "add", "path": ["elements"], "item": e}])
+    return {"el": eid, "ref": ref, "name": e["name"], "rid": rid}
 
 
 # ---------------------------------------------------------------- CLI
 def cli(A, argv):
     """lib list [--kind props] [--channel ID] | lib show <kind/slug> | lib publish <video> <element> [--as new|<kind/slug>] | lib candidates [--video ID]
     | lib fork <kind/slug>[@N] [--as "Новое имя"] [--note "что меняю"] — новая версия копией (или новый предмет), путь для правки
-    | lib preview <kind/slug>@N — снять превью версии на стенде (после правки файлов)"""
+    | lib preview <kind/slug>@N — снять превью версии на стенде (после правки файлов)
+    | lib reuse <видео> <эл> as-is|base|new|undo [ref] | lib reuse-check <видео> [эл…] | lib reuse-catalog <видео> — S15 «Уже было» (reuse_api.py)"""
     if not argv:
         print(cli.__doc__); return True
     cmd, a = argv[0], argv[1:]
@@ -707,6 +750,8 @@ def cli(A, argv):
         print(json.dumps(import_to_video(A, "plan:" + a[0], lid, vv or None, A._opt(a, "--why", ""), A._opt(a, "--name", "")), ensure_ascii=False)); return True
     if cmd == "preview":
         print(json.dumps(preview(A, c, a[0]), ensure_ascii=False)); return True
+    if cmd.startswith("reuse"):                                # S15: lib reuse <видео> <эл> as-is|base|new|undo [ref] | reuse-check | reuse-catalog
+        return A.rsapi().cli(A, cmd, a)
     if cmd == "publish":
         job = A.Job("libpublish", "plan:" + a[0], "libpublish", {"el": a[1], "as": A._opt(a, "--as", "new")})
         publish(A, job)

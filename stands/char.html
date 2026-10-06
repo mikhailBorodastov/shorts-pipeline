@@ -67,7 +67,7 @@
   }
   function paint(T = 0) {
     const W2 = cv.width, H2 = cv.height;
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = q.get('bg') || '#ece6da'; ctx.fillRect(0, 0, W2, H2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); if (q.get('bg') === 'none') ctx.clearRect(0, 0, W2, H2); else { ctx.fillStyle = q.get('bg') || '#ece6da'; ctx.fillRect(0, 0, W2, H2); }   // bg=none — без фона (персонаж на доску обложек)
     const base = rigPose(CH.pose, q.get('emotion') ? rigEmotion(CH, q.get('emotion')) : null, { wear: js('wear', {}) }, js('pose', {}));
     if (ANIM && q.get('strip') === '1') {                 // лента кадров клипа: n моментов по длине
       const n = +q.get('n') || 8, dur = ANIM.dur || 1, cwid = W2 / n, h = Math.min(cwid * 1.1, H2 * 0.72);

@@ -54,6 +54,32 @@ const FX3 = {
     tone: 'aces', grade: { sat: 0.12, contrast: 0.06, bright: 0.03 }, vignette: { offset: 0.3, darkness: 0.45 }, ca: 0 },
 };
 
+// визуал канала (S14): window.LOOK.fx поверх fx каждого мира. Ручки относительные — ×1 / +0 = как задумано в сцене:
+//   bloom / dof / tilt: { on: false — выключить, true — включить (FX_ON, если в сцене не было) }, bloom.k — сила ×, dof.k — зона резкости ×,
+//   grade: { sat, contrast, bright } — прибавка, caK — аберрация ×, noise — зерно плёнки (если > 0).
+const FX_ON = { bloom: { intensity: 0.8, threshold: 0.8, smooth: 0.25, radius: 0.6 }, dof: { range: 2.8, bokeh: 2.6 }, tilt: { offset: 0, area: 0.45, feather: 0.3 } };
+function lookFx(fx) {
+  const L = typeof LOOKV === 'function' ? LOOKV('fx', null) : null;
+  if (!L || typeof L !== 'object') return fx;
+  const out = Object.assign({}, fx);
+  for (const k of ['bloom', 'dof', 'tilt']) {
+    const v = L[k]; if (!v || typeof v !== 'object') continue;
+    if (v.on === false) { out[k] = null; continue; }
+    if (v.on === true && !out[k]) out[k] = Object.assign({}, FX_ON[k]);
+    if (!out[k] || v.k == null) continue;
+    out[k] = Object.assign({}, out[k]);
+    if (k === 'bloom') out.bloom.intensity = (out.bloom.intensity || 0) * v.k;
+    if (k === 'dof') out.dof.range = (out.dof.range || 2.8) * v.k;
+  }
+  if (L.grade && typeof L.grade === 'object') {
+    out.grade = Object.assign({ sat: 0, contrast: 0, bright: 0 }, out.grade);
+    for (const g of ['sat', 'contrast', 'bright']) if (L.grade[g] != null) out.grade[g] = (out.grade[g] || 0) + L.grade[g];
+  }
+  if (L.caK != null) out.ca = (out.ca || 0) * L.caK;
+  if (L.noise) out.noise = L.noise;
+  return out;
+}
+
 function world3d(o) {
   const w = Object.create(W3API);
   Object.assign(w, { o, ticks: [], dyn: [], t: 0, T: 0, items: [], layout: o.layout || null });
@@ -154,7 +180,9 @@ const W3API = {
     let fx = o.fx || 'night';
     if (typeof fx === 'string') fx = FX3[fx];
     else fx = Object.assign({}, FX3[fx.preset || 'night'], fx);
+    fx = lookFx(fx);
     this.fxCfg = fx;
+    this.dof = this.tilt = this.bloom = this.caFx = this.noiseFx = this.vigFx = this.satFx = this.bcFx = null;   // _post() can run again (S14 live look preview)
     const comp = (this.comp = new P.EffectComposer(X3.R, { frameBufferType: THREE.HalfFloatType, multisampling: fx.msaa == null ? 4 : fx.msaa }));
     comp.addPass(new P.RenderPass(this.scene, this.cam));
     const list = [];
@@ -709,3 +737,7 @@ function spriteCard(w, key, o = {}) {
   c.pt = (fx, fy) => [((pad + (o.flip ? 1 - fx : fx) * iw * k) / cw - 0.5) * c.wW, (1 - (pad + fy * ih * k) / ch) * c.hW - c.footW];
   return c;
 }
+
+// S21 «Сторож монтажа»: пометки для stands/guard.js — w.touch('A', 'B') касание задумано, w.guard('Имя', { pop: false, stuck: false }). В ролике ничего не делают.
+W3API.touch = function (a, b) { (this._touch = this._touch || []).push([a, b || '*']); return this; };
+W3API.guard = function (name, o) { (this._gOff = this._gOff || {})[name] = Object.assign(this._gOff[name] || {}, o); return this; };

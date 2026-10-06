@@ -59,7 +59,7 @@ body.agent-open .stage-editor { right: var(--agent-w); }
 .ag-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; background: rgba(255, 204, 51, .1); border: 1px solid rgba(255, 204, 51, .35); color: #ffe39a; border-radius: var(--r-pill); padding: 2px 4px 2px 10px; }
 .ag-chip.dim { background: var(--panel2); border-color: var(--line); color: var(--dim); padding-right: 10px; }
 .ag-chip .x { background: transparent; border: 0; padding: 0 6px; color: inherit; }
-.ag-form textarea { background: var(--field); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 11px; min-height: 64px; }
+.ag-form textarea { background: var(--field); border: 1px solid var(--line); border-radius: var(--r); padding: 9px 11px; min-height: 64px; max-height: 34vh; overflow-y: auto; resize: none; }   /* растёт по тексту до ~⅓ окна, дальше — прокрутка */
 .ag-bar { display: flex; align-items: center; gap: 6px; }
 .ag-scope button { padding: 3px 9px; font-size: 11.5px; }
 .ag-bar .primary { gap: 6px; }
@@ -103,3 +103,107 @@ body.ws-mode #agentfab { bottom: 72px; }   /* не на кнопках подв�
 .ag-cl table { display: block; max-width: 100%; overflow-x: auto; }
 .ag-choice { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 6px; }
 .ag-choice button { white-space: normal; text-align: left; }
+
+/* картинки-референсы: в чате (реплика автора, вложения перед отправкой), в пометках на кадре и во вкладке «Правки» */
+.ag-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ag-imgs img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line-strong); cursor: zoom-in; display: block; }
+.ag-imgs.pending { margin: 0 0 6px; }
+.ag-img { position: relative; display: inline-block; }
+.ag-img .x { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 0; background: rgba(0,0,0,.8); color: #fff; font-size: 12px; line-height: 18px; cursor: pointer; }
+.ag-form.drop { outline: 2px dashed var(--key); outline-offset: 2px; }
+.pv-popin { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pv-popin .row { display: flex; gap: 4px; align-items: center; }
+.pv-popin .row input { flex: 1; min-width: 0; }
+.pv-refs { display: flex; flex-wrap: wrap; gap: 6px; }
+.pv-refs:empty { display: none; }
+.pv-refs img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line-strong); display: block; }
+.pv-dot.has-ref { box-shadow: 0 0 0 3px rgba(0,0,0,.45), 0 0 0 5px var(--key); }
+
+/* карточка правки на кадре: текст в несколько строк, отрезок «с … по …», картинки, удалить / сделано */
+.pv-card { position: fixed; z-index: 60; display: flex; flex-direction: column; align-items: stretch; gap: 8px; transform: none; min-width: 0; padding: 10px 12px; background: rgba(22, 22, 26, .97);
+  border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 10px 34px rgba(0,0,0,.55); cursor: default; }
+.pv-card .pv-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.pv-card .sp { flex: 1; }
+.pv-card textarea { width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical; font-size: 13px; line-height: 1.4; padding: 8px 10px; background: rgba(10,10,12,.9); }
+.pv-card .pv-time { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 12px; }
+.pv-card .pv-t { width: 74px; padding: 4px 6px; font: 12px/1.2 var(--mono, monospace); }
+.pv-card .pv-refrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* S22: правка «на весь ролик» */
+.pv-card .pv-globrow { display: flex; }
+.pv-card .pv-glob { border-radius: 999px; opacity: .75; }
+.pv-card .pv-glob.on { opacity: 1; background: var(--acc); border-color: var(--acc); color: #fff; }
+.pv-dot.glob::after { content: '🌐'; position: absolute; right: -10px; top: -12px; font-size: 12px; }
+.pv-card .pv-foot { display: flex; align-items: center; gap: 6px; }
+.pv-card button.danger { color: #ff8a80; }
+.pv-dot.mark { position: absolute; margin: -11px 0 0 -11px; }
+.pv-dot { cursor: pointer; }
+.ag-ntext { cursor: pointer; }
+.ag-ntext:hover { text-decoration: underline; }
+.mt-note { position: absolute; height: 19px; border-radius: 6px; font-size: 11px; line-height: 19px; padding: 0 6px; overflow: hidden; white-space: nowrap; box-sizing: border-box;
+  background: rgba(255, 196, 0, .22); border: 1px solid rgba(255, 196, 0, .7); color: #ffe7a0; cursor: pointer; }
+.mt-note.ref { border-style: double; border-width: 3px; line-height: 15px; }
+.mt-note:hover { background: rgba(255, 196, 0, .38); }
+.mt-note { cursor: grab; }
+.mt-note .edge { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 1; }
+.mt-note .edge.l { left: 0; } .mt-note .edge.r { right: 0; }
+.mt-note .edge:hover { background: rgba(255, 220, 120, .55); }
+.mt-note > span { pointer-events: none; }
+body.mt-dragging, body.mt-dragging * { cursor: grabbing !important; user-select: none; }
+.mt-note-tip { position: fixed; z-index: 80; padding: 3px 8px; border-radius: 6px; background: rgba(15,15,18,.95); border: 1px solid var(--line-strong); color: #ffe7a0; font: 11.5px/1.3 var(--mono, monospace); pointer-events: none; white-space: nowrap; }
+
+/* 📦 ассеты в правке и в чате: метка с превью; окно выбора — препродакшен видео / библиотека канала */
+.pv-assets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.pv-assets:empty { display: none; }
+.pv-assets.pending { margin: 0 0 6px; }
+.asp-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 3px; border-radius: 8px; background: rgba(120, 170, 255, .14); border: 1px solid rgba(120, 170, 255, .45);
+  font-size: 12px; max-width: 220px; }
+.asp-chip img { width: 26px; height: 26px; object-fit: cover; border-radius: 5px; flex: none; }
+.asp-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asp-chip .x { border: 0; background: none; color: var(--dim); cursor: pointer; padding: 0 3px; font-size: 13px; }
+.asp .asp-top { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.asp .asp-top input { flex: 1; }
+.asp .libgrid { max-height: 60vh; overflow: auto; }
+.asp .asp-grid { max-height: 58vh; overflow: auto; padding: 4px; align-content: start; }
+.asp-card { position: relative; cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .12s; }
+.asp-card img, .asp-card .noimg { cursor: pointer; }
+.asp-card:hover { border-color: rgba(120, 170, 255, .7); box-shadow: 0 0 0 1px rgba(120, 170, 255, .5); transform: translateY(-1px); }
+.asp-card .asp-mark { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 700 13px/1 var(--font);
+  font-style: normal; background: rgba(0,0,0,.55); color: #fff; border: 1.5px solid rgba(255,255,255,.75); opacity: 0; transition: opacity .12s; z-index: 1; }
+.asp-card:hover .asp-mark { opacity: 1; }
+.asp-card:not(.sel):not(.had):hover .asp-mark::before { content: '+'; }
+.asp-card.sel { border-color: #5b9bff; box-shadow: 0 0 0 2px #5b9bff; background: rgba(91, 155, 255, .12); }
+.asp-card.sel .asp-mark { opacity: 1; background: #5b9bff; border-color: #5b9bff; }
+.asp-card.sel .asp-mark::before { content: '✓'; }
+.asp-card.had { opacity: .45; cursor: default; }
+.asp-card.had .asp-mark { opacity: 1; background: #3a3a40; }
+.asp .asp-more { display: flex; justify-content: center; margin: 6px 0; }
+.asp .asp-more:empty { display: none; }
+.asp .asp-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.modal.asp-modal { z-index: 970; }
+/* ползунок таймлайна: тянется за линию по всей высоте (полоса захвата 10 px) и за треугольник */
+.mt-playhead::after { content: ''; position: absolute; top: 0; bottom: 0; left: -6px; width: 10px; pointer-events: auto; cursor: ew-resize; }
+.mt-playhead::before { pointer-events: auto; cursor: ew-resize; }
+body.mt-scrubbing, body.mt-scrubbing * { cursor: ew-resize !important; user-select: none; }
+
+/* множественное выделение на таймлайне (TLSel) */
+.mt-note.sel { background: rgba(255, 196, 0, .5); border-color: #ffd23f; box-shadow: 0 0 0 2px #ffd23f, 0 0 10px rgba(255, 210, 63, .45); color: #1a1400; z-index: 2; }
+.mt-note.sel > span { font-weight: 600; }
+.mt-marquee { position: absolute; z-index: 5; border: 1px solid #ffd23f; background: rgba(255, 210, 63, .12); pointer-events: none; border-radius: 3px; }
+.mt-selbar { position: sticky; left: 8px; bottom: 6px; display: inline-block; margin: 4px 0 0 8px; padding: 3px 10px; border-radius: 999px; font-size: 11.5px;
+  background: rgba(255, 210, 63, .14); border: 1px solid rgba(255, 210, 63, .5); color: #ffe7a0; pointer-events: none; }
+.mt-selbar[hidden] { display: none; }
+
+/* S20.1 / S20.4: где автор (📍), что Claude умеет на вкладке, план и вопрос */
+.ag-chiprow { flex-wrap: wrap; }
+.ag-chip.place { background: color-mix(in srgb, var(--agent) 12%, transparent); border-color: color-mix(in srgb, var(--agent) 45%, transparent); color: var(--text); padding-right: 10px; }
+.ag-chip.place:has(.x) { padding-right: 4px; }
+.ag-can { margin: -2px 2px 0; line-height: 1.35; }
+.ag-form textarea.asking { border-color: var(--agent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent) 30%, transparent); }
+.ag-cl.plan { border-left: 2px solid var(--agent); padding-left: 10px; }
+.ag-choice.plan button { min-width: 92px; }
+/* S21: над полем чата — «✨ Исправить правки (N)» вместо плашек; находки сторожа во вкладке «Правки» */
+.ag-fixrow { display: flex; align-items: center; gap: 8px; }
+.ag-fixrow .link { color: var(--dim, #9a9aa5); }
+.ag-pin.guard { border-left: 3px solid rgba(255, 196, 0, .7); padding-left: 6px; }
+.ag-pin.guard.bad { border-left-color: rgba(255, 80, 80, .85); }
+.ag-notesview .ag-fixall { position: sticky; top: 0; z-index: 2; background: var(--bg-2, #16161a); padding: 6px 0; border-bottom: 1px solid var(--line, #2a2a30); }

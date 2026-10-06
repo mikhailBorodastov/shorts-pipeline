@@ -37,7 +37,8 @@
 .pill.info { color: var(--acc); background: rgba(90, 169, 255, .08); border-color: rgba(90, 169, 255, .25); }
 
 /* поп-ап «Новое видео» */
-.nv { position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, .66); backdrop-filter: blur(4px); display: grid; place-items: center; padding: 24px; }
+.nv { position: fixed; inset: 0; z-index: 950; background: rgba(0, 0, 0, .74);   /* без backdrop-filter: размытие живого фона в WebView2 тормозило поп-ап */
+   display: grid; place-items: center; padding: 24px; }
 .nv-box { width: min(680px, 96vw); max-height: 92vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 18px; box-shadow: 0 30px 90px rgba(0, 0, 0, .6); }
 .nv-box.wide { width: min(900px, 96vw); }
 .nv-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
@@ -77,3 +78,29 @@
 .vc-foot .pill { flex: none; white-space: nowrap; }
 .vc-foot .icon { flex: none; }
 .vc-time { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+/* «Новый канал» (#/newchan) и «Обзор» стиля: поля как в поп-апе «+ видео», выбор иконки, язык */
+.nc-page { max-width: 760px; }
+.nc-card { display: flex; flex-direction: column; gap: 16px; padding: 20px 22px; }
+.nc-card .nv-field input.box, .nc-card .nv-field select.box, .ch-basics select.box { width: 100%; padding: 9px 12px; background: var(--field); }
+.nc-icon { flex: 0 0 auto !important; }
+.nc-lang { flex: 0 0 200px !important; }
+.nc-card .nv-row { align-items: flex-start; }
+.nc-card .nv-row.nc-lrow { align-items: flex-end; }
+.nc-lhint { flex: 1; margin: 0 0 10px !important; }
+.nc-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-top: 4px; }
+.nc-foot .hint, .nc-lhint, .ch-basics .hint { margin: 0; font-size: 12px; color: var(--text-mute); flex: 1; min-width: 240px; }
+.ch-basics { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; }
+.ch-basics .hint { margin-bottom: 10px; }
+.ic-pick { position: relative; }
+.ic-btn { display: inline-flex; align-items: center; gap: 8px; height: 39px; box-sizing: border-box; min-width: 76px; padding: 0 10px 0 12px; background: var(--field); border: 1px solid var(--line); border-radius: var(--r); }
+.ic-btn .ic-cur { font-size: 20px; line-height: 1; }
+.ic-btn .ic-arr { margin-left: auto; color: var(--text-mute); font-size: 11px; }
+.ic-pop { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; width: 324px; padding: 10px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 18px 50px rgba(0, 0, 0, .5); }
+.ic-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.ic-e { font-size: 20px; line-height: 1; padding: 6px 0; background: transparent; border: 1px solid transparent; border-radius: 8px; }
+.ic-e:hover { background: var(--panel3); }
+.ic-e.on { border-color: var(--acc); background: var(--panel3); }
+.ic-none { width: 100%; margin-top: 8px; font-size: 12.5px; }
+.ic-none.on { border-color: var(--acc); }
+.pill.live { color: #e4d8ff; background: rgba(180, 140, 255, .12); border-color: rgba(180, 140, 255, .4); }
+.pill.live i { background: var(--agent); animation: pulse 1.4s ease-in-out infinite; }

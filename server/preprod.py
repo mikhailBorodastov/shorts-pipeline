@@ -11,9 +11,14 @@
                license, attr (нужна подпись), author, page, dir, main (files/<plan>/assets/<id>/…), files, size, preview, note, why}
     picks[]  — что предложил Claude («✨ Подобрать», ideas_claude.assets_spec): строки поиска assets.py + {pid, why, use: work|ref}; берёт автор
     aask     — что автор ищет в ассетах («Что нужно» в карточке) — для Claude
+    libMatch — S15 «Уже было» (reuse_api.py): {state wait|found|none, found[{ref, score, why, diff, suggest, …}], pick{how as-is|base|new, ref, from}};
+               lib {id, v} — элемент взят из библиотеки (копия версии в renders, r.lib = 'lib:<id>@<v>')
+    variantOf — S18: id основного элемента: этот — вариация того же персонажа / пропса в другом образе (свои черновики, правки, референсы, ✓);
+               в препродакшене — одна карточка на семью; черновик вариации рисуется от кода основного. Старые 3D-вариации — from3d.mode == 'vary'
+    dimBy    — S19: 2D / 3D (dim / form) предложил Claude при «Накидать» {by, why}; автор переключил — снимается. preNotes.<kind> (у видео) — комментарий к категории
     renders[].layout — у 3D-черновика, сохранённого из «✋ Двигать»: расстановка автора {имя объекта: {p, r, s, hide}} (в element.js — WORLD.layout)
     звук: sounds[] кандидаты {id, file, title, src, license, author, page, url, dur, peak_t, start, end, why},
-          mix[] слои ролика {id, sid, at (сдвиг, с), gain (0…2), note}, mixNote — как свести; sound — id первого слоя (совместимость)
+          mix[] слои ролика {id, sid, at (сдвиг, с), gain (0…2), from / to (какой кусок звука взять, с; пусто — весь), note}, mixNote — как свести; sound — id первого слоя (совместимость)
 @-ссылки: в любом тексте штурма «@[Название]» — ссылка на элемент по названию (без учёта регистра и «ё»).
 
 Экспорт (export): refs/препродакшен/ — README.md (как пользоваться), manifest.json (всё машиночитаемо),
@@ -69,8 +74,47 @@ def el_render(e):
     return next((r for r in rs if r.get("id") == e.get("render")), rs[-1] if rs else None)
 
 
+def _num(v):
+    try:
+        return None if v in (None, "") else max(0.0, float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def cut_sound(s, a, b):
+    """A piece a..b (seconds, b None = to the end) of a candidate -> the same candidate with `file` = the cut wav next to the source
+    (made once by ffmpeg, cached with its analysis in .json), `orig` = the whole file. Cut failed -> the whole candidate."""
+    src = P.resolve(s["file"])
+    stem, _ = os.path.splitext(s["file"])
+    tag = f"{a:g}-{b:g}" if b is not None else f"{a:g}-end"
+    rel = f"{stem}_cut{tag}.wav"
+    dst = P.resolve(rel)
+    meta = dst[:-4] + ".json"
+    try:
+        if not (os.path.isfile(dst) and os.path.isfile(meta) and os.path.getmtime(dst) >= os.path.getmtime(src)):
+            cmd = ["ffmpeg", "-v", "error", "-y", "-ss", str(a), "-i", src] + (["-t", str(b - a)] if b is not None else [])
+            ln = (b - a) if b is not None else max(0.05, float(s.get("dur") or 0) - a)
+            af = f"afade=t=in:d=0.005,afade=t=out:st={max(0.0, ln - 0.01):.3f}:d=0.01"
+            r = subprocess.run(cmd + ["-af", af, "-ar", "44100", "-sample_fmt", "s16", dst], capture_output=True, creationflags=NOWIN)
+            if r.returncode or not os.path.isfile(dst):
+                return s
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", dst, "-f", "f32le", "-ac", "1", "-ar", "22050", "-"], capture_output=True, creationflags=NOWIN).stdout
+            x = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
+            env = np.convolve(np.abs(x), np.ones(441) / 441, mode="same") if len(x) else x
+            info = {"dur": round(len(x) / 22050, 2), "peak_t": round(int(np.argmax(env)) / 22050, 2) if len(x) else 0,
+                    "rms_db": round(20 * np.log10(float(np.sqrt(np.mean(x ** 2))) + 1e-9), 1) if len(x) else -99}
+            with open(meta, "w", encoding="utf-8") as f:
+                json.dump(info, f)
+        with open(meta, encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return s
+    return {**s, **info, "file": rel, "orig": s["file"], "cut": [a, b]}
+
+
 def el_mix(e):
-    """Layers of a sound element with their candidate: [{id, sid, at, gain, note, s}]. Old plans: the single chosen `sound`."""
+    """Layers of a sound element with their candidate: [{id, sid, at, gain, from, to, note, s}]. Old plans: the single chosen `sound`.
+    A layer with from/to gets `s` = the cut piece (cut_sound), so every reader of el_mix uses only that piece."""
     ss = {s["id"]: s for s in e.get("sounds") or []}
     mix = e.get("mix")
     if mix is None:
@@ -79,6 +123,11 @@ def el_mix(e):
     for m in mix:
         s = ss.get(m.get("sid"))
         if s:
+            a, b = _num(m.get("from")), _num(m.get("to"))
+            if b is not None and b <= (a or 0):
+                b = None
+            if (a or b is not None) and s.get("file"):
+                s = cut_sound(s, a or 0.0, b)
             out.append({**m, "at": float(m.get("at") or 0), "gain": 1.0 if m.get("gain") in (None, "") else float(m["gain"]), "s": s})
     return out
 
@@ -161,6 +210,42 @@ def variants_of(e, d):
             and (x.get("from3d") or {}).get("mode") == "vary"]
 
 
+def main_of(e, d):
+    """S18: основной элемент вариации e (variantOf, или старая 3D-вариация from3d vary) — или None, если e сам основной."""
+    m = e.get("variantOf") if "variantOf" in e else ((e.get("from3d") or {}).get("el") if (e.get("from3d") or {}).get("mode") == "vary" else None)   # явный null — «не вариация»
+    return next((x for x in d.get("elements") or [] if x["id"] == m and x["id"] != e["id"]), None) if m else None
+
+
+def family(e, d):
+    """S18: [основной, вариации…] — семья элемента (не вычеркнутые); у одиночки — [e]."""
+    main = main_of(e, d) or e
+    kids = [x for x in d.get("elements") or [] if x["id"] != main["id"] and x.get("status") != "drop" and (main_of(x, d) or {}).get("id") == main["id"]]
+    return [main] + kids
+
+
+def family_brief(e, d, fwd=lambda p: p.replace("\\", "/")):
+    """Строки для промпта: этот элемент — вариация / основной с вариациями (Claude должен понимать, что это один персонаж в разных образах)."""
+    fam = family(e, d)
+    if len(fam) < 2:
+        return ""
+    one = ONE.get(e.get("kind"), "")
+    main = fam[0]
+    L = []
+    if main["id"] != e["id"]:
+        L.append(f"ЭТО ВАРИАЦИЯ {one.upper()}А @[{main.get('name', '')}]: тот же {one} в другом образе. Он должен остаться узнаваемым: лицо, пропорции, "
+                 f"цвета, манера — как у основного; меняется только то, чем этот образ отличается по описанию.")
+    else:
+        L.append(f"У этого {one}а есть вариации — тот же {one} в других образах; держи их одним персонажем:")
+    for x in fam:
+        if x["id"] == e["id"]:
+            continue
+        r = el_render(x)
+        L.append(f"- @[{x.get('name', '')}]{' (основной)' if x['id'] == main['id'] else ''} — {x.get('desc') or 'без описания'}"
+                 + (" (утверждён)" if x.get("status") == "ok" else "")
+                 + (f"\n  черновик {fwd(P.resolve(r['img']))}, код {fwd(os.path.join(P.resolve('render/' + r['dir']), 'element.js'))}" if r and r.get("img") else ""))
+    return "\n".join(L)
+
+
 def variant_src(x, d):
     """Оригинал вариации x (или None)."""
     f = x.get("from3d") or {}
@@ -227,6 +312,9 @@ def pre_md(d, where=None, folders=None):
                 sc = used_in(e, d, idx)
                 if sc:
                     L.append("  - стоит в сценах: " + ", ".join(f"@[{s.get('name', '')}]" for s in sc))
+            mo = main_of(e, d) if kind in ("char", "prop") else None
+            if mo:
+                L.append(f"  - вариация @[{mo.get('name', '')}]: тот же {ONE.get(kind, '')} в другом образе")
             refs = [where(e, "ref", r["img"]) + (f" ({r['note']})" if r.get("note") else "") for r in e.get("refs") or [] if r.get("img")]
             if refs:
                 L.append("  - референсы автора: " + ", ".join(refs))
@@ -311,7 +399,13 @@ def element_brief(e, d, data):
     """Everything about an element for a prompt: texts, final wishes, @-links with their drafts — Claude reads files by these paths."""
     idx = by_name(d)
     fwd = lambda p: p.replace("\\", "/")
-    L = []
+    L = [t for t in (family_brief(e, d, fwd),) if t]
+    note = ((d.get("preNotes") or {}).get(e.get("kind")) or "").strip()
+    if note:                                                  # S19: комментарий автора ко всей категории («в стиле Майнкрафта»)
+        L.insert(0, f"Автор про все элементы категории «{KINDS.get(e.get('kind'), '')}»: «{note}» — держи это в черновике.")
+    wish = ((e.get("make3d") or {}).get("wish") or "").strip()
+    if wish:                                                  # S20: просьба автора про 3D (из чата или «Сделать 3D») — главнее стиля канала
+        L.insert(0, f"Автор просит про 3D-версию: «{wish}». Это главнее стиля канала и привычек нашего тулкита — сделай именно так.")
     fin = [f for f in e.get("final") or [] if (f.get("text") or "").strip()]
     if fin:
         L.append("Автор уже записал, что хочет от этого ассета в финальном ролике (учти в черновике то, что на нём видно):")
@@ -400,6 +494,8 @@ def export(doc, data, dst, toolkit):
         folder, eid, kind = folders[e["id"]], e["id"], e.get("kind", "prop")
         rec = {"id": eid, "kind": kind, "name": e.get("name", ""), "slug": slugs[eid], "status": e.get("status") or "", "folder": folder + "/",
                "desc": e.get("desc", ""), "why": e.get("why", ""), "readme": folder + "/README.md", "refs": [], "final": []}
+        if main_of(e, doc):                                   # S18: вариация того же персонажа / пропса
+            rec["variantOf"] = main_of(e, doc)["id"]
         for i, r in enumerate(e.get("refs") or [], 1):
             if r.get("img"):
                 p = paths[(eid, "ref", r["img"])] = put(r["img"], f"{folder}/ref{i}{os.path.splitext(r['img'])[1]}")
@@ -482,6 +578,10 @@ def element_readme(e, rec, d, folders, idx):
     if e.get("status") != "ok":
         L += ["> Автор ещё не утвердил этот элемент: черновик — только вариант. Если что-то непонятно, спроси автора или делай по описанию.", ""]
     L += ["## Что это", link((e.get("desc") or "").strip()) or "(без описания)"]
+    fam = family(e, d) if kind in ("char", "prop") else []
+    if len(fam) > 1:                                          # S18: семья вариаций — один персонаж / пропс в разных образах
+        L.append("\n**Вариации** (один " + ONE.get(kind, "") + " в разных образах — держи узнаваемым): "
+                 + ", ".join(f"@[{x.get('name', '')}]" + (" — основной" if i == 0 else "") + (" (это он)" if x["id"] == e["id"] else "") for i, x in enumerate(fam)))
     if (e.get("why") or "").strip():
         L.append(f"\n**Где в ролике:** {link(e['why'].strip())}")
     L.append("")

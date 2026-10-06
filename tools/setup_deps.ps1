@@ -46,8 +46,8 @@ if ($want -contains "pip" -or $want -contains "python") {
   $py = (Get-Command python -ErrorAction SilentlyContinue)
   if (-not $py) { $py = (Get-Command py -ErrorAction SilentlyContinue) }
   if ($py) {
-    Write-Output "… Python-пакеты: edge-tts, numpy, pillow, yt-dlp"
-    & $py.Source -m pip install --user --upgrade --quiet edge-tts numpy pillow yt-dlp 2>&1 | Out-Null
+    Write-Output "… Python-пакеты: edge-tts, numpy, pillow, yt-dlp, curl_cffi"
+    & $py.Source -m pip install --user --upgrade --quiet edge-tts numpy pillow yt-dlp curl_cffi 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { Write-Output "✓ Python-пакеты" } else { Write-Output "✗ Python-пакеты — pip вернул $LASTEXITCODE" }
   } else {
     Write-Output "✗ Python-пакеты — Python не нашёлся (перезапусти программу после установки Python)"
